@@ -1,0 +1,15 @@
+.env
+config/company.json
+data/lead_state.json
+data/leads_db.json
+data/outbound_log.json
+data/inbox.json
+data/alerts.json
+.streamlit/secrets.toml
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.json.key
+service_account.json

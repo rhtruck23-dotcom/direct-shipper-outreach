@@ -1,0 +1,2 @@
+id,company_name,contact_name,email,phone,state,county,zip,freight_type,lane_or_region,notes,source,website
+SAMPLE1,Sample Midwest Produce,Jordan Lee,jordan.lee@example.com,309-555-0199,IL,McDonough,61455,Reefer,IL / Midwest,SAMPLE ONLY — replace with real leads,manual,https://example.com
