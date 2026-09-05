@@ -153,41 +153,70 @@ def _migrate_legacy() -> list[dict]:
 
 # ---------- Google Sheets ----------
 
+def _get_sheet_id() -> str:
+    try:
+        import streamlit as st
+
+        return str(st.secrets.get("google_sheet_id", "") or "").strip()
+    except Exception:
+        return ""
+
+
+def _get_gcp_info() -> Optional[dict]:
+    """
+    Accept either:
+      1) gcp_service_account_json = \"\"\"{ ... entire downloaded JSON ... }\"\"\"
+      2) [gcp_service_account] TOML table (advanced)
+    """
+    try:
+        import streamlit as st
+
+        # Easiest for non-technical users: paste whole JSON file
+        raw = st.secrets.get("gcp_service_account_json", None)
+        if raw:
+            if isinstance(raw, dict):
+                return dict(raw)
+            text = str(raw).strip()
+            if text:
+                return json.loads(text)
+
+        if "gcp_service_account" in st.secrets:
+            return dict(st.secrets["gcp_service_account"])
+    except Exception:
+        return None
+    return None
+
+
 def sheets_configured(secrets: Optional[dict] = None) -> bool:
-    try:
-        import streamlit as st
-
-        sec = secrets if secrets is not None else dict(st.secrets)
-    except Exception:
-        sec = secrets or {}
-    gcp = sec.get("gcp_service_account") if hasattr(sec, "get") else None
-    if gcp is None and isinstance(sec, dict):
-        gcp = sec.get("gcp_service_account")
-    sheet_id = None
-    try:
-        import streamlit as st
-
-        sheet_id = st.secrets.get("google_sheet_id", "")
-    except Exception:
-        if isinstance(sec, dict):
-            sheet_id = sec.get("google_sheet_id", "")
-    return bool(gcp) and bool(sheet_id)
+    if secrets is not None:
+        sheet_id = str(secrets.get("google_sheet_id", "") or "").strip()
+        gcp = secrets.get("gcp_service_account_json") or secrets.get(
+            "gcp_service_account"
+        )
+        return bool(sheet_id) and bool(gcp)
+    return bool(_get_sheet_id()) and bool(_get_gcp_info())
 
 
 def _open_worksheet():
     import gspread
-    import streamlit as st
     from google.oauth2.service_account import Credentials
+
+    info = _get_gcp_info()
+    if not info:
+        raise RuntimeError(
+            "Google service account not found in Secrets. "
+            "Paste gcp_service_account_json (entire JSON file) — see Cloud Hosting page."
+        )
+    sheet_id = _get_sheet_id()
+    if not sheet_id:
+        raise RuntimeError("google_sheet_id missing in Secrets.")
 
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    creds = Credentials.from_service_account_info(
-        dict(st.secrets["gcp_service_account"]), scopes=scopes
-    )
+    creds = Credentials.from_service_account_info(info, scopes=scopes)
     client = gspread.authorize(creds)
-    sheet_id = st.secrets["google_sheet_id"]
     sh = client.open_by_key(sheet_id)
     try:
         ws = sh.worksheet("leads")
