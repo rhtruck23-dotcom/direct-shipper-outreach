@@ -668,44 +668,94 @@ def page_inbox():
 
 def page_cloud():
     st.title("Free internet hosting")
+    _storage_banner()
+
+    st.subheader("Connection check (read this first)")
+    sheet_ok = False
+    json_ok = False
+    json_parse_ok = None
+    try:
+        sheet_ok = bool(str(st.secrets.get("google_sheet_id", "") or "").strip())
+    except Exception:
+        sheet_ok = False
+    try:
+        raw = st.secrets.get("gcp_service_account_json", None)
+        if raw is None and "gcp_service_account" in st.secrets:
+            json_ok = True
+            json_parse_ok = True
+        elif raw is not None:
+            json_ok = True
+            if isinstance(raw, dict):
+                json_parse_ok = True
+            else:
+                import json as _json
+
+                try:
+                    _json.loads(str(raw))
+                    json_parse_ok = True
+                except Exception as e:
+                    json_parse_ok = False
+                    st.error(f"JSON inside secrets could not be read: {e}")
+    except Exception:
+        json_ok = False
+
+    st.write(f"1. `google_sheet_id` in Secrets: {'✅ found' if sheet_ok else '❌ missing'}")
+    st.write(
+        f"2. Service account JSON in Secrets: {'✅ found' if json_ok else '❌ missing'}"
+    )
+    if json_ok:
+        st.write(
+            f"3. JSON parses correctly: {'✅ yes' if json_parse_ok else '❌ no — fix the paste'}"
+        )
+    if using_cloud():
+        st.success("Cloud DB is ON. Sidebar should say Cloud DB on after refresh.")
+    else:
+        st.warning(
+            "Still Local DB. Fix Secrets using the simple paste below, Save, wait 1 minute, refresh."
+        )
+
     st.markdown(
         """
-### What you get (\$0)
-1. **Streamlit Community Cloud** — free website for this app  
-2. **Google Sheet** — permanent record of every lead / email / Do Not Contact  
+### Simple Secrets paste (do this)
+1. App **⋮ Manage app → Settings → Secrets**
+2. Delete everything in the box
+3. Paste the template below
+4. Open your downloaded `.json` in Notepad → copy ALL of it
+5. In Secrets, replace only the word `REPLACE_ME` with that JSON
+6. **Save changes** (must not say Invalid TOML)
+7. Wait ~1 minute → refresh this page
 
-You only open a link in your browser. No Python on your PC.
-
-### One-time setup (about 15–20 minutes)
-
-#### A. Google Sheet (permanent lead database)
-1. Create a new Google Sheet in your Google account  
-2. Name it `LogixTrek Leads`  
-3. Create a [Google Cloud service account](https://console.cloud.google.com/) → enable **Google Sheets API** + **Google Drive API**  
-4. Create a JSON key for the service account  
-5. Share your Sheet with the service account email (**Editor**)  
-6. Copy the Sheet ID from the URL:  
-   `https://docs.google.com/spreadsheets/d/`**`THIS_PART`**`/edit`
-
-#### B. GitHub + Streamlit Cloud
-1. Push this project to a free GitHub repo (or ask me to help push)  
-2. Go to [share.streamlit.io](https://share.streamlit.io) → sign in with GitHub → **New app**  
-3. Pick the repo, main file `app.py` → Deploy  
-4. In the app **Settings → Secrets**, paste the template from `docs/STREAMLIT_SECRETS.toml`  
-5. Open your public app URL — bookmark it on your phone  
-
-### Built-in anti-spam memory
-- Every email is logged on the lead  
-- **Do Not Contact** is permanent — activate/start cannot override it  
-- Re-importing the same email **keeps** history and DNC  
-- Color-coded **Leads List** shows stage at a glance  
+Your Sheet must be **Shared** with the JSON `client_email` as **Editor**.
 """
     )
-    st.code(Path(ROOT / "docs" / "STREAMLIT_SECRETS.toml").read_text(encoding="utf-8")
-            if (ROOT / "docs" / "STREAMLIT_SECRETS.toml").exists()
-            else "# see docs/STREAMLIT_SECRETS.toml",
-            language="toml")
-    _storage_banner()
+    st.code(
+        '''google_sheet_id = "17R3l-l01CxE8h6psQ9087W2WO-OLKSBZ-uzljM2es7E"
+
+send_live_emails = false
+
+gcp_service_account_json = """
+REPLACE_ME
+"""
+
+[company]
+my_company = "LogixTrek LLC"
+my_name = "LogixTrek Dispatch"
+my_phone = "(443) 891-8543"
+my_email = "accounts@logixtrek.com"
+my_mc = "MC-1590829"
+my_dot = "DOT-4146389"
+website = "https://www.logixtrek.com"
+physical_address = "1030 Derry Ln Apt 36, Macomb, IL 61455"
+equipment = "53' Reefer (also Dry Van / Box capacity)"
+origin_area = "Macomb, IL / Midwest"
+owner_notify_email = "accounts@logixtrek.com"
+smtp_host = "smtp.gmail.com"
+smtp_port = 587
+smtp_user = "accounts@logixtrek.com"
+unsubscribe_note = "LogixTrek LLC | 1030 Derry Ln Apt 36, Macomb, IL 61455 | www.logixtrek.com | Reply STOP to opt out of future emails."
+''',
+        language="toml",
+    )
 
 
 def page_help():
