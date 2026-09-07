@@ -33,6 +33,7 @@ from src.places import demo_places_results, search_places
 from src.schedule import days_until_next, next_action_for_lead
 from src.stages import STAGE_STYLE, contact_indicator, stage_label
 from src.storage import using_cloud
+from src.cloud_setup import build_simple_secrets_toml, secret_status
 from src.templates import render_email
 
 st.set_page_config(

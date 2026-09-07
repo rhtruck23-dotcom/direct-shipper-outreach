@@ -14,7 +14,6 @@ from datetime import datetime
 from typing import Any, Optional
 
 from .paths import DATA_DIR
-from .stages import already_contacted
 
 LEADS_JSON = DATA_DIR / "leads_db.json"
 
