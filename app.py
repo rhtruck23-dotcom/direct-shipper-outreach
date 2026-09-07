@@ -671,17 +671,17 @@ def page_cloud():
     st.title("Cloud Hosting — fix Local DB")
     _storage_banner()
 
-    from src.storage import build_simple_secrets_toml, secret_status, test_sheet_connection
-
     status = secret_status()
     st.subheader("1) What the app sees right now")
+    if status.get("error"):
+        st.error(f"Could not read secrets: {status['error']}")
     st.write(f"Secret keys found: `{', '.join(status.get('keys') or ['(none)'])}`")
     st.write(
-        f"Sheet ID: {'✅' if status.get('sheet_id_present') else '❌'} "
+        f"Sheet ID: {'OK' if status.get('sheet_id_present') else 'MISSING'} "
         f"{status.get('sheet_id_preview') or ''}"
     )
     st.write(
-        f"Service account loaded: {'✅' if status.get('gcp_loaded') else '❌'} "
+        f"Service account loaded: {'OK' if status.get('gcp_loaded') else 'MISSING'} "
         f"{status.get('gcp_client_email') or ''}"
     )
 
@@ -689,6 +689,8 @@ def page_cloud():
         st.success("Cloud secrets look present.")
         if st.button("Test Google Sheet connection"):
             try:
+                from src.storage import test_sheet_connection
+
                 st.success(test_sheet_connection())
             except Exception as e:
                 st.error(f"Sheet connection failed: {e}")
@@ -702,8 +704,7 @@ def page_cloud():
 
     st.subheader("2) Paste your JSON here — app will build Secrets for you")
     st.caption(
-        "Open the downloaded `.json` in Notepad → Ctrl+A → Ctrl+C → paste below. "
-        "This stays in your browser session only to build the text."
+        "Open the downloaded .json in Notepad → Ctrl+A → Ctrl+C → paste below."
     )
     json_text = st.text_area("Service account JSON", height=220, key="sa_json_paste")
     if st.button("Build Secrets text", type="primary") and json_text.strip():
@@ -725,7 +726,7 @@ def page_cloud():
 2. Delete everything in the Secrets box  
 3. Copy **all** of the text below → paste into Secrets  
 4. Click **Save changes** (must NOT say Invalid TOML)  
-5. **Reboot** the app (Manage app → Reboot)  
+5. **Manage app → Reboot app**  
 6. Refresh — sidebar should say **Cloud DB on**
 """
         )
