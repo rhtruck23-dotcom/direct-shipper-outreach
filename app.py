@@ -667,95 +667,68 @@ def page_inbox():
 
 
 def page_cloud():
-    st.title("Free internet hosting")
+    st.title("Cloud Hosting — fix Local DB")
     _storage_banner()
 
-    st.subheader("Connection check (read this first)")
-    sheet_ok = False
-    json_ok = False
-    json_parse_ok = None
-    try:
-        sheet_ok = bool(str(st.secrets.get("google_sheet_id", "") or "").strip())
-    except Exception:
-        sheet_ok = False
-    try:
-        raw = st.secrets.get("gcp_service_account_json", None)
-        if raw is None and "gcp_service_account" in st.secrets:
-            json_ok = True
-            json_parse_ok = True
-        elif raw is not None:
-            json_ok = True
-            if isinstance(raw, dict):
-                json_parse_ok = True
-            else:
-                import json as _json
+    from src.storage import build_simple_secrets_toml, secret_status, test_sheet_connection
 
-                try:
-                    _json.loads(str(raw))
-                    json_parse_ok = True
-                except Exception as e:
-                    json_parse_ok = False
-                    st.error(f"JSON inside secrets could not be read: {e}")
-    except Exception:
-        json_ok = False
-
-    st.write(f"1. `google_sheet_id` in Secrets: {'✅ found' if sheet_ok else '❌ missing'}")
+    status = secret_status()
+    st.subheader("1) What the app sees right now")
+    st.write(f"Secret keys found: `{', '.join(status.get('keys') or ['(none)'])}`")
     st.write(
-        f"2. Service account JSON in Secrets: {'✅ found' if json_ok else '❌ missing'}"
+        f"Sheet ID: {'✅' if status.get('sheet_id_present') else '❌'} "
+        f"{status.get('sheet_id_preview') or ''}"
     )
-    if json_ok:
-        st.write(
-            f"3. JSON parses correctly: {'✅ yes' if json_parse_ok else '❌ no — fix the paste'}"
-        )
+    st.write(
+        f"Service account loaded: {'✅' if status.get('gcp_loaded') else '❌'} "
+        f"{status.get('gcp_client_email') or ''}"
+    )
+
     if using_cloud():
-        st.success("Cloud DB is ON. Sidebar should say Cloud DB on after refresh.")
-    else:
-        st.warning(
-            "Still Local DB. Fix Secrets using the simple paste below, Save, wait 1 minute, refresh."
+        st.success("Cloud secrets look present.")
+        if st.button("Test Google Sheet connection"):
+            try:
+                st.success(test_sheet_connection())
+            except Exception as e:
+                st.error(f"Sheet connection failed: {e}")
+                st.info(
+                    "Most common fix: Share the Sheet with the service account "
+                    "email as Editor, then try again."
+                )
+        return
+
+    st.warning("Still Local DB — Secrets are missing or invalid. Follow step 2.")
+
+    st.subheader("2) Paste your JSON here — app will build Secrets for you")
+    st.caption(
+        "Open the downloaded `.json` in Notepad → Ctrl+A → Ctrl+C → paste below. "
+        "This stays in your browser session only to build the text."
+    )
+    json_text = st.text_area("Service account JSON", height=220, key="sa_json_paste")
+    if st.button("Build Secrets text", type="primary") and json_text.strip():
+        try:
+            toml_text = build_simple_secrets_toml(
+                "17R3l-l01CxE8h6psQ9087W2WO-OLKSBZ-uzljM2es7E",
+                json_text,
+            )
+            st.session_state["generated_secrets_toml"] = toml_text
+            st.success("Built. Copy the box below into Streamlit Secrets.")
+        except Exception as e:
+            st.error(f"Could not read that JSON: {e}")
+
+    if st.session_state.get("generated_secrets_toml"):
+        st.subheader("3) Copy this into Streamlit Secrets")
+        st.markdown(
+            """
+1. Bottom-right **Manage app** → **Settings** → **Secrets**  
+2. Delete everything in the Secrets box  
+3. Copy **all** of the text below → paste into Secrets  
+4. Click **Save changes** (must NOT say Invalid TOML)  
+5. **Reboot** the app (Manage app → Reboot)  
+6. Refresh — sidebar should say **Cloud DB on**
+"""
         )
-
-    st.markdown(
-        """
-### Simple Secrets paste (do this)
-1. App **⋮ Manage app → Settings → Secrets**
-2. Delete everything in the box
-3. Paste the template below
-4. Open your downloaded `.json` in Notepad → copy ALL of it
-5. In Secrets, replace only the word `REPLACE_ME` with that JSON
-6. **Save changes** (must not say Invalid TOML)
-7. Wait ~1 minute → refresh this page
-
-Your Sheet must be **Shared** with the JSON `client_email` as **Editor**.
-"""
-    )
-    st.code(
-        '''google_sheet_id = "17R3l-l01CxE8h6psQ9087W2WO-OLKSBZ-uzljM2es7E"
-
-send_live_emails = false
-
-gcp_service_account_json = """
-REPLACE_ME
-"""
-
-[company]
-my_company = "LogixTrek LLC"
-my_name = "LogixTrek Dispatch"
-my_phone = "(443) 891-8543"
-my_email = "accounts@logixtrek.com"
-my_mc = "MC-1590829"
-my_dot = "DOT-4146389"
-website = "https://www.logixtrek.com"
-physical_address = "1030 Derry Ln Apt 36, Macomb, IL 61455"
-equipment = "53' Reefer (also Dry Van / Box capacity)"
-origin_area = "Macomb, IL / Midwest"
-owner_notify_email = "accounts@logixtrek.com"
-smtp_host = "smtp.gmail.com"
-smtp_port = 587
-smtp_user = "accounts@logixtrek.com"
-unsubscribe_note = "LogixTrek LLC | 1030 Derry Ln Apt 36, Macomb, IL 61455 | www.logixtrek.com | Reply STOP to opt out of future emails."
-''',
-        language="toml",
-    )
+        st.code(st.session_state["generated_secrets_toml"], language="toml")
 
 
 def page_help():

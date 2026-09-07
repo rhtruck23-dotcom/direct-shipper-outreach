@@ -153,6 +153,16 @@ def _migrate_legacy() -> list[dict]:
 
 # ---------- Google Sheets ----------
 
+def _secrets_dict() -> dict:
+    try:
+        import streamlit as st
+
+        # Streamlit AttrDict → plain dict of top-level keys
+        return {k: st.secrets[k] for k in st.secrets}
+    except Exception:
+        return {}
+
+
 def _get_sheet_id() -> str:
     try:
         import streamlit as st
@@ -164,24 +174,48 @@ def _get_sheet_id() -> str:
 
 def _get_gcp_info() -> Optional[dict]:
     """
-    Accept either:
-      1) gcp_service_account_json = \"\"\"{ ... entire downloaded JSON ... }\"\"\"
-      2) [gcp_service_account] TOML table (advanced)
+    Accept (in order):
+      1) gcp_sa_b64 = "base64 of entire JSON"   ← hardest to break in Secrets
+      2) gcp_service_account_json = \"\"\"{...}\"\"\"
+      3) [gcp_service_account] TOML table
     """
     try:
         import streamlit as st
+        import base64
 
-        # Easiest for non-technical users: paste whole JSON file
-        raw = st.secrets.get("gcp_service_account_json", None)
+        # 1) Base64 one-liner (recommended)
+        b64 = None
+        try:
+            b64 = st.secrets.get("gcp_sa_b64", None)
+        except Exception:
+            b64 = None
+        if b64:
+            raw = base64.b64decode(str(b64).strip()).decode("utf-8")
+            return json.loads(raw)
+
+        # 2) Full JSON string
+        raw = None
+        try:
+            raw = st.secrets.get("gcp_service_account_json", None)
+        except Exception:
+            raw = None
         if raw:
             if isinstance(raw, dict):
                 return dict(raw)
             text = str(raw).strip()
-            if text:
+            if text and text != "REPLACE_ME":
                 return json.loads(text)
 
+        # 3) TOML table
         if "gcp_service_account" in st.secrets:
-            return dict(st.secrets["gcp_service_account"])
+            info = dict(st.secrets["gcp_service_account"])
+            # private_key sometimes needs newline fix
+            pk = info.get("private_key")
+            if isinstance(pk, str) and "\\n" in pk and "\n" not in pk.replace("\\n", ""):
+                info["private_key"] = pk.replace("\\n", "\n")
+            elif isinstance(pk, str) and "-----BEGIN" in pk and "\\n" in pk:
+                info["private_key"] = pk.replace("\\n", "\n")
+            return info
     except Exception:
         return None
     return None
@@ -190,11 +224,81 @@ def _get_gcp_info() -> Optional[dict]:
 def sheets_configured(secrets: Optional[dict] = None) -> bool:
     if secrets is not None:
         sheet_id = str(secrets.get("google_sheet_id", "") or "").strip()
-        gcp = secrets.get("gcp_service_account_json") or secrets.get(
-            "gcp_service_account"
+        gcp = (
+            secrets.get("gcp_sa_b64")
+            or secrets.get("gcp_service_account_json")
+            or secrets.get("gcp_service_account")
         )
         return bool(sheet_id) and bool(gcp)
     return bool(_get_sheet_id()) and bool(_get_gcp_info())
+
+
+def secret_status() -> dict:
+    """Safe diagnostic for the UI (no private key values)."""
+    keys = []
+    try:
+        import streamlit as st
+
+        keys = list(st.secrets.keys())
+    except Exception as e:
+        return {"keys": [], "error": str(e)}
+
+    info = _get_gcp_info()
+    return {
+        "keys": keys,
+        "sheet_id_present": bool(_get_sheet_id()),
+        "sheet_id_preview": (_get_sheet_id()[:8] + "…") if _get_sheet_id() else "",
+        "gcp_loaded": bool(info),
+        "gcp_client_email": (info or {}).get("client_email", ""),
+        "cloud_ready": sheets_configured(),
+    }
+
+
+def json_to_b64_secret(json_text: str) -> str:
+    """Turn downloaded service-account JSON into one safe Secrets line."""
+    import base64
+
+    data = json.loads(json_text.strip())
+    if data.get("type") != "service_account":
+        raise ValueError("This does not look like a Google service account JSON file.")
+    if "private_key" not in data or "client_email" not in data:
+        raise ValueError("JSON is missing private_key or client_email.")
+    compact = json.dumps(data, separators=(",", ":"))
+    return base64.b64encode(compact.encode("utf-8")).decode("ascii")
+
+
+def build_simple_secrets_toml(sheet_id: str, json_text: str) -> str:
+    b64 = json_to_b64_secret(json_text)
+    return (
+        f'google_sheet_id = "{sheet_id.strip()}"\n'
+        f"send_live_emails = false\n"
+        f'gcp_sa_b64 = "{b64}"\n'
+        "\n"
+        "[company]\n"
+        'my_company = "LogixTrek LLC"\n'
+        'my_name = "LogixTrek Dispatch"\n'
+        'my_phone = "(443) 891-8543"\n'
+        'my_email = "accounts@logixtrek.com"\n'
+        'my_mc = "MC-1590829"\n'
+        'my_dot = "DOT-4146389"\n'
+        'website = "https://www.logixtrek.com"\n'
+        'physical_address = "1030 Derry Ln Apt 36, Macomb, IL 61455"\n'
+        'equipment = "53\' Reefer (also Dry Van / Box capacity)"\n'
+        'origin_area = "Macomb, IL / Midwest"\n'
+        'owner_notify_email = "accounts@logixtrek.com"\n'
+        'smtp_host = "smtp.gmail.com"\n'
+        "smtp_port = 587\n"
+        'smtp_user = "accounts@logixtrek.com"\n'
+        'unsubscribe_note = "LogixTrek LLC | 1030 Derry Ln Apt 36, Macomb, IL 61455 | www.logixtrek.com | Reply STOP to opt out of future emails."\n'
+    )
+
+
+def test_sheet_connection() -> str:
+    """Try reading/writing the Sheet. Returns OK message or error."""
+    ws = _open_worksheet()
+    title = ws.title
+    rows = len(ws.get_all_values())
+    return f"Connected to worksheet '{title}' ({rows} row(s) including header)."
 
 
 def _open_worksheet():
@@ -205,7 +309,7 @@ def _open_worksheet():
     if not info:
         raise RuntimeError(
             "Google service account not found in Secrets. "
-            "Paste gcp_service_account_json (entire JSON file) — see Cloud Hosting page."
+            "Use Cloud Hosting → paste JSON → copy generated Secrets → Save."
         )
     sheet_id = _get_sheet_id()
     if not sheet_id:
