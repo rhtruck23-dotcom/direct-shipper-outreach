@@ -946,7 +946,7 @@ def page_org_setup():
         return
 
     tab_co, tab_team, tab_mail = st.tabs(
-        ["Company & SMTP", "Team & Access (RBAC)", "Email preview"]
+        ["Company & SMTP", "Team & Access (RBAC)", "Email templates (Shipper + Carrier)"]
     )
 
     company = _company()
@@ -1054,17 +1054,41 @@ def page_org_setup():
         _page_team_access()
 
     with tab_mail:
-        sample = {
-            "contact_name": "Alex",
-            "company_name": "Sample Shipper",
-            "freight_type": "Reefer",
-            "lane_or_region": "IL / Midwest",
-            "state": "IL",
-        }
-        for step in range(1, 5):
-            subj, body = render_email(step, sample, _company())
-            st.markdown(f"**Email {step} — {subj}**")
-            st.code(body)
+        st.markdown("### Email templates — two funnels")
+        st.caption(
+            "Shipper emails sell **your truck capacity** to shippers. "
+            "Carrier emails recruit **owner-operators to lease onto LogixTrek MC** (~$40k gross pitch)."
+        )
+        t_ship, t_car = st.tabs(["① Shipper templates (1–4)", "② Carrier / lease-on templates (1–4)"])
+        company = _company()
+        with t_ship:
+            st.info("Used by **Shipper → Pipeline**. Cadence: days 0 / 4 / 9 / 16.")
+            sample = {
+                "contact_name": "Alex",
+                "company_name": "Sample Shipper",
+                "freight_type": "Reefer",
+                "lane_or_region": "VA / Mid-Atlantic",
+                "state": "VA",
+            }
+            for step in range(1, 5):
+                subj, body = render_email(step, sample, company)
+                st.markdown(f"**Shipper Email {step} — {subj}**")
+                st.code(body)
+        with t_car:
+            from src.carrier_templates import render_carrier_email
+
+            st.info("Used by **Carrier → Pipeline**. Same cadence: days 0 / 4 / 9 / 16.")
+            sample_c = {
+                "contact_name": "Jordan",
+                "company_name": "Sample Owner-Op LLC",
+                "mc_number": "MC-999999",
+                "state": "VA",
+                "lane_or_region": "VA / Mid-Atlantic",
+            }
+            for step in range(1, 5):
+                subj, body = render_carrier_email(step, sample_c, company)
+                st.markdown(f"**Carrier Email {step} — {subj}**")
+                st.code(body)
 
 
 def page_find_leads():
@@ -1074,8 +1098,9 @@ def page_find_leads():
         st.error("No access to Find Leads.")
         return
     st.caption(
-        "Put State / Zip → app searches Google Business-style Places, checks public websites for emails, "
-        "then logistics-vets the list. You only select qualified leads and activate the pipeline."
+        "Enter **State** (e.g. VA) — leave Zip blank for statewide multi-city Places pull. "
+        "Expect **hundreds** of business matches (not 1000s of ready emails). "
+        "Website enrichment fills emails when public; you top up blanks before Pipeline."
     )
     if not can(user, "find_leads", "create") and not is_super_admin(user):
         st.warning("Read-only: ask Super Admin for Find Leads create access, or work assigned leads in Pipeline.")
@@ -1094,10 +1119,18 @@ def page_find_leads():
     with tab_vet:
         c1, c2, c3, c4 = st.columns(4)
         freight = c1.selectbox("Freight type", ["Reefer", "Dry Van", "Box Truck"], key="fv_fr")
-        state = c2.text_input("State", "IL", key="fv_st")
+        state = c2.text_input("State (2-letter)", "VA", key="fv_st")
         county = c3.text_input("County (optional)", "", key="fv_co")
-        zip_code = c4.text_input("Zip", "61455", key="fv_zip")
+        zip_code = c4.text_input("Zip (optional — blank = statewide)", "", key="fv_zip")
         min_score = st.slider("Minimum vet score to show", 5, 9, 6)
+        max_candidates = st.slider(
+            "Max shipper candidates to pull",
+            50,
+            500,
+            200,
+            step=50,
+            help="Statewide hub search stops around this many unique businesses.",
+        )
         enrich = st.checkbox("Check company websites for public emails", value=True)
 
         has_places = bool((company.get("google_places_api_key") or "").strip())
@@ -1111,6 +1144,10 @@ def page_find_leads():
             f"Google Search (CSE): {'ready' if has_cse else 'missing'} · "
             f"Gemini: {'ready' if has_gemini else 'rules only'}"
         )
+        if not has_places:
+            st.error(
+                "Add **google_places_api_key** in Secrets / Org Setup — without it you only get the tiny demo list."
+            )
 
         b1, b2 = st.columns(2)
         run_live = b1.button("Find & Vet shippers", type="primary")
@@ -1128,6 +1165,7 @@ def page_find_leads():
                     min_score=min_score,
                     enrich_websites=enrich and not run_demo,
                     use_demo=bool(run_demo) or not has_places,
+                    max_candidates=max_candidates,
                     progress_cb=lambda m: status.info(m),
                 )
                 st.session_state.vet_result = result
@@ -1319,10 +1357,14 @@ This is a **federal** database of businesses licensed to buy/sell fresh & frozen
 ### Automated (legal)
 | Source | What it does |
 |--------|----------------|
-| Google Places / Business | State/zip business search |
+| Google Places / Business | Statewide hub search (leave zip blank) — typically **hundreds** of businesses, not 1000s of emails |
 | Google Programmable Search | Web results + read company sites for emails |
 | Gemini LLM | Fit score 0–100 + one-line reason |
 | Rules fallback | Works even without Gemini |
+
+### Catch (read this)
+- **Shippers:** need `google_places_api_key`. Blank zip = statewide. Emails are often empty until enrichment / manual fill.
+- **Carriers:** **Carrier → Find Carriers** pulls FMCSA Census by state (VA can be 1000+). Emails usually blank; phone + MC are there.
 
 ### Manual but high-value
 | Source | How |
@@ -1331,7 +1373,7 @@ This is a **federal** database of businesses licensed to buy/sell fresh & frozen
 | LinkedIn / ThomasNet / Yellow Pages | Export yourself → CSV import |
 
 ### Not scraped (ToS / robots.txt)
-LinkedIn, ThomasNet, Yellow Pages directories, PACA live search automation.
+LinkedIn, ThomasNet, Yellow Pages directories, PACA live search automation, SAFER HTML pages.
 
 ### Your time after this
 1. Find & Vet (or PACA CSV)
@@ -1628,7 +1670,9 @@ def page_help():
 4. **Carrier Inbox** for replies; mark **Hired** when they lease on.  
 5. Data lives in Google Sheet tab `carrier_leads` (separate from shippers).
 
-**RBAC:** Super Admin (you) opens **Org Setup → Team & Access**. Roles include Shipper Nurturer and Carrier Recruiter. Assign shipper and carrier lists separately.
+### Email templates
+- **Shipper** and **Carrier** templates: **Org Setup → Email templates (Shipper + Carrier)**  
+- Also previewed inside each funnel’s Pipeline page.
 
 Email opens the door. **Phone within 2 hours** of a positive reply closes the account / lease-on.
 """
@@ -1677,7 +1721,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.08d · grouped Shipper / Carrier")
+        st.caption("v2026.09.08e · Shipper/Carrier templates + statewide pull")
 
         # Top-level: Dashboard first
         if "Dashboard" in top_pages:

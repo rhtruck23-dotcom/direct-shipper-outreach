@@ -285,6 +285,7 @@ def discover_leads(
     # Source 1: Places (New) via our discovery module
     prog("Searching Google Places / Business…")
     places_key = (config.get("google_places_api_key") or "").strip()
+    max_candidates = int(config.get("max_candidates") or max_per_source or 200)
     try:
         rows = discover_candidates(
             places_key,
@@ -292,7 +293,8 @@ def discover_leads(
             state=state,
             zip_code=zip_code,
             use_demo=use_demo or not places_key,
-            max_per_query=max(5, max_per_source // 3),
+            max_per_query=20,
+            max_total=max_candidates,
         )
         all_c += _places_to_candidates(rows, freight_type)
         prog(f"Places: {len(rows)} candidates")

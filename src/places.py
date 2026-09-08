@@ -51,10 +51,11 @@ def search_places(
     zip_code: str = "",
     custom_query: str = "",
     max_results: int = 20,
+    max_pages: int = 3,
 ) -> list[dict[str, Any]]:
     """
-    Call Google Places API (New) Text Search.
-    Returns normalized lead-shaped dicts (email usually empty — fill from website/phone).
+    Call Google Places API (New) Text Search with pagination.
+    Each page ≤20; typically up to ~60 per query (3 pages).
     """
     if not api_key:
         raise ValueError(
@@ -72,43 +73,61 @@ def search_places(
         "X-Goog-Api-Key": api_key,
         "X-Goog-FieldMask": (
             "places.displayName,places.formattedAddress,places.nationalPhoneNumber,"
-            "places.websiteUri,places.id,places.addressComponents"
+            "places.websiteUri,places.id,places.addressComponents,nextPageToken"
         ),
     }
-    body: dict[str, Any] = {"textQuery": query, "pageSize": min(max_results, 20)}
-    resp = requests.post(url, headers=headers, json=body, timeout=30)
-    if resp.status_code != 200:
-        raise RuntimeError(f"Places API error {resp.status_code}: {resp.text[:400]}")
 
-    data = resp.json()
-    places = data.get("places") or []
-    results = []
-    for p in places:
-        addr = p.get("formattedAddress") or ""
-        state_code, county_guess, zip_guess = _parse_address_bits(
-            p.get("addressComponents") or [], addr
-        )
-        name = (p.get("displayName") or {}).get("text") or "Unknown"
-        results.append(
-            {
-                "id": p.get("id") or "",
-                "company_name": name,
-                "contact_name": "",
-                "email": "",
-                "phone": p.get("nationalPhoneNumber") or "",
-                "state": state_code or state,
-                "county": county_guess or county,
-                "zip": zip_guess or zip_code,
-                "freight_type": freight_type,
-                "lane_or_region": ", ".join(
-                    x for x in [county_guess or county, state_code or state] if x
-                ),
-                "notes": f"Found via Google Places: {query}",
-                "source": "google_places",
-                "website": p.get("websiteUri") or "",
-                "address": addr,
-            }
-        )
+    results: list[dict[str, Any]] = []
+    page_token = None
+    pages = max(1, min(int(max_pages or 1), 3))
+    target = max(1, min(int(max_results or 20), pages * 20))
+
+    for _ in range(pages):
+        body: dict[str, Any] = {
+            "textQuery": query,
+            "pageSize": min(20, target - len(results)),
+        }
+        if page_token:
+            body["pageToken"] = page_token
+        resp = requests.post(url, headers=headers, json=body, timeout=30)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Places API error {resp.status_code}: {resp.text[:400]}")
+
+        data = resp.json()
+        places = data.get("places") or []
+        for p in places:
+            addr = p.get("formattedAddress") or ""
+            state_code, county_guess, zip_guess = _parse_address_bits(
+                p.get("addressComponents") or [], addr
+            )
+            name = (p.get("displayName") or {}).get("text") or "Unknown"
+            results.append(
+                {
+                    "id": p.get("id") or "",
+                    "company_name": name,
+                    "contact_name": "",
+                    "email": "",
+                    "phone": p.get("nationalPhoneNumber") or "",
+                    "state": state_code or state,
+                    "county": county_guess or county,
+                    "zip": zip_guess or zip_code,
+                    "freight_type": freight_type,
+                    "lane_or_region": ", ".join(
+                        x for x in [county_guess or county, state_code or state] if x
+                    ),
+                    "notes": f"Found via Google Places: {query}",
+                    "source": "google_places",
+                    "website": p.get("websiteUri") or "",
+                    "address": addr,
+                }
+            )
+            if len(results) >= target:
+                return results
+
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+
     return results
 
 

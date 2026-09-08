@@ -1,7 +1,7 @@
 """Carrier funnel — unit + regression (shipper path untouched)."""
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import src.carrier_campaign as campaign
 import src.carrier_fmcsa as fmcsa
@@ -115,9 +115,56 @@ def test_fmcsa_demo_and_search():
     demo = fmcsa.demo_new_carriers("IL", days=30)
     assert len(demo) >= 3
     assert all(d["source"] == "fmcsa_demo" for d in demo)
-    rows, mode = fmcsa.search_new_carriers("IL", days=30, use_demo_if_needed=True, web_key="")
+    rows, mode = fmcsa.search_new_carriers(
+        "IL", days=30, use_demo_if_needed=True, web_key="", use_census=False
+    )
     assert "demo" in mode or mode.startswith("fmcsa")
     assert len(rows) >= 1
+
+
+def test_census_mapper_and_pull_mocked():
+    mapped = fmcsa._map_census_row(
+        {
+            "legal_name": "VA OWNER OP LLC",
+            "dot_number": "1234567",
+            "docket1": "555555",
+            "docket1prefix": "MC",
+            "phy_state": "VA",
+            "phy_city": "Richmond",
+            "phy_zip": "23219",
+            "phone": "8045551212",
+            "power_units": "2",
+            "status_code": "A",
+            "add_date": "2024-01-15T00:00:00.000",
+        }
+    )
+    assert mapped["mc_number"] == "MC-555555"
+    assert mapped["state"] == "VA"
+
+    fake = [
+        {
+            "legal_name": f"Carrier {i}",
+            "dot_number": str(1000 + i),
+            "docket1": str(2000 + i),
+            "docket1prefix": "MC",
+            "phy_state": "VA",
+            "phy_city": "Norfolk",
+            "power_units": "3",
+            "status_code": "A",
+            "phone": "",
+            "add_date": "2024-06-01",
+        }
+        for i in range(5)
+    ]
+    with patch("src.carrier_fmcsa.requests.get") as get:
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = fake
+        resp.text = ""
+        get.return_value = resp
+        rows, note = fmcsa.pull_census_carriers("VA", limit=5, max_power_units=10)
+    assert len(rows) == 5
+    assert "fmcsa_census" in note
 
 
 def test_rbac_carrier_modules_and_recruiter(tmp_path, monkeypatch):

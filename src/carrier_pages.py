@@ -117,25 +117,40 @@ def page_find_carriers():
     )
 
     with tab_fmcsa:
-        c1, c2, c3 = st.columns(3)
-        state = c1.text_input("State", "IL", key="fc_st")
-        days = c2.selectbox("Window", [7, 30, 60], index=1, key="fc_days")
-        use_demo = c3.checkbox("Allow demo list (UAT)", value=True)
+        st.markdown("#### Pull carriers by state (official FMCSA Census)")
+        st.caption(
+            "Enter **VA** (or any 2-letter state) → pulls **up to thousands** of active carriers "
+            "with MC# from data.transportation.gov. Emails are usually blank — add before outreach. "
+            "Filter to small fleets for owner-operator lease-on targets."
+        )
+        c1, c2, c3, c4 = st.columns(4)
+        state = c1.text_input("State (2-letter)", "VA", key="fc_st")
+        limit = c2.number_input("Max carriers", min_value=50, max_value=5000, value=1000, step=50)
+        max_pu = c3.number_input("Max power units (O/O filter)", min_value=0, max_value=500, value=10)
+        active = c4.checkbox("Active only", value=True)
+        use_demo = st.checkbox("Fallback to tiny demo if Census fails", value=True)
         mc_raw = st.text_area(
-            "Optional MC# list (live QCMobile — one per line)",
+            "Optional MC# list (QCMobile — needs fmcsa_web_key)",
             placeholder="MC-123456\nMC-654321",
-            height=80,
+            height=70,
         )
         mc_list = [x.strip() for x in mc_raw.splitlines() if x.strip()] if mc_raw else None
-        if st.button("Pull carriers", type="primary", key="fc_pull"):
-            rows, mode = search_new_carriers(
-                state=state, days=int(days), use_demo_if_needed=use_demo, mc_list=mc_list
-            )
+        if st.button("Pull carriers from FMCSA Census", type="primary", key="fc_pull"):
+            with st.spinner("Querying FMCSA Company Census…"):
+                rows, mode = search_new_carriers(
+                    state=state,
+                    use_demo_if_needed=use_demo,
+                    mc_list=mc_list,
+                    limit=int(limit),
+                    max_power_units=int(max_pu) if max_pu > 0 else None,
+                    use_census=True,
+                )
             st.session_state["carrier_pull"] = rows
-            st.info(f"Mode: {mode} · {len(rows)} row(s)")
+            st.info(f"{mode}")
+            st.success(f"Pulled {len(rows)} carrier(s).")
         rows = st.session_state.get("carrier_pull") or []
         if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=320)
             if can(user, "find_carriers", "create") or is_super_admin(user):
                 if st.button("Save pull to Carrier Leads", type="primary"):
                     a, u = upsert_carriers(rows)

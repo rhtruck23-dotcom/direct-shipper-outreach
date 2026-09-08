@@ -25,6 +25,7 @@ def find_and_vet_shippers(
     min_score: int = 6,
     enrich_websites: bool = True,
     use_demo: bool = False,
+    max_candidates: int = 200,
     progress_cb=None,
 ) -> dict[str, Any]:
     """
@@ -37,8 +38,8 @@ def find_and_vet_shippers(
         "google_cse_id": (company.get("google_cse_id") or "").strip(),
         "gemini_api_key": (company.get("gemini_api_key") or "").strip(),
         "use_demo": use_demo,
+        "max_candidates": max_candidates,
     }
-    # county currently folded into location via zip/state in agent
     _ = county
     _ = enrich_websites
 
@@ -49,11 +50,10 @@ def find_and_vet_shippers(
         freight_type=freight_type,
         equipment=equipment,
         config=config,
-        max_per_source=15,
+        max_per_source=max(15, min(int(max_candidates or 200), 400)),
         progress_cb=progress_cb,
     )
 
-    # filter_vetted uses vet_score 1-10
     qualified = filter_vetted(leads, min_score=min_score, include_maybe=True)
     rejected = [v for v in leads if (v.get("vet_status") or "") == "reject"]
 
@@ -67,4 +67,5 @@ def find_and_vet_shippers(
         "has_gemini": bool(config["gemini_api_key"]),
         "has_cse": bool(config["google_cse_api_key"] and config["google_cse_id"]),
         "paca_hint": paca_manual_search_instructions(zip_code or state or "your state"),
+        "max_candidates": max_candidates,
     }
