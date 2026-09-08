@@ -1118,13 +1118,16 @@ def page_find_leads():
     )
 
     with tab_paste:
-        st.markdown("#### Paste anything → leads → follow-up")
+        st.markdown("#### Paste anything → filter → follow-up")
         st.caption(
-            "Copy from LinkedIn, ThomasNet, email, Notes, Excel — **Ctrl+V here**. "
-            "No scraping. App extracts company / contact / email / phone, then you save "
-            "into the same shipper pipeline."
+            "1) Copy from LinkedIn / ThomasNet / Excel / email  ·  2) Paste here  ·  "
+            "3) Filter  ·  4) Save + Activate. App does the rest (same 4-email pipeline)."
         )
-        from src.paste_dump import parse_paste_dump
+        from src.paste_dump import (
+            filter_paste_leads,
+            leads_to_csv_bytes,
+            parse_paste_dump,
+        )
 
         pc1, pc2, pc3 = st.columns(3)
         p_state = pc1.text_input("Default state", "VA", key="paste_st")
@@ -1139,7 +1142,7 @@ def page_find_leads():
                 "Example:\n"
                 "Jordan Lee\nProcurement Manager at Blue Ridge Produce LLC\n"
                 "jordan@blueridgeproduce.com\n(540) 555-0199\n\n"
-                "Or paste a whole LinkedIn search page / Excel copy…"
+                "Or paste a whole LinkedIn / Excel copy…"
             ),
             key="paste_blob",
         )
@@ -1151,22 +1154,53 @@ def page_find_leads():
             if not parsed:
                 st.warning("Nothing extracted — include at least an email or company name.")
             else:
-                st.success(f"Extracted {len(parsed)} lead(s). Review, then save.")
+                st.success(f"Extracted {len(parsed)} lead(s).")
+
+        if blob.strip() and not st.session_state.get("paste_leads"):
+            st.info("Click **Parse paste** after you paste.")
 
         parsed = st.session_state.get("paste_leads") or []
         if parsed:
-            rows = []
+            st.markdown("##### Filters")
+            f1, f2, f3, f4 = st.columns(4)
+            only_email = f1.checkbox("Only rows with email", value=True, key="paste_fe")
+            only_phone = f2.checkbox("Only rows with phone", value=False, key="paste_fp")
+            kw = f3.text_input("Keyword filter", "", key="paste_kw")
+            select_mode = f4.selectbox(
+                "Auto-select",
+                ["With email only", "All filtered", "None"],
+                key="paste_selmode",
+            )
+            kept = []
             for i, l in enumerate(parsed):
+                if filter_paste_leads(
+                    [l],
+                    require_email=only_email,
+                    require_phone=only_phone,
+                    keyword=kw,
+                ):
+                    kept.append((i, l))
+            st.caption(f"Showing {len(kept)} of {len(parsed)} after filters.")
+
+            rows = []
+            for orig_i, l in kept:
+                has_email = bool((l.get("email") or "").strip())
+                if select_mode == "All filtered":
+                    sel = True
+                elif select_mode == "With email only":
+                    sel = has_email
+                else:
+                    sel = False
                 rows.append(
                     {
-                        "Select": bool((l.get("email") or "").strip()),
+                        "Select": sel,
                         "Company": l.get("company_name") or "",
                         "Contact": l.get("contact_name") or "",
                         "Email": l.get("email") or "",
                         "Phone": l.get("phone") or "",
                         "State": l.get("state") or p_state,
                         "Freight": l.get("freight_type") or p_freight,
-                        "_i": i,
+                        "_i": orig_i,
                     }
                 )
             edited = st.data_editor(
@@ -1192,21 +1226,32 @@ def page_find_leads():
                 if not base.get("email"):
                     continue
                 to_save.append(base)
-            s1, s2 = st.columns(2)
+
+            s1, s2, s3 = st.columns(3)
             if s1.button("Save to Leads List", key="paste_save") and to_save:
                 a, u = upsert_leads(to_save)
-                st.success(f"Saved {a} new, {u} updated. Open Shipper → Pipeline when ready.")
+                st.success(f"Saved {a} new, {u} updated.")
                 _refresh_leads()
             if s2.button("Save + Activate pipeline", type="primary", key="paste_act") and to_save:
                 a, u = upsert_leads(to_save)
                 leads = _refresh_leads()
                 keys = [lead_key(t) for t in to_save]
                 n, skipped = activate_sequence(leads, keys, force=False)
-                st.success(f"Saved ({a}/{u}), activated {n}. Go to Shipper → Pipeline → Start.")
+                st.success(
+                    f"Saved ({a}/{u}), activated {n}. Next: **Shipper → Pipeline → Start** "
+                    "(dry-run emails)."
+                )
                 for s in skipped:
                     st.warning(s)
                 _refresh_leads()
-            st.caption("Rows without email are skipped on save — type email in the Email column.")
+            s3.download_button(
+                "Download filtered CSV",
+                data=leads_to_csv_bytes(to_save or [l for _, l in kept]),
+                file_name="paste_leads.csv",
+                mime="text/csv",
+                key="paste_csv",
+            )
+            st.caption("Rows without email are skipped on save — type email in the Email column if needed.")
 
     with tab_vet:
         c1, c2, c3, c4 = st.columns(4)
@@ -1749,9 +1794,9 @@ def page_help():
     st.markdown(
         """
 ### Shipper funnel
-1. Keep broker boards for cash while direct accounts ramp (30–90 days).  
-2. **Find Leads** by state/zip → add logistics email → Save.  
-3. **Pipeline** → Activate → Start (emails on days 0 / 4 / 9 / 16).  
+1. **Easiest:** **Shipper → Find Leads → Paste dump** — copy LinkedIn/Excel/email text → Parse → filter → **Save + Activate**.  
+2. Or **Find & Vet** by state (Places) / **USDA PACA** CSV.  
+3. **Pipeline** → Start (emails on days 0 / 4 / 9 / 16).  
 4. **Inbox Bot** for replies; you close rates and loads.  
 5. **Leads List** is your memory — color = stage; red = never contact again.
 
@@ -1813,7 +1858,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.08f · paste dump → pipeline")
+        st.caption("v2026.09.08g · paste + filters")
 
         # Top-level: Dashboard first
         if "Dashboard" in top_pages:

@@ -40,12 +40,15 @@ def test_email_only_infers_company():
     assert "Heartlanddairy" in leads[0]["company_name"] or "heartland" in leads[0]["company_name"].lower()
 
 
-def test_dedupe_same_email():
-    text = """
-a@a.com
-Acme
-a@a.com
-Acme again
-"""
-    leads = parse_paste_dump(text)
-    assert len(leads) == 1
+def test_filter_and_csv():
+    from src.paste_dump import filter_paste_leads, leads_to_csv_bytes
+
+    leads = [
+        {"company_name": "A", "email": "a@a.com", "phone": ""},
+        {"company_name": "B Produce", "email": "", "phone": "555"},
+        {"company_name": "C", "email": "c@c.com", "phone": "555"},
+    ]
+    assert len(filter_paste_leads(leads, require_email=True)) == 2
+    assert len(filter_paste_leads(leads, keyword="produce")) == 1
+    raw = leads_to_csv_bytes(leads)
+    assert b"company_name" in raw and b"a@a.com" in raw

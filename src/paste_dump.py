@@ -293,7 +293,66 @@ def _dedupe(leads: list[dict]) -> list[dict]:
             seen[key] = lead
         else:
             old = seen[key]
-            for f in ("contact_name", "phone", "website", "notes", "remarks"):
+            for f in ("contact_name", "phone", "website", "notes", "remarks", "mc_number", "dot_number"):
                 if not old.get(f) and lead.get(f):
                     old[f] = lead[f]
     return list(seen.values())
+
+
+def filter_paste_leads(
+    leads: list[dict],
+    *,
+    require_email: bool = False,
+    require_phone: bool = False,
+    keyword: str = "",
+) -> list[dict]:
+    """In-app filters before save / activate."""
+    out = list(leads)
+    if require_email:
+        out = [l for l in out if (l.get("email") or "").strip()]
+    if require_phone:
+        out = [l for l in out if (l.get("phone") or "").strip()]
+    kw = (keyword or "").strip().lower()
+    if kw:
+        out = [
+            l
+            for l in out
+            if kw
+            in " ".join(
+                [
+                    str(l.get("company_name") or ""),
+                    str(l.get("contact_name") or ""),
+                    str(l.get("email") or ""),
+                    str(l.get("notes") or ""),
+                    str(l.get("remarks") or ""),
+                ]
+            ).lower()
+        ]
+    return out
+
+
+def leads_to_csv_bytes(leads: list[dict]) -> bytes:
+    import csv
+    import io
+
+    fields = [
+        "company_name",
+        "contact_name",
+        "email",
+        "phone",
+        "state",
+        "zip",
+        "freight_type",
+        "website",
+        "mc_number",
+        "dot_number",
+        "source",
+        "notes",
+        "remarks",
+    ]
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
+    w.writeheader()
+    for lead in leads:
+        w.writerow({f: lead.get(f, "") for f in fields})
+    return buf.getvalue().encode("utf-8-sig")
