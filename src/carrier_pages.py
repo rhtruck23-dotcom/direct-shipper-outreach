@@ -112,9 +112,43 @@ def page_find_carriers():
     )
     company = _company()
 
-    tab_fmcsa, tab_import, tab_manual = st.tabs(
-        ["FMCSA / new authority", "Import PDF / Excel / CSV", "Add one carrier"]
+    tab_paste, tab_fmcsa, tab_import, tab_manual = st.tabs(
+        [
+            "Paste dump (easiest)",
+            "FMCSA / new authority",
+            "Import PDF / Excel / CSV",
+            "Add one carrier",
+        ]
     )
+
+    with tab_paste:
+        st.markdown("#### Paste carrier list → lease-on pipeline")
+        st.caption(
+            "Copy from LinkedIn, email, Excel, Notes — paste here. App pulls company / contact / email / phone / MC if present."
+        )
+        from src.paste_dump import parse_paste_dump
+
+        cstate = st.text_input("Default state", "VA", key="cpaste_st")
+        blob = st.text_area("Paste dump", height=200, key="cpaste_blob")
+        if st.button("Parse paste", type="primary", key="cpaste_parse"):
+            parsed = parse_paste_dump(
+                blob, state=cstate, freight_type="Reefer", source="carrier_paste_dump"
+            )
+            # map freight field unused for carriers — keep company/email/phone
+            for p in parsed:
+                p["equipment_type"] = p.get("freight_type") or ""
+                p["source"] = "carrier_paste_dump"
+            st.session_state["carrier_paste"] = parsed
+            st.success(f"Extracted {len(parsed)} row(s).") if parsed else st.warning("Nothing found.")
+        parsed = st.session_state.get("carrier_paste") or []
+        if parsed:
+            st.dataframe(pd.DataFrame(parsed), use_container_width=True, hide_index=True)
+            if can(user, "find_carriers", "create") or is_super_admin(user):
+                if st.button("Save paste to Carrier Leads", type="primary", key="cpaste_save"):
+                    # only rows with email or mc/company
+                    a, u = upsert_carriers(parsed)
+                    st.success(f"Saved — added {a}, updated {u}.")
+                    _refresh_carriers()
 
     with tab_fmcsa:
         st.markdown("#### Pull carriers by state (official FMCSA Census)")

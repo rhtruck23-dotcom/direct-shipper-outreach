@@ -1106,8 +1106,9 @@ def page_find_leads():
         st.warning("Read-only: ask Super Admin for Find Leads create access, or work assigned leads in Pipeline.")
     company = _company()
 
-    tab_vet, tab_paca, tab_import, tab_manual, tab_limits = st.tabs(
+    tab_paste, tab_vet, tab_paca, tab_import, tab_manual, tab_limits = st.tabs(
         [
+            "Paste dump (easiest)",
             "Find & Vet (main)",
             "USDA PACA (reefer gold)",
             "Import CSV",
@@ -1115,6 +1116,97 @@ def page_find_leads():
             "Sources / limits",
         ]
     )
+
+    with tab_paste:
+        st.markdown("#### Paste anything → leads → follow-up")
+        st.caption(
+            "Copy from LinkedIn, ThomasNet, email, Notes, Excel — **Ctrl+V here**. "
+            "No scraping. App extracts company / contact / email / phone, then you save "
+            "into the same shipper pipeline."
+        )
+        from src.paste_dump import parse_paste_dump
+
+        pc1, pc2, pc3 = st.columns(3)
+        p_state = pc1.text_input("Default state", "VA", key="paste_st")
+        p_freight = pc2.selectbox(
+            "Freight", ["Reefer", "Dry Van", "Box Truck"], key="paste_fr"
+        )
+        p_zip = pc3.text_input("Default zip (optional)", "", key="paste_zip")
+        blob = st.text_area(
+            "Paste dump",
+            height=220,
+            placeholder=(
+                "Example:\n"
+                "Jordan Lee\nProcurement Manager at Blue Ridge Produce LLC\n"
+                "jordan@blueridgeproduce.com\n(540) 555-0199\n\n"
+                "Or paste a whole LinkedIn search page / Excel copy…"
+            ),
+            key="paste_blob",
+        )
+        if st.button("Parse paste", type="primary", key="paste_parse"):
+            parsed = parse_paste_dump(
+                blob, state=p_state, zip_code=p_zip, freight_type=p_freight
+            )
+            st.session_state["paste_leads"] = parsed
+            if not parsed:
+                st.warning("Nothing extracted — include at least an email or company name.")
+            else:
+                st.success(f"Extracted {len(parsed)} lead(s). Review, then save.")
+
+        parsed = st.session_state.get("paste_leads") or []
+        if parsed:
+            rows = []
+            for i, l in enumerate(parsed):
+                rows.append(
+                    {
+                        "Select": bool((l.get("email") or "").strip()),
+                        "Company": l.get("company_name") or "",
+                        "Contact": l.get("contact_name") or "",
+                        "Email": l.get("email") or "",
+                        "Phone": l.get("phone") or "",
+                        "State": l.get("state") or p_state,
+                        "Freight": l.get("freight_type") or p_freight,
+                        "_i": i,
+                    }
+                )
+            edited = st.data_editor(
+                pd.DataFrame(rows),
+                hide_index=True,
+                use_container_width=True,
+                disabled=["_i"],
+                key="paste_editor",
+                height=320,
+            )
+            to_save = []
+            for _, row in edited.iterrows():
+                if not row.get("Select"):
+                    continue
+                base = dict(parsed[int(row["_i"])])
+                base["company_name"] = str(row.get("Company") or "").strip()
+                base["contact_name"] = str(row.get("Contact") or "").strip()
+                base["email"] = str(row.get("Email") or "").strip()
+                base["phone"] = str(row.get("Phone") or "").strip()
+                base["state"] = str(row.get("State") or p_state).strip()
+                base["freight_type"] = str(row.get("Freight") or p_freight).strip()
+                base["source"] = "paste_dump"
+                if not base.get("email"):
+                    continue
+                to_save.append(base)
+            s1, s2 = st.columns(2)
+            if s1.button("Save to Leads List", key="paste_save") and to_save:
+                a, u = upsert_leads(to_save)
+                st.success(f"Saved {a} new, {u} updated. Open Shipper → Pipeline when ready.")
+                _refresh_leads()
+            if s2.button("Save + Activate pipeline", type="primary", key="paste_act") and to_save:
+                a, u = upsert_leads(to_save)
+                leads = _refresh_leads()
+                keys = [lead_key(t) for t in to_save]
+                n, skipped = activate_sequence(leads, keys, force=False)
+                st.success(f"Saved ({a}/{u}), activated {n}. Go to Shipper → Pipeline → Start.")
+                for s in skipped:
+                    st.warning(s)
+                _refresh_leads()
+            st.caption("Rows without email are skipped on save — type email in the Email column.")
 
     with tab_vet:
         c1, c2, c3, c4 = st.columns(4)
@@ -1721,7 +1813,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.08e · Shipper/Carrier templates + statewide pull")
+        st.caption("v2026.09.08f · paste dump → pipeline")
 
         # Top-level: Dashboard first
         if "Dashboard" in top_pages:
