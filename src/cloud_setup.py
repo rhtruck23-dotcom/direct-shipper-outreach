@@ -22,6 +22,7 @@ def build_simple_secrets_toml(sheet_id: str, json_text: str) -> str:
         f'google_sheet_id = "{sheet_id.strip()}"\n'
         f"send_live_emails = false\n"
         f'gcp_sa_b64 = "{b64}"\n'
+        f'super_admin_pin = "CHANGE_ME_OWNER_PIN"\n'
         "\n"
         "[company]\n"
         'my_company = "LogixTrek LLC"\n'

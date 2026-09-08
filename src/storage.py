@@ -40,6 +40,7 @@ SHEET_COLUMNS = [
     "responded",
     "active_sequence",
     "contact_count",
+    "assigned_to",
     "conversation_json",
 ]
 
@@ -67,6 +68,7 @@ def _blank_lead() -> dict[str, Any]:
         "responded": False,
         "active_sequence": False,
         "contact_count": 0,
+        "assigned_to": "",
         "conversation": [],
     }
 
@@ -104,6 +106,7 @@ def _normalize(raw: dict) -> dict:
     )
     if not lead.get("status"):
         lead["status"] = "not_started"
+    lead["assigned_to"] = str(lead.get("assigned_to") or "").strip()
     return lead
 
 
@@ -266,11 +269,31 @@ def _open_worksheet():
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(title="leads", rows=2000, cols=len(SHEET_COLUMNS))
         ws.append_row(SHEET_COLUMNS)
-    # ensure header
+        return ws
+
     header = ws.row_values(1)
-    if header[: len(SHEET_COLUMNS)] != SHEET_COLUMNS:
-        ws.clear()
+    if header == SHEET_COLUMNS:
+        return ws
+    if not header:
         ws.append_row(SHEET_COLUMNS)
+        return ws
+
+    missing = [c for c in SHEET_COLUMNS if c not in header]
+    if missing:
+        start_col = len(header) + 1
+        for i, col in enumerate(missing):
+            ws.update_cell(1, start_col + i, col)
+        header = ws.row_values(1)
+
+    # Normalize column order without dropping rows (rewrite from records)
+    if header[: len(SHEET_COLUMNS)] != SHEET_COLUMNS:
+        records = ws.get_all_records()
+        values = [SHEET_COLUMNS]
+        for r in records:
+            row = _to_sheet_row(_normalize(r))
+            values.append([row.get(c, "") for c in SHEET_COLUMNS])
+        ws.clear()
+        ws.update("A1", values, value_input_option="USER_ENTERED")
     return ws
 
 
@@ -343,6 +366,7 @@ def upsert_leads(new_leads: list[dict]) -> tuple[int, int]:
                 "contact_count",
                 "conversation",
                 "remarks",
+                "assigned_to",
             }
             for field, val in incoming.items():
                 if field in protected:

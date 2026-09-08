@@ -31,9 +31,30 @@ from src.leads import (
 from src.notify import notify_owner
 from src.places import demo_places_results, search_places
 from src.find_vet import find_and_vet_shippers
+from src.rbac import (
+    ACTIONS,
+    MODULES,
+    ROLE_PRESETS,
+    allowed_pages,
+    assign_leads,
+    authenticate,
+    can,
+    can_access_lead,
+    create_user,
+    delete_user,
+    ensure_super_admin_pin,
+    is_super_admin,
+    list_users,
+    load_rbac_state,
+    module_choices_for_team,
+    role_choices,
+    scope_leads,
+    sync_super_admin_profile,
+    update_user,
+)
 from src.schedule import days_until_next, next_action_for_lead
 from src.stages import STAGE_STYLE, contact_indicator, stage_label
-from src.storage import using_cloud
+from src.storage import update_lead, using_cloud
 from src.cloud_setup import build_simple_secrets_toml, secret_status
 from src.templates import render_email
 
@@ -223,10 +244,44 @@ st.markdown(
     box-shadow: var(--lg-shadow);
   }
 
-  /* Radio in sidebar */
-  section[data-testid="stSidebar"] label[data-baseweb="radio"] {
-    border-radius: 10px;
-    padding: 0.2rem 0.4rem;
+  /* Sidebar nav — glass pills; selected glows + ~20% larger */
+  section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] {
+    border-radius: 14px !important;
+    padding: 0.35rem 0.65rem !important;
+    margin: 0.22rem 0 !important;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+    border: 1px solid transparent;
+    background: rgba(255, 255, 255, 0.22);
+  }
+  section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] p,
+  section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] span {
+    font-size: 0.95rem !important;
+    font-weight: 500 !important;
+    color: var(--lg-deep) !important;
+  }
+  section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) {
+    transform: scale(1.2);
+    transform-origin: left center;
+    margin: 0.55rem 0.15rem 0.55rem 0 !important;
+    padding: 0.55rem 0.85rem !important;
+    background: linear-gradient(
+      135deg,
+      rgba(14, 165, 233, 0.42),
+      rgba(20, 184, 166, 0.48),
+      rgba(16, 185, 129, 0.38)
+    ) !important;
+    border: 1px solid rgba(255, 255, 255, 0.75) !important;
+    box-shadow:
+      0 0 0 1px rgba(14, 165, 233, 0.35),
+      0 0 18px rgba(14, 165, 233, 0.55),
+      0 0 36px rgba(16, 185, 129, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.55) !important;
+    backdrop-filter: blur(12px);
+  }
+  section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) p,
+  section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) span {
+    font-size: 1.14rem !important;
+    font-weight: 700 !important;
   }
 
   /* Slider */
@@ -282,9 +337,80 @@ def _company() -> dict:
     return st.session_state.company
 
 
+def _current_user() -> dict | None:
+    return st.session_state.get("auth_user")
+
+
+def _secrets_super_pin() -> str:
+    try:
+        return str(st.secrets.get("super_admin_pin", "") or "").strip()
+    except Exception:
+        return ""
+
+
+def _require_auth() -> dict | None:
+    """Show login until authenticated. Returns current user or None."""
+    user = _current_user()
+    if user:
+        return user
+
+    st.markdown("### LogixTrek Outreach")
+    st.caption("Sign in — Super Admin sees everything; team only sees assigned leads.")
+    company = _company()
+    with st.form("login_form"):
+        email = st.text_input(
+            "Work email",
+            value=company.get("my_email", "accounts@logixtrek.com"),
+        )
+        pin = st.text_input("PIN", type="password", help="Owner: set super_admin_pin in Secrets, or create PIN on first login (4+ digits).")
+        submitted = st.form_submit_button("Sign in", type="primary")
+    if submitted:
+        authed = authenticate(
+            email,
+            pin,
+            company_email=company.get("my_email", ""),
+            secrets_pin=_secrets_super_pin(),
+        )
+        if authed:
+            st.session_state.auth_user = authed
+            if is_super_admin(authed):
+                sync_super_admin_profile(
+                    load_rbac_state(),
+                    name=company.get("my_name") or "Super Admin",
+                    email=company.get("my_email") or email,
+                )
+            st.rerun()
+        st.error("Wrong email or PIN.")
+    st.info(
+        "You are **Super Admin** at your owner email. Add teammates under **Org Setup → Team & Access** after you sign in."
+    )
+    return None
+
+
+def _all_leads() -> list[dict]:
+    """Full database — never save a scoped list back with persist_lead_tracking."""
+    return load_leads()
+
+
 def _refresh_leads() -> list[dict]:
-    st.session_state.leads = load_leads()
-    return st.session_state.leads
+    """Leads visible to the signed-in user (assignment scoped)."""
+    all_leads = _all_leads()
+    st.session_state.leads_all = all_leads
+    visible = scope_leads(all_leads, _current_user())
+    st.session_state.leads = visible
+    return visible
+
+
+def _persist_one(lead: dict) -> None:
+    """Safe single-lead save — does not wipe other teammates' leads."""
+    user = _current_user()
+    if not can_access_lead(user, lead) and not is_super_admin(user):
+        st.error("No access to that lead.")
+        return
+    if not can(user, "leads", "update") and not is_super_admin(user):
+        st.error("No update permission.")
+        return
+    update_lead(lead)
 
 
 def _storage_banner():
@@ -295,6 +421,16 @@ def _storage_banner():
             "💾 Local mode — fine for testing. For the free internet app, connect a Google Sheet "
             "in **Cloud Hosting** so records survive and you never re-bother the same people."
         )
+
+
+def _assignee_name(user_id: str, users: list[dict] | None = None) -> str:
+    if not user_id:
+        return "Unassigned (owner pool)"
+    users = users or list_users(include_super=True)
+    for u in users:
+        if u.get("id") == user_id:
+            return f"{u.get('name')} ({u.get('role')})"
+    return user_id
 
 
 def _legend_html() -> str:
@@ -372,14 +508,21 @@ def page_dashboard():
 
 def page_leads_list():
     st.title("Leads List")
+    user = _current_user()
+    if not can(user, "leads", "read"):
+        st.error("No access to Leads.")
+        return
     st.caption(
         "Your permanent contact record. Color = stage. "
         "Do Not Contact and finished sequences are blocked from repeat spam."
     )
+    if not is_super_admin(user):
+        st.info("You only see leads assigned to you by Super Admin.")
     _storage_banner()
     st.markdown(_legend_html(), unsafe_allow_html=True)
 
     leads = _refresh_leads()
+    team = list_users(include_super=True)
     f1, f2, f3, f4, f5 = st.columns(5)
     with f1:
         f_state = st.text_input("State", "", key="list_state")
@@ -414,24 +557,25 @@ def page_leads_list():
 
     rows = []
     for l in filtered:
-        rows.append(
-            {
-                "Stage": stage_label(l.get("status") or "not_started"),
-                "Indicator": contact_indicator(l),
-                "Company": l.get("company_name") or "",
-                "Contact": l.get("contact_name") or "",
-                "Email": l.get("email") or "",
-                "Phone": l.get("phone") or "",
-                "State": l.get("state") or "",
-                "Zip": l.get("zip") or "",
-                "Freight": l.get("freight_type") or "",
-                "Emails sent": int(l.get("contact_count") or 0),
-                "Last emailed": (l.get("last_emailed") or "")[:10],
-                "Remarks": l.get("remarks") or "",
-                "Notes": l.get("notes") or "",
-                "_key": lead_key(l),
-            }
-        )
+        row = {
+            "Stage": stage_label(l.get("status") or "not_started"),
+            "Indicator": contact_indicator(l),
+            "Company": l.get("company_name") or "",
+            "Contact": l.get("contact_name") or "",
+            "Email": l.get("email") or "",
+            "Phone": l.get("phone") or "",
+            "State": l.get("state") or "",
+            "Zip": l.get("zip") or "",
+            "Freight": l.get("freight_type") or "",
+            "Emails sent": int(l.get("contact_count") or 0),
+            "Last emailed": (l.get("last_emailed") or "")[:10],
+            "Remarks": l.get("remarks") or "",
+            "Notes": l.get("notes") or "",
+            "_key": lead_key(l),
+        }
+        if is_super_admin(user):
+            row["Assigned"] = _assignee_name(l.get("assigned_to") or "", team)
+        rows.append(row)
 
     df = pd.DataFrame(rows)
     display = df.drop(columns=["_key"])
@@ -441,6 +585,10 @@ def page_leads_list():
         hide_index=True,
         height=420,
     )
+
+    if not can(user, "leads", "update"):
+        st.caption("Read-only access.")
+        return
 
     st.subheader("Edit remarks / mark status")
     labels = {
@@ -457,6 +605,7 @@ def page_leads_list():
     with r2:
         st.write(f"**Indicator:** {contact_indicator(lead)}")
         st.write(f"**Stage:** {stage_label(lead.get('status') or 'not_started')}")
+        st.write(f"**Assigned:** {_assignee_name(lead.get('assigned_to') or '', team)}")
         st.write(f"**Conversation messages:** {len(lead.get('conversation') or [])}")
         if lead.get("conversation"):
             with st.expander("History"):
@@ -470,124 +619,334 @@ def page_leads_list():
     if b1.button("Save remarks", type="primary"):
         lead["remarks"] = new_remarks
         lead["notes"] = new_notes
-        persist_lead_tracking(leads)
+        _persist_one(lead)
         st.success("Saved.")
         st.rerun()
     if b2.button("Mark Converted ✅"):
         mark_converted(lead)
-        persist_lead_tracking(leads)
+        _persist_one(lead)
         st.success("Converted.")
         st.rerun()
     if b3.button("Do Not Contact 🚫"):
-        mark_response(lead, positive=False)
-        persist_lead_tracking(leads)
-        st.success("Locked — will never email again.")
-        st.rerun()
+        if can(user, "leads", "delete") or is_super_admin(user):
+            mark_response(lead, positive=False)
+            _persist_one(lead)
+            st.success("Locked — will never email again.")
+            st.rerun()
+        else:
+            st.error("No delete / DNC permission.")
     if b4.button("Mark Responded 📞"):
         mark_response(lead, positive=True)
-        persist_lead_tracking(leads)
+        _persist_one(lead)
         st.success("Sequence stopped — they replied.")
         st.rerun()
 
 
+def _page_team_access():
+    """Super Admin only — team CRUD + lead assignment."""
+    if not is_super_admin(_current_user()):
+        st.error("Only Super Admin can manage team access.")
+        return
+
+    state = load_rbac_state()
+    company = _company()
+    st.subheader("Your Super Admin account")
+    st.write(f"**{company.get('my_email') or state['super_admin'].get('email')}** — full access to every module and every lead.")
+
+    with st.expander("Change Super Admin PIN"):
+        with st.form("sa_pin_form"):
+            new_pin = st.text_input("New PIN (4+ characters)", type="password")
+            confirm = st.text_input("Confirm PIN", type="password")
+            if st.form_submit_button("Update PIN", type="primary"):
+                if len(new_pin) < 4 or new_pin != confirm:
+                    st.error("PINs must match and be at least 4 characters.")
+                else:
+                    ensure_super_admin_pin(state, new_pin)
+                    sync_super_admin_profile(
+                        load_rbac_state(),
+                        name=company.get("my_name") or "Super Admin",
+                        email=company.get("my_email") or "",
+                    )
+                    st.success("Super Admin PIN updated. Also set `super_admin_pin` in Streamlit Secrets as a backup.")
+
+    st.divider()
+    st.subheader("Team members")
+    st.caption(
+        "Nurturers / Reps only see leads you assign. Managers get broader CRUD on their assigned pool. "
+        "Org Setup & Cloud Hosting stay Super Admin only."
+    )
+
+    team = [u for u in list_users(state, include_super=False)]
+    if team:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Name": u.get("name"),
+                        "Email": u.get("email"),
+                        "Role": ROLE_PRESETS.get(u.get("role"), {}).get("label", u.get("role")),
+                        "Active": u.get("active", True),
+                        "Modules": ", ".join(
+                            f"{m}:{'/'.join(a)}"
+                            for m, a in (u.get("module_access") or {}).items()
+                        ),
+                    }
+                    for u in team
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No teammates yet — add one below.")
+
+    with st.form("add_user_form"):
+        st.markdown("#### Add teammate")
+        c1, c2 = st.columns(2)
+        name = c1.text_input("Name")
+        email = c2.text_input("Email")
+        role = st.selectbox(
+            "Role",
+            role_choices(),
+            format_func=lambda r: ROLE_PRESETS[r]["label"],
+        )
+        pin = st.text_input("Temporary PIN", type="password")
+        st.caption(f"Preset modules for {ROLE_PRESETS[role]['label']}: {ROLE_PRESETS[role].get('modules')}")
+        if st.form_submit_button("Create user", type="primary"):
+            try:
+                create_user(state, name=name, email=email, pin=pin, role=role)
+                st.success(f"Created {name}. Share their email + PIN privately.")
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
+
+    if team:
+        st.markdown("#### Edit / remove teammate")
+        pick_labels = {f"{u['name']} <{u['email']}>": u["id"] for u in team}
+        pick = st.selectbox("Select user", list(pick_labels.keys()), key="edit_user_pick")
+        uid = pick_labels[pick]
+        user = next(u for u in team if u["id"] == uid)
+
+        with st.form("edit_user_form"):
+            ename = st.text_input("Name", value=user.get("name") or "")
+            eemail = st.text_input("Email", value=user.get("email") or "")
+            erole = st.selectbox(
+                "Role",
+                role_choices(),
+                index=max(0, role_choices().index(user.get("role") or "nurturer")),
+                format_func=lambda r: ROLE_PRESETS[r]["label"],
+            )
+            eactive = st.toggle("Active", value=bool(user.get("active", True)))
+            epin = st.text_input("Reset PIN (leave blank to keep)", type="password")
+
+            st.markdown("**Module CRUD** (scalable — new modules appear here when registered)")
+            access = dict(user.get("module_access") or {})
+            new_access: dict[str, list[str]] = {}
+            for mid in module_choices_for_team():
+                label = MODULES[mid]["label"]
+                cols = st.columns(len(ACTIONS) + 1)
+                cols[0].markdown(f"**{label}**")
+                chosen = []
+                current = set(access.get(mid) or [])
+                for i, act in enumerate(ACTIONS):
+                    if cols[i + 1].checkbox(
+                        act,
+                        value=act in current,
+                        key=f"perm_{uid}_{mid}_{act}",
+                    ):
+                        chosen.append(act)
+                if chosen:
+                    new_access[mid] = chosen
+
+            save_btn = st.form_submit_button("Save user", type="primary")
+            del_btn = st.form_submit_button("Remove user")
+            if save_btn:
+                try:
+                    update_user(
+                        load_rbac_state(),
+                        uid,
+                        name=ename,
+                        email=eemail,
+                        role=erole,
+                        active=eactive,
+                        module_access=new_access,
+                        pin=epin or None,
+                    )
+                    st.success("User updated.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+            if del_btn:
+                delete_user(load_rbac_state(), uid)
+                st.success("User removed.")
+                st.rerun()
+
+    st.divider()
+    st.subheader("Assign leads to team")
+    st.caption("Unassigned leads stay in your owner pool — teammates cannot see them.")
+    all_leads = _all_leads()
+    assignees = list_users(include_super=False)
+    if not all_leads:
+        st.warning("No leads to assign yet.")
+        return
+    if not assignees:
+        st.warning("Add a teammate before assigning.")
+        return
+
+    assign_options = {f"{u['name']} <{u['email']}>": u["id"] for u in assignees}
+    assign_options["— Unassign (owner pool) —"] = ""
+    who = st.selectbox("Assign to", list(assign_options.keys()), key="assign_who")
+    assignee_id = assign_options[who]
+
+    rows = []
+    key_by_idx = []
+    for l in all_leads:
+        key_by_idx.append(lead_key(l))
+        rows.append(
+            {
+                "Select": False,
+                "Company": l.get("company_name") or "",
+                "Email": l.get("email") or "",
+                "State": l.get("state") or "",
+                "Stage": stage_label(l.get("status") or "not_started"),
+                "Currently": _assignee_name(l.get("assigned_to") or ""),
+            }
+        )
+    edited = st.data_editor(
+        pd.DataFrame(rows),
+        hide_index=True,
+        use_container_width=True,
+        disabled=[c for c in rows[0].keys() if c != "Select"],
+        key="assign_editor",
+        height=320,
+    )
+    selected = [key_by_idx[i] for i, sel in enumerate(edited["Select"].tolist()) if sel]
+    if st.button("Apply assignment", type="primary"):
+        if not selected:
+            st.warning("Select at least one lead.")
+        else:
+            updated, n = assign_leads(all_leads, selected, assignee_id)
+            persist_lead_tracking(updated)
+            st.success(f"Updated assignment on {n} lead(s).")
+            st.rerun()
+
+
 def page_org_setup():
     st.title("Org Setup")
+    user = _current_user()
+    if not can(user, "org_setup", "read"):
+        st.error("Only Super Admin can open Org Setup.")
+        return
+
+    tab_co, tab_team, tab_mail = st.tabs(
+        ["Company & SMTP", "Team & Access (RBAC)", "Email preview"]
+    )
+
     company = _company()
-    with st.form("org_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            my_company = st.text_input("Company name", company.get("my_company", ""))
-            my_name = st.text_input("Sender name", company.get("my_name", ""))
-            my_phone = st.text_input("Phone", company.get("my_phone", ""))
-            my_email = st.text_input("Sending email", company.get("my_email", ""))
-            owner_notify_email = st.text_input(
-                "Alert me at", company.get("owner_notify_email", "")
+    with tab_co:
+        with st.form("org_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                my_company = st.text_input("Company name", company.get("my_company", ""))
+                my_name = st.text_input("Sender name", company.get("my_name", ""))
+                my_phone = st.text_input("Phone", company.get("my_phone", ""))
+                my_email = st.text_input("Sending email", company.get("my_email", ""))
+                owner_notify_email = st.text_input(
+                    "Alert me at", company.get("owner_notify_email", "")
+                )
+            with col2:
+                my_mc = st.text_input("MC#", company.get("my_mc", ""))
+                my_dot = st.text_input("DOT#", company.get("my_dot", ""))
+                website = st.text_input("Website", company.get("website", ""))
+                physical_address = st.text_input(
+                    "Physical address", company.get("physical_address", "")
+                )
+                equipment = st.text_input("Equipment", company.get("equipment", ""))
+                origin_area = st.text_input("Origin area", company.get("origin_area", ""))
+
+            default_lanes = st.text_area("Lanes", company.get("default_lanes", ""))
+            unsubscribe_note = st.text_area(
+                "Email footer", company.get("unsubscribe_note", ""), height=70
             )
-        with col2:
-            my_mc = st.text_input("MC#", company.get("my_mc", ""))
-            my_dot = st.text_input("DOT#", company.get("my_dot", ""))
-            website = st.text_input("Website", company.get("website", ""))
-            physical_address = st.text_input(
-                "Physical address", company.get("physical_address", "")
+
+            st.markdown("#### SMTP")
+            sc1, sc2, sc3 = st.columns(3)
+            smtp_host = sc1.text_input("Host", company.get("smtp_host", "smtp.gmail.com"))
+            smtp_port = sc2.number_input("Port", value=int(company.get("smtp_port", 587)))
+            smtp_user = sc3.text_input("User", company.get("smtp_user", ""))
+            smtp_password = st.text_input(
+                "App password", value=company.get("smtp_password", ""), type="password"
             )
-            equipment = st.text_input("Equipment", company.get("equipment", ""))
-            origin_area = st.text_input("Origin area", company.get("origin_area", ""))
+            send_live = st.toggle(
+                "Send LIVE emails", value=bool(company.get("send_live_emails"))
+            )
+            google_key = st.text_input(
+                "Google Places API key",
+                value=company.get("google_places_api_key", ""),
+                type="password",
+            )
+            gemini_key = st.text_input(
+                "Gemini API key (AI Studio)",
+                value=company.get("gemini_api_key", ""),
+                type="password",
+            )
+            cse_key = st.text_input(
+                "Google Custom Search API key",
+                value=company.get("google_cse_api_key", ""),
+                type="password",
+            )
+            cse_id = st.text_input(
+                "Google Custom Search Engine ID (cx)",
+                value=company.get("google_cse_id", ""),
+            )
+            bot_auto = st.toggle(
+                "Bot auto-send safe replies", value=bool(company.get("bot_auto_reply", True))
+            )
 
-        default_lanes = st.text_area("Lanes", company.get("default_lanes", ""))
-        unsubscribe_note = st.text_area(
-            "Email footer", company.get("unsubscribe_note", ""), height=70
-        )
+            if st.form_submit_button("Save", type="primary"):
+                updated = {
+                    **company,
+                    "my_company": my_company,
+                    "my_name": my_name,
+                    "my_phone": my_phone,
+                    "my_email": my_email,
+                    "owner_notify_email": owner_notify_email,
+                    "my_mc": my_mc,
+                    "my_dot": my_dot,
+                    "website": website,
+                    "physical_address": physical_address,
+                    "equipment": equipment,
+                    "origin_area": origin_area,
+                    "default_lanes": default_lanes,
+                    "unsubscribe_note": unsubscribe_note
+                    or f"{my_company} | {physical_address} | Reply STOP to opt out.",
+                    "smtp_host": smtp_host,
+                    "smtp_port": int(smtp_port),
+                    "smtp_user": smtp_user,
+                    "smtp_password": smtp_password,
+                    "send_live_emails": send_live,
+                    "google_places_api_key": google_key,
+                    "gemini_api_key": gemini_key,
+                    "google_cse_api_key": cse_key,
+                    "google_cse_id": cse_id,
+                    "bot_auto_reply": bot_auto,
+                }
+                try:
+                    save_company(updated)
+                except Exception:
+                    pass  # cloud may be read-only for config file — secrets used instead
+                st.session_state.company = updated
+                sync_super_admin_profile(
+                    load_rbac_state(),
+                    name=my_name or "Super Admin",
+                    email=my_email,
+                )
+                st.success("Saved for this session. On Streamlit Cloud, also put secrets in the app settings.")
 
-        st.markdown("#### SMTP")
-        sc1, sc2, sc3 = st.columns(3)
-        smtp_host = sc1.text_input("Host", company.get("smtp_host", "smtp.gmail.com"))
-        smtp_port = sc2.number_input("Port", value=int(company.get("smtp_port", 587)))
-        smtp_user = sc3.text_input("User", company.get("smtp_user", ""))
-        smtp_password = st.text_input(
-            "App password", value=company.get("smtp_password", ""), type="password"
-        )
-        send_live = st.toggle(
-            "Send LIVE emails", value=bool(company.get("send_live_emails"))
-        )
-        google_key = st.text_input(
-            "Google Places API key",
-            value=company.get("google_places_api_key", ""),
-            type="password",
-        )
-        gemini_key = st.text_input(
-            "Gemini API key (AI Studio)",
-            value=company.get("gemini_api_key", ""),
-            type="password",
-        )
-        cse_key = st.text_input(
-            "Google Custom Search API key",
-            value=company.get("google_cse_api_key", ""),
-            type="password",
-        )
-        cse_id = st.text_input(
-            "Google Custom Search Engine ID (cx)",
-            value=company.get("google_cse_id", ""),
-        )
-        bot_auto = st.toggle(
-            "Bot auto-send safe replies", value=bool(company.get("bot_auto_reply", True))
-        )
+    with tab_team:
+        _page_team_access()
 
-        if st.form_submit_button("Save", type="primary"):
-            updated = {
-                **company,
-                "my_company": my_company,
-                "my_name": my_name,
-                "my_phone": my_phone,
-                "my_email": my_email,
-                "owner_notify_email": owner_notify_email,
-                "my_mc": my_mc,
-                "my_dot": my_dot,
-                "website": website,
-                "physical_address": physical_address,
-                "equipment": equipment,
-                "origin_area": origin_area,
-                "default_lanes": default_lanes,
-                "unsubscribe_note": unsubscribe_note
-                or f"{my_company} | {physical_address} | Reply STOP to opt out.",
-                "smtp_host": smtp_host,
-                "smtp_port": int(smtp_port),
-                "smtp_user": smtp_user,
-                "smtp_password": smtp_password,
-                "send_live_emails": send_live,
-                "google_places_api_key": google_key,
-                "gemini_api_key": gemini_key,
-                "google_cse_api_key": cse_key,
-                "google_cse_id": cse_id,
-                "bot_auto_reply": bot_auto,
-            }
-            try:
-                save_company(updated)
-            except Exception:
-                pass  # cloud may be read-only for config file — secrets used instead
-            st.session_state.company = updated
-            st.success("Saved for this session. On Streamlit Cloud, also put secrets in the app settings.")
-
-    with st.expander("Email 1–4 preview"):
+    with tab_mail:
         sample = {
             "contact_name": "Alex",
             "company_name": "Sample Shipper",
@@ -603,10 +962,16 @@ def page_org_setup():
 
 def page_find_leads():
     st.title("Find & Vet Direct Shippers")
+    user = _current_user()
+    if not can(user, "find_leads", "read"):
+        st.error("No access to Find Leads.")
+        return
     st.caption(
         "Put State / Zip → app searches Google Business-style Places, checks public websites for emails, "
         "then logistics-vets the list. You only select qualified leads and activate the pipeline."
     )
+    if not can(user, "find_leads", "create") and not is_super_admin(user):
+        st.warning("Read-only: ask Super Admin for Find Leads create access, or work assigned leads in Pipeline.")
     company = _company()
 
     tab_vet, tab_paca, tab_import, tab_manual, tab_limits = st.tabs(
@@ -871,9 +1236,15 @@ LinkedIn, ThomasNet, Yellow Pages directories, PACA live search automation.
 
 def page_pipeline():
     st.title("Pipeline & Outreach")
+    user = _current_user()
+    if not can(user, "pipeline", "read"):
+        st.error("No access to Pipeline.")
+        return
     company = _company()
     leads = _refresh_leads()
     _storage_banner()
+    if not is_super_admin(user):
+        st.info("Pipeline shows only leads assigned to you.")
 
     f1, f2, f3 = st.columns(3)
     f_state = f1.text_input("State", "", key="pipe_state")
@@ -929,52 +1300,68 @@ def page_pipeline():
 
     a1, a2, a3 = st.columns(3)
     if a1.button("Activate selected", type="primary"):
-        if not selected_keys:
+        if not can(user, "pipeline", "update"):
+            st.error("No update permission.")
+        elif not selected_keys:
             st.warning("Select leads first.")
         else:
-            n, skipped = activate_sequence(leads, selected_keys, force=force)
+            # Always mutate the full DB so other assignees are not wiped
+            n, skipped = activate_sequence(_all_leads(), selected_keys, force=force)
             st.success(f"Activated {n}.")
             for s in skipped:
                 st.warning(s)
             _refresh_leads()
 
     if a2.button("Start — send due emails"):
-        keys = selected_keys or [
-            lead_key(l)
-            for l in leads
-            if l.get("active_sequence") and next_action_for_lead(l)
-        ]
-        if not keys:
-            st.warning("Nothing due.")
+        if not can(user, "pipeline", "update"):
+            st.error("No update permission.")
         else:
-            results = run_due_emails(leads, company, only_keys=keys)
-            mode = "LIVE" if company.get("send_live_emails") else "DRY RUN"
-            st.success(f"Processed {len(results)} ({mode}). Saved to permanent lead record.")
-            for r in results:
-                if r.get("ok"):
-                    st.write(f"✓ {r.get('lead')} → Email {r.get('step')} [{r.get('mode')}]")
-                    if not company.get("send_live_emails"):
-                        with st.expander(f"Preview {r.get('lead')}"):
-                            st.code(r.get("body", ""))
-                else:
-                    st.error(f"✗ {r.get('lead')}: {r.get('error')}")
-            _refresh_leads()
+            keys = selected_keys or [
+                lead_key(l)
+                for l in leads
+                if l.get("active_sequence") and next_action_for_lead(l)
+            ]
+            if not keys:
+                st.warning("Nothing due.")
+            else:
+                full = _all_leads()
+                results = run_due_emails(full, company, only_keys=keys)
+                mode = "LIVE" if company.get("send_live_emails") else "DRY RUN"
+                st.success(f"Processed {len(results)} ({mode}). Saved to permanent lead record.")
+                for r in results:
+                    if r.get("ok"):
+                        st.write(f"✓ {r.get('lead')} → Email {r.get('step')} [{r.get('mode')}]")
+                        if not company.get("send_live_emails"):
+                            with st.expander(f"Preview {r.get('lead')}"):
+                                st.code(r.get("body", ""))
+                    else:
+                        st.error(f"✗ {r.get('lead')}: {r.get('error')}")
+                _refresh_leads()
 
     if a3.button("Mark selected Converted"):
-        if not selected_keys:
+        if not can(user, "pipeline", "update"):
+            st.error("No update permission.")
+        elif not selected_keys:
             st.warning("Select a lead first (checkbox), then click Converted.")
         else:
-            for l in leads:
-                if lead_key(l) in selected_keys:
+            full = _all_leads()
+            for l in full:
+                if lead_key(l) in selected_keys and can_access_lead(user, l):
                     mark_converted(l)
-            persist_lead_tracking(leads)
+                    update_lead(l)
             st.success("Marked Converted. Open Leads List to see the green stage.")
             st.rerun()
 
 
 def page_inbox():
     st.title("Inbox Bot")
+    user = _current_user()
+    if not can(user, "inbox", "read"):
+        st.error("No access to Inbox Bot.")
+        return
     st.caption("Paste a reply. Bot handles safe replies; escalates rates/contracts/loads to you.")
+    if not is_super_admin(user):
+        st.info("You only process replies for leads assigned to you.")
     company = _company()
     leads = _refresh_leads()
     with_email = [l for l in leads if l.get("email")]
@@ -1046,7 +1433,7 @@ def page_inbox():
         if tag not in rem:
             lead["remarks"] = (rem + f" | {tag}").strip(" |")
         lead["conversation"] = conv
-        persist_lead_tracking(leads)
+        _persist_one(lead)
         _refresh_leads()
 
 
@@ -1126,30 +1513,33 @@ def page_help():
 4. **Inbox Bot** for replies; you close rates and loads.  
 5. **Leads List** is your memory — color = stage; red = never contact again.
 
+**Team access (RBAC):** Super Admin (you) opens **Org Setup → Team & Access**, creates nurturers with a PIN, then assigns leads. Teammates only see their assigned list. Org Setup and Cloud Hosting stay owner-only.
+
 Email opens the door. **Phone within 2 hours** of a positive reply closes the account.
 """
     )
 
 
 def main():
+    user = _require_auth()
+    if not user:
+        return
+
+    pages_available = allowed_pages(user)
+    if not pages_available:
+        st.error("No modules enabled for your account. Ask Super Admin.")
+        return
+
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
         page = st.radio(
             "Go to",
-            [
-                "Dashboard",
-                "Leads List",
-                "Find Leads",
-                "Pipeline & Outreach",
-                "Inbox Bot",
-                "Org Setup",
-                "Cloud Hosting",
-                "Help",
-            ],
+            pages_available,
             label_visibility="collapsed",
         )
         company = _company()
         st.divider()
+        st.caption(f"{user.get('name')} · {ROLE_PRESETS.get(user.get('role'), {}).get('label', user.get('role'))}")
         st.caption(company.get("my_company", ""))
         st.caption(company.get("my_mc", ""))
         if using_cloud():
@@ -1160,6 +1550,9 @@ def main():
             st.error("LIVE EMAIL")
         else:
             st.success("Dry run")
+        if st.button("Sign out"):
+            st.session_state.pop("auth_user", None)
+            st.rerun()
 
     pages = {
         "Dashboard": page_dashboard,
