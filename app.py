@@ -31,11 +31,19 @@ from src.leads import (
 from src.notify import notify_owner
 from src.places import demo_places_results, search_places
 from src.find_vet import find_and_vet_shippers
+from src.carrier_pages import (
+    page_carrier_inbox,
+    page_carrier_leads,
+    page_carrier_pipeline,
+    page_find_carriers,
+)
+from src.carrier_leads import load_carriers, persist_carriers
 from src.rbac import (
     ACTIONS,
     MODULES,
     ROLE_PRESETS,
     allowed_pages,
+    assign_carriers,
     assign_leads,
     authenticate,
     can,
@@ -475,7 +483,8 @@ def _style_status_column(df: pd.DataFrame):
 
 def page_dashboard():
     company = _company()
-    leads = _refresh_leads()
+    user = _current_user()
+    leads = _refresh_leads() if can(user, "leads", "read") or is_super_admin(user) else []
     _storage_banner()
 
     from src.involvement import involvement_report
@@ -507,19 +516,38 @@ def page_dashboard():
     )
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("All leads", len(leads))
+    c1.metric("Shipper leads", len(leads))
     c2.metric("Contacted", len(contacted))
     c3.metric("Active", len(active))
     c4.metric("Due today", len(due))
     c5.metric("Responded", len(responded))
     c6.metric("Converted", len(converted))
 
+    if can(user, "carrier_leads", "read") or is_super_admin(user):
+        try:
+            carriers = scope_leads(load_carriers(), user)
+        except Exception:
+            carriers = []
+        ca = [l for l in carriers if l.get("active_sequence")]
+        ch = [l for l in carriers if l.get("status") == "converted"]
+        st.subheader("Carrier onboarding (lease-on under our MC)")
+        x1, x2, x3, x4 = st.columns(4)
+        x1.metric("Carrier leads", len(carriers))
+        x2.metric("Carrier active", len(ca))
+        x3.metric("Hired under MC", len(ch))
+        x4.metric(
+            "Carrier due",
+            len([l for l in ca if next_action_for_lead(l) is not None]),
+        )
+
     st.markdown(_legend_html(), unsafe_allow_html=True)
     st.caption(f"🚫 Do Not Contact locked: {len(dnc)} — these people will never be emailed again.")
 
     st.subheader("What to do next")
     if due:
-        st.success(f"{len(due)} lead(s) due — open **Pipeline** and click Start.")
+        st.success(f"{len(due)} shipper lead(s) due — open **Pipeline** and click Start.")
+    elif can(user, "carrier_pipeline", "read"):
+        st.info("Check **Find Carriers** / **Carrier Pipeline**, or shipper **Find Leads**.")
     elif not leads:
         st.info("Open **Find Leads**, search by state/zip, add emails, then activate.")
     else:
@@ -753,7 +781,12 @@ def _page_team_access():
             erole = st.selectbox(
                 "Role",
                 role_choices(),
-                index=max(0, role_choices().index(user.get("role") or "nurturer")),
+                index=max(
+                    0,
+                    role_choices().index(user.get("role"))
+                    if user.get("role") in role_choices()
+                    else 0,
+                ),
                 format_func=lambda r: ROLE_PRESETS[r]["label"],
             )
             eactive = st.toggle("Active", value=bool(user.get("active", True)))
@@ -804,11 +837,7 @@ def _page_team_access():
     st.divider()
     st.subheader("Assign leads to team")
     st.caption("Unassigned leads stay in your owner pool — teammates cannot see them.")
-    all_leads = _all_leads()
     assignees = list_users(include_super=False)
-    if not all_leads:
-        st.warning("No leads to assign yet.")
-        return
     if not assignees:
         st.warning("Add a teammate before assigning.")
         return
@@ -818,37 +847,91 @@ def _page_team_access():
     who = st.selectbox("Assign to", list(assign_options.keys()), key="assign_who")
     assignee_id = assign_options[who]
 
-    rows = []
-    key_by_idx = []
-    for l in all_leads:
-        key_by_idx.append(lead_key(l))
-        rows.append(
-            {
-                "Select": False,
-                "Company": l.get("company_name") or "",
-                "Email": l.get("email") or "",
-                "State": l.get("state") or "",
-                "Stage": stage_label(l.get("status") or "not_started"),
-                "Currently": _assignee_name(l.get("assigned_to") or ""),
-            }
-        )
-    edited = st.data_editor(
-        pd.DataFrame(rows),
-        hide_index=True,
-        use_container_width=True,
-        disabled=[c for c in rows[0].keys() if c != "Select"],
-        key="assign_editor",
-        height=320,
-    )
-    selected = [key_by_idx[i] for i, sel in enumerate(edited["Select"].tolist()) if sel]
-    if st.button("Apply assignment", type="primary"):
-        if not selected:
-            st.warning("Select at least one lead.")
+    tab_ship, tab_car = st.tabs(["Shipper leads", "Carrier leads"])
+    with tab_ship:
+        all_leads = _all_leads()
+        if not all_leads:
+            st.warning("No shipper leads to assign yet.")
         else:
-            updated, n = assign_leads(all_leads, selected, assignee_id)
-            persist_lead_tracking(updated)
-            st.success(f"Updated assignment on {n} lead(s).")
-            st.rerun()
+            rows = []
+            key_by_idx = []
+            for l in all_leads:
+                key_by_idx.append(lead_key(l))
+                rows.append(
+                    {
+                        "Select": False,
+                        "Company": l.get("company_name") or "",
+                        "Email": l.get("email") or "",
+                        "State": l.get("state") or "",
+                        "Stage": stage_label(l.get("status") or "not_started"),
+                        "Currently": _assignee_name(l.get("assigned_to") or ""),
+                    }
+                )
+            edited = st.data_editor(
+                pd.DataFrame(rows),
+                hide_index=True,
+                use_container_width=True,
+                disabled=[c for c in rows[0].keys() if c != "Select"],
+                key="assign_editor",
+                height=280,
+            )
+            selected = [
+                key_by_idx[i] for i, sel in enumerate(edited["Select"].tolist()) if sel
+            ]
+            if st.button("Apply shipper assignment", type="primary", key="assign_ship_btn"):
+                if not selected:
+                    st.warning("Select at least one lead.")
+                else:
+                    updated, n = assign_leads(all_leads, selected, assignee_id)
+                    persist_lead_tracking(updated)
+                    st.success(f"Updated assignment on {n} shipper lead(s).")
+                    st.rerun()
+
+    with tab_car:
+        try:
+            all_carriers = load_carriers()
+        except Exception as e:
+            st.error(f"Could not load carriers: {e}")
+            all_carriers = []
+        if not all_carriers:
+            st.warning("No carrier leads to assign yet.")
+        else:
+            from src.carrier_leads import carrier_key as _ck
+
+            rows = []
+            key_by_idx = []
+            for l in all_carriers:
+                key_by_idx.append(_ck(l))
+                rows.append(
+                    {
+                        "Select": False,
+                        "Company": l.get("company_name") or "",
+                        "Email": l.get("email") or "",
+                        "MC": l.get("mc_number") or "",
+                        "State": l.get("state") or "",
+                        "Stage": stage_label(l.get("status") or "not_started"),
+                        "Currently": _assignee_name(l.get("assigned_to") or ""),
+                    }
+                )
+            edited = st.data_editor(
+                pd.DataFrame(rows),
+                hide_index=True,
+                use_container_width=True,
+                disabled=[c for c in rows[0].keys() if c != "Select"],
+                key="assign_carrier_editor",
+                height=280,
+            )
+            selected = [
+                key_by_idx[i] for i, sel in enumerate(edited["Select"].tolist()) if sel
+            ]
+            if st.button("Apply carrier assignment", type="primary", key="assign_car_btn"):
+                if not selected:
+                    st.warning("Select at least one carrier.")
+                else:
+                    updated, n = assign_carriers(all_carriers, selected, assignee_id)
+                    persist_carriers(updated)
+                    st.success(f"Updated assignment on {n} carrier lead(s).")
+                    st.rerun()
 
 
 def page_org_setup():
@@ -1527,15 +1610,23 @@ def page_help():
     st.title("Help")
     st.markdown(
         """
+### Shipper funnel
 1. Keep broker boards for cash while direct accounts ramp (30–90 days).  
 2. **Find Leads** by state/zip → add logistics email → Save.  
 3. **Pipeline** → Activate → Start (emails on days 0 / 4 / 9 / 16).  
 4. **Inbox Bot** for replies; you close rates and loads.  
 5. **Leads List** is your memory — color = stage; red = never contact again.
 
-**Team access (RBAC):** Super Admin (you) opens **Org Setup → Team & Access**, creates nurturers with a PIN, then assigns leads. Teammates only see their assigned list. Org Setup and Cloud Hosting stay owner-only.
+### Carrier funnel (lease-on under LogixTrek MC)
+1. **Find Carriers** — import PDF/Excel/CSV, or pull FMCSA demo / QCMobile MC lookups.  
+2. Add emails → **Carrier Pipeline** → Activate → Start (same 0 / 4 / 9 / 16 cadence).  
+3. Pitch: owner-operator under our MC with path toward ~$40k gross.  
+4. **Carrier Inbox** for replies; mark **Hired** when they lease on.  
+5. Data lives in Google Sheet tab `carrier_leads` (separate from shippers).
 
-Email opens the door. **Phone within 2 hours** of a positive reply closes the account.
+**RBAC:** Super Admin (you) opens **Org Setup → Team & Access**. Roles include Shipper Nurturer and Carrier Recruiter. Assign shipper and carrier lists separately.
+
+Email opens the door. **Phone within 2 hours** of a positive reply closes the account / lease-on.
 """
     )
 
@@ -1555,7 +1646,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.08b")
+        st.caption("v2026.09.08c · Shipper + Carrier")
         for label in pages_available:
             selected = st.session_state.nav_page == label
             chevron = "▾" if selected else "›"
@@ -1592,6 +1683,10 @@ def main():
         "Find Leads": page_find_leads,
         "Pipeline & Outreach": page_pipeline,
         "Inbox Bot": page_inbox,
+        "Carrier Leads": page_carrier_leads,
+        "Find Carriers": page_find_carriers,
+        "Carrier Pipeline": page_carrier_pipeline,
+        "Carrier Inbox": page_carrier_inbox,
         "Org Setup": page_org_setup,
         "Cloud Hosting": page_cloud,
         "Help": page_help,

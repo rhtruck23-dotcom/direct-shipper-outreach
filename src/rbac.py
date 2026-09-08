@@ -61,6 +61,30 @@ MODULES: dict[str, dict[str, Any]] = {
         "super_only": False,
         "default_actions": ["create", "read", "update"],
     },
+    "carrier_leads": {
+        "label": "Carrier Leads",
+        "page": "Carrier Leads",
+        "super_only": False,
+        "default_actions": ["create", "read", "update", "delete"],
+    },
+    "find_carriers": {
+        "label": "Find Carriers",
+        "page": "Find Carriers",
+        "super_only": False,
+        "default_actions": ["create", "read", "update"],
+    },
+    "carrier_pipeline": {
+        "label": "Carrier Pipeline",
+        "page": "Carrier Pipeline",
+        "super_only": False,
+        "default_actions": ["create", "read", "update"],
+    },
+    "carrier_inbox": {
+        "label": "Carrier Inbox",
+        "page": "Carrier Inbox",
+        "super_only": False,
+        "default_actions": ["create", "read", "update"],
+    },
     "org_setup": {
         "label": "Org Setup",
         "page": "Org Setup",
@@ -92,7 +116,6 @@ ROLE_PRESETS: dict[str, dict[str, Any]] = {
         "label": "Super Admin",
         "see_all_leads": True,
         "manage_team": True,
-        # filled at runtime with every module/action
     },
     "manager": {
         "label": "Manager",
@@ -104,11 +127,15 @@ ROLE_PRESETS: dict[str, dict[str, Any]] = {
             "find_leads": ["create", "read", "update"],
             "pipeline": ["create", "read", "update"],
             "inbox": ["create", "read", "update"],
+            "carrier_leads": ["create", "read", "update", "delete"],
+            "find_carriers": ["create", "read", "update"],
+            "carrier_pipeline": ["create", "read", "update"],
+            "carrier_inbox": ["create", "read", "update"],
             "help": ["read"],
         },
     },
     "nurturer": {
-        "label": "Nurturer",
+        "label": "Shipper Nurturer",
         "see_all_leads": False,
         "manage_team": False,
         "modules": {
@@ -116,6 +143,19 @@ ROLE_PRESETS: dict[str, dict[str, Any]] = {
             "leads": ["create", "read", "update"],
             "pipeline": ["read", "update"],
             "inbox": ["read", "update"],
+            "help": ["read"],
+        },
+    },
+    "carrier_recruiter": {
+        "label": "Carrier Recruiter",
+        "see_all_leads": False,
+        "manage_team": False,
+        "modules": {
+            "dashboard": ["read"],
+            "carrier_leads": ["create", "read", "update"],
+            "find_carriers": ["create", "read", "update"],
+            "carrier_pipeline": ["read", "update"],
+            "carrier_inbox": ["read", "update"],
             "help": ["read"],
         },
     },
@@ -554,6 +594,20 @@ def assign_leads(
     count = 0
     for lead in leads:
         if lead_key(lead).lower() in keyset:
+            lead["assigned_to"] = assignee_id or ""
+            count += 1
+    return leads, count
+
+
+def assign_carriers(
+    leads: list[dict], lead_keys: list[str], assignee_id: str
+) -> tuple[list[dict], int]:
+    from .carrier_storage import carrier_key
+
+    keyset = {k.lower().strip() for k in lead_keys}
+    count = 0
+    for lead in leads:
+        if carrier_key(lead).lower() in keyset:
             lead["assigned_to"] = assignee_id or ""
             count += 1
     return leads, count
