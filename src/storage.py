@@ -237,14 +237,13 @@ def sheets_configured(secrets: Optional[dict] = None) -> bool:
 
 def test_sheet_connection() -> str:
     """Try reading/writing the Sheet. Returns OK message or error."""
-    ws = _open_worksheet()
+    ws = _open_worksheet(create_if_missing=True)
     title = ws.title
     rows = len(ws.get_all_values())
     return f"Connected to worksheet '{title}' ({rows} row(s) including header)."
 
 
-def _open_worksheet():
-    """Open the leads worksheet. Read path must never mutate the Sheet."""
+def _open_spreadsheet():
     import gspread
     from google.oauth2.service_account import Credentials
 
@@ -264,27 +263,57 @@ def _open_worksheet():
     ]
     creds = Credentials.from_service_account_info(info, scopes=scopes)
     client = gspread.authorize(creds)
-    sh = client.open_by_key(sheet_id)
+    return client.open_by_key(sheet_id)
+
+
+def _open_worksheet(*, create_if_missing: bool = False):
+    """
+    Open the leads worksheet.
+    Reads must use create_if_missing=False so load never writes to Google.
+    """
+    import gspread
+
+    sh = _open_spreadsheet()
     try:
         return sh.worksheet("leads")
     except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title="leads", rows=2000, cols=len(SHEET_COLUMNS))
-        ws.append_row(SHEET_COLUMNS)
+        if not create_if_missing:
+            raise
+        ws = sh.add_worksheet(title="leads", rows=2000, cols=max(len(SHEET_COLUMNS), 26))
+        # Single batch write — never update_cell loops
+        ws.update("A1", [SHEET_COLUMNS], value_input_option="USER_ENTERED")
         return ws
 
 
 def _load_sheets() -> list[dict]:
-    ws = _open_worksheet()
+    """Read-only. Missing sheet / empty sheet → []. Never mutates cells."""
+    import gspread
+
+    try:
+        ws = _open_worksheet(create_if_missing=False)
+    except gspread.WorksheetNotFound:
+        return []
+
     values = ws.get_all_values()
     if not values or len(values) < 2:
         return []
-    rows = ws.get_all_records()
-    return [_normalize(r) for r in rows if r.get("company_name") or r.get("email")]
+
+    header = [str(h).strip() for h in values[0]]
+    out: list[dict] = []
+    for row in values[1:]:
+        raw = {
+            header[i]: (row[i] if i < len(row) else "")
+            for i in range(len(header))
+            if header[i]
+        }
+        if raw.get("company_name") or raw.get("email"):
+            out.append(_normalize(raw))
+    return out
 
 
 def _save_sheets(leads: list[dict]) -> None:
-    """Full rewrite — also migrates new columns (e.g. assigned_to) safely."""
-    ws = _open_worksheet()
+    """Full rewrite — also migrates new columns (e.g. assigned_to) in one write."""
+    ws = _open_worksheet(create_if_missing=True)
     values = [SHEET_COLUMNS]
     for lead in leads:
         row = _to_sheet_row(lead)

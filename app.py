@@ -250,21 +250,22 @@ st.markdown(
     justify-content: flex-start !important;
     text-align: left !important;
     border-radius: 12px !important;
-    padding: 0.55rem 0.85rem !important;
-    margin: 0.12rem 0 !important;
+    padding: 0.4rem 0.75rem !important;
+    margin: 0.06rem 0 !important;
     font-size: 0.95rem !important;
     font-weight: 500 !important;
     border: 1px solid rgba(14, 165, 233, 0.18) !important;
     background: rgba(255, 255, 255, 0.35) !important;
     box-shadow: none !important;
     transform: none !important;
+    min-height: 2.1rem !important;
   }
   section[data-testid="stSidebar"] div.stButton > button[kind="primary"],
   section[data-testid="stSidebar"] div.stButton > button[data-testid="baseButton-primary"] {
-    font-size: 1.12rem !important;
+    font-size: 1.08rem !important;
     font-weight: 700 !important;
-    padding: 0.72rem 1rem !important;
-    background: linear-gradient(
+    padding: 0.5rem 0.85rem !important;
+    min-height: 2.45rem !important;    background: linear-gradient(
       135deg,
       rgba(14, 165, 233, 0.92),
       rgba(20, 184, 166, 0.9),
@@ -396,13 +397,25 @@ def _require_auth() -> dict | None:
 
 def _all_leads() -> list[dict]:
     """Full database — never save a scoped list back with persist_lead_tracking."""
-    return load_leads()
+    try:
+        leads = load_leads()
+        st.session_state.pop("_storage_error", None)
+        return leads
+    except Exception as e:
+        st.session_state["_storage_error"] = str(e)
+        return list(st.session_state.get("leads_all") or [])
 
 
 def _refresh_leads() -> list[dict]:
     """Leads visible to the signed-in user (assignment scoped)."""
     all_leads = _all_leads()
     st.session_state.leads_all = all_leads
+    if st.session_state.get("_storage_error"):
+        st.error(
+            "Cloud DB could not load leads. Reboot the app after Secrets changes, "
+            "and confirm the service account is an Editor on your Google Sheet. "
+            f"Detail: {st.session_state['_storage_error'][:300]}"
+        )
     visible = scope_leads(all_leads, _current_user())
     st.session_state.leads = visible
     return visible
@@ -1542,6 +1555,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
+        st.caption("v2026.09.08b")
         for label in pages_available:
             selected = st.session_state.nav_page == label
             chevron = "▾" if selected else "›"

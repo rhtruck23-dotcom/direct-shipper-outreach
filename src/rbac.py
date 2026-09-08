@@ -171,7 +171,7 @@ def _blank_state() -> dict[str, Any]:
     }
 
 
-def _open_rbac_worksheet():
+def _open_rbac_worksheet(*, create_if_missing: bool = False):
     """Optional Google Sheet tab for team RBAC (same workbook as leads)."""
     from . import storage
 
@@ -179,7 +179,6 @@ def _open_rbac_worksheet():
         return None
     import gspread
 
-    # Reuse credentials path via private helpers
     info = storage._get_gcp_info()
     sheet_id = storage._get_sheet_id()
     if not info or not sheet_id:
@@ -194,12 +193,17 @@ def _open_rbac_worksheet():
     client = gspread.authorize(creds)
     sh = client.open_by_key(sheet_id)
     try:
-        ws = sh.worksheet("rbac")
+        return sh.worksheet("rbac")
     except gspread.WorksheetNotFound:
+        if not create_if_missing:
+            return None
         ws = sh.add_worksheet(title="rbac", rows=20, cols=2)
-        ws.update("A1:B1", [["key", "value"]])
-        ws.update("A2:B2", [["state_json", json.dumps(_blank_state())]])
-    return ws
+        ws.update(
+            "A1:B2",
+            [["key", "value"], ["state_json", json.dumps(_blank_state())]],
+            value_input_option="USER_ENTERED",
+        )
+        return ws
 
 
 def load_rbac_state() -> dict[str, Any]:
@@ -208,7 +212,7 @@ def load_rbac_state() -> dict[str, Any]:
         from . import storage
 
         if storage.using_cloud():
-            ws = _open_rbac_worksheet()
+            ws = _open_rbac_worksheet(create_if_missing=False)
             if ws is not None:
                 rows = ws.get_all_records()
                 for row in rows:
@@ -253,7 +257,7 @@ def save_rbac_state(state: dict[str, Any]) -> None:
         from . import storage
 
         if storage.using_cloud():
-            ws = _open_rbac_worksheet()
+            ws = _open_rbac_worksheet(create_if_missing=True)
             if ws is not None:
                 payload = json.dumps(state, ensure_ascii=False)
                 ws.clear()
