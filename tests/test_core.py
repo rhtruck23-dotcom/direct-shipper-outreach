@@ -167,3 +167,22 @@ def test_days_until_next():
     }
     assert days_until_next(lead, first + timedelta(days=2)) == 2
     assert days_until_next(lead, first + timedelta(days=4)) == 0
+
+
+def test_parse_dt_iso():
+    from src.schedule import parse_dt
+
+    assert parse_dt("2026-09-07T21:15:00") is not None
+    assert parse_dt("2026-09-07 21:15:00") is not None
+    assert parse_dt("") is None
+    assert parse_dt(None) is None
+
+
+def test_converted_lead_no_next_action():
+    lead = {
+        "status": "converted",
+        "active_sequence": False,
+        "last_step_sent": 1,
+        "first_contacted": "2026-09-07 21:15:00",
+    }
+    assert next_action_for_lead(lead) is None

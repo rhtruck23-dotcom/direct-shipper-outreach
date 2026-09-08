@@ -581,12 +581,15 @@ def page_pipeline():
             _refresh_leads()
 
     if a3.button("Mark selected Converted"):
-        for l in leads:
-            if lead_key(l) in selected_keys:
-                mark_converted(l)
-        persist_lead_tracking(leads)
-        st.success("Done.")
-        _refresh_leads()
+        if not selected_keys:
+            st.warning("Select a lead first (checkbox), then click Converted.")
+        else:
+            for l in leads:
+                if lead_key(l) in selected_keys:
+                    mark_converted(l)
+            persist_lead_tracking(leads)
+            st.success("Marked Converted. Open Leads List to see the green stage.")
+            st.rerun()
 
 
 def page_inbox():
