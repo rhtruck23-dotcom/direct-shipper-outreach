@@ -46,11 +46,208 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-  .block-container { padding-top: 1.1rem; max-width: 1280px; }
-  div[data-testid="stMetricValue"] { font-size: 1.35rem; }
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+
+  :root {
+    --lg-blue: #0EA5E9;
+    --lg-teal: #14B8A6;
+    --lg-green: #10B981;
+    --lg-deep: #0B3D4A;
+    --lg-glass: rgba(255, 255, 255, 0.45);
+    --lg-glass-border: rgba(255, 255, 255, 0.65);
+    --lg-shadow: 0 8px 32px rgba(14, 165, 233, 0.12);
+  }
+
+  html, body, [class*="css"] {
+    font-family: "DM Sans", system-ui, sans-serif !important;
+  }
+
+  .stApp {
+    background:
+      radial-gradient(1200px 600px at 10% -10%, rgba(14, 165, 233, 0.35), transparent 55%),
+      radial-gradient(900px 500px at 90% 0%, rgba(16, 185, 129, 0.28), transparent 50%),
+      radial-gradient(800px 400px at 50% 100%, rgba(20, 184, 166, 0.22), transparent 45%),
+      linear-gradient(165deg, #E0F2FE 0%, #ECFDF5 45%, #CCFBF1 100%) !important;
+    color: var(--lg-deep);
+  }
+
+  .block-container {
+    padding-top: 1.25rem;
+    max-width: 1280px;
+  }
+
+  /* Sidebar glass */
+  section[data-testid="stSidebar"] {
+    background: rgba(255, 255, 255, 0.38) !important;
+    backdrop-filter: blur(18px) saturate(1.35);
+    -webkit-backdrop-filter: blur(18px) saturate(1.35);
+    border-right: 1px solid var(--lg-glass-border) !important;
+    box-shadow: 4px 0 24px rgba(11, 61, 74, 0.06);
+  }
+  section[data-testid="stSidebar"] .stMarkdown h3 {
+    background: linear-gradient(90deg, var(--lg-blue), var(--lg-teal));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent !important;
+    font-weight: 700;
+  }
+
+  /* Headers */
+  h1, h2, h3 {
+    color: var(--lg-deep) !important;
+    letter-spacing: -0.02em;
+  }
+
+  /* Metrics as glass cards */
+  div[data-testid="stMetric"] {
+    background: var(--lg-glass);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--lg-glass-border);
+    border-radius: 16px;
+    padding: 0.85rem 1rem;
+    box-shadow: var(--lg-shadow);
+  }
+  div[data-testid="stMetricValue"] {
+    font-size: 1.4rem;
+    color: var(--lg-deep) !important;
+  }
+
+  /* Primary buttons — liquid glass */
+  div.stButton > button[kind="primary"],
+  div.stButton > button[data-testid="baseButton-primary"],
+  button[kind="primary"] {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.92), rgba(20, 184, 166, 0.92)) !important;
+    color: #fff !important;
+    border: 1px solid rgba(255, 255, 255, 0.45) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 6px 20px rgba(14, 165, 233, 0.28), inset 0 1px 0 rgba(255,255,255,0.35) !important;
+    backdrop-filter: blur(8px);
+    font-weight: 600 !important;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  div.stButton > button[kind="primary"]:hover,
+  button[kind="primary"]:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 28px rgba(16, 185, 129, 0.35), inset 0 1px 0 rgba(255,255,255,0.4) !important;
+  }
+
+  /* Secondary / default buttons */
+  div.stButton > button,
+  div.stDownloadButton > button {
+    background: rgba(255, 255, 255, 0.5) !important;
+    border: 1px solid rgba(14, 165, 233, 0.35) !important;
+    border-radius: 14px !important;
+    color: var(--lg-deep) !important;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 14px rgba(14, 165, 233, 0.1);
+    font-weight: 550 !important;
+  }
+  div.stButton > button:hover {
+    border-color: var(--lg-teal) !important;
+    background: rgba(255, 255, 255, 0.72) !important;
+  }
+
+  /* Tabs — pill glass */
+  div[data-testid="stTabs"] {
+    background: rgba(255, 255, 255, 0.35);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--lg-glass-border);
+    border-radius: 18px;
+    padding: 0.4rem 0.5rem 0.75rem;
+    box-shadow: var(--lg-shadow);
+  }
+  button[data-baseweb="tab"] {
+    border-radius: 999px !important;
+    color: var(--lg-deep) !important;
+    font-weight: 500 !important;
+  }
+  button[data-baseweb="tab"][aria-selected="true"] {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.25), rgba(16, 185, 129, 0.3)) !important;
+    box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.35);
+  }
+  div[data-baseweb="tab-highlight"] {
+    background: transparent !important;
+  }
+  div[data-baseweb="tab-border"] {
+    display: none !important;
+  }
+
+  /* Inputs / select / text area glass */
+  div[data-testid="stTextInput"] input,
+  div[data-testid="stTextArea"] textarea,
+  div[data-testid="stNumberInput"] input,
+  div[data-baseweb="select"] > div,
+  div[data-testid="stFileUploader"] section {
+    background: rgba(255, 255, 255, 0.55) !important;
+    border-radius: 12px !important;
+    border: 1px solid rgba(14, 165, 233, 0.25) !important;
+    backdrop-filter: blur(8px);
+  }
+
+  /* Alerts / banners */
+  div[data-testid="stAlert"] {
+    background: rgba(255, 255, 255, 0.55) !important;
+    backdrop-filter: blur(12px);
+    border-radius: 14px !important;
+    border: 1px solid var(--lg-glass-border) !important;
+    box-shadow: var(--lg-shadow);
+  }
+
+  /* Dataframe / editor */
+  div[data-testid="stDataFrame"],
+  div[data-testid="stDataEditor"] {
+    background: rgba(255, 255, 255, 0.5);
+    backdrop-filter: blur(10px);
+    border-radius: 16px;
+    border: 1px solid var(--lg-glass-border);
+    overflow: hidden;
+    box-shadow: var(--lg-shadow);
+  }
+
+  /* Expander */
+  div[data-testid="stExpander"] {
+    background: rgba(255, 255, 255, 0.4);
+    border-radius: 14px;
+    border: 1px solid var(--lg-glass-border);
+    backdrop-filter: blur(10px);
+  }
+
+  /* Forms */
+  div[data-testid="stForm"] {
+    background: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--lg-glass-border);
+    border-radius: 18px;
+    padding: 1rem 1.1rem 0.5rem;
+    box-shadow: var(--lg-shadow);
+  }
+
+  /* Radio in sidebar */
+  section[data-testid="stSidebar"] label[data-baseweb="radio"] {
+    border-radius: 10px;
+    padding: 0.2rem 0.4rem;
+  }
+
+  /* Slider */
+  div[data-testid="stSlider"] [role="slider"] {
+    background: linear-gradient(135deg, var(--lg-blue), var(--lg-green)) !important;
+  }
+
   .stage-legend span {
-    display: inline-block; padding: 2px 10px; margin: 2px 6px 2px 0;
-    border-radius: 4px; font-size: 0.85rem;
+    display: inline-block;
+    padding: 4px 12px;
+    margin: 3px 6px 3px 0;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    border: 1px solid rgba(255,255,255,0.55);
+    backdrop-filter: blur(6px);
+    box-shadow: 0 2px 8px rgba(11, 61, 74, 0.06);
+  }
+
+  /* Code blocks softer glass */
+  code, pre {
+    border-radius: 10px !important;
   }
 </style>
 """,
