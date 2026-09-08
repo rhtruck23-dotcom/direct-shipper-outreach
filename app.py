@@ -30,6 +30,7 @@ from src.leads import (
 )
 from src.notify import notify_owner
 from src.places import demo_places_results, search_places
+from src.find_vet import find_and_vet_shippers
 from src.schedule import days_until_next, next_action_for_lead
 from src.stages import STAGE_STYLE, contact_indicator, stage_label
 from src.storage import using_cloud
@@ -67,6 +68,7 @@ def _company() -> dict:
             for k in (
                 "smtp_password",
                 "google_places_api_key",
+                "gemini_api_key",
                 "smtp_host",
                 "smtp_user",
                 "my_email",
@@ -374,73 +376,165 @@ def page_org_setup():
 
 
 def page_find_leads():
-    st.title("Find Leads")
-    st.caption("Search by state / zip, import CSV, or add one lead. Emails are required before outreach.")
+    st.title("Find & Vet Direct Shippers")
+    st.caption(
+        "Put State / Zip → app searches Google Business-style Places, checks public websites for emails, "
+        "then logistics-vets the list. You only select qualified leads and activate the pipeline."
+    )
     company = _company()
 
-    tab_search, tab_import, tab_manual = st.tabs(
-        ["Search (Places / Demo)", "Import CSV", "Add one lead"]
+    tab_vet, tab_import, tab_manual, tab_limits = st.tabs(
+        [
+            "Find & Vet (main)",
+            "Import CSV",
+            "Add one lead",
+            "What we can / cannot auto-search",
+        ]
     )
 
-    with tab_search:
+    with tab_vet:
         c1, c2, c3, c4 = st.columns(4)
-        freight = c1.selectbox("Freight type", ["Reefer", "Dry Van", "Box Truck"])
-        state = c2.text_input("State", "IL")
-        county = c3.text_input("County", "")
-        zip_code = c4.text_input("Zip", "61455")
-        custom_q = st.text_input("Custom search (optional)", "")
+        freight = c1.selectbox("Freight type", ["Reefer", "Dry Van", "Box Truck"], key="fv_fr")
+        state = c2.text_input("State", "IL", key="fv_st")
+        county = c3.text_input("County (optional)", "", key="fv_co")
+        zip_code = c4.text_input("Zip", "61455", key="fv_zip")
+        min_score = st.slider("Minimum vet score to show", 5, 9, 6)
+        enrich = st.checkbox("Check company websites for public emails", value=True)
+
+        has_places = bool((company.get("google_places_api_key") or "").strip())
+        has_gemini = bool((company.get("gemini_api_key") or "").strip())
+        st.write(
+            f"Places API: {'ready' if has_places else 'missing (demo until you add key)'} · "
+            f"Gemini LLM: {'ready' if has_gemini else 'missing (rules vetting still runs)'}"
+        )
 
         b1, b2 = st.columns(2)
-        if b1.button("Search Google Places", type="primary"):
+        run_live = b1.button("Find & Vet shippers", type="primary")
+        run_demo = b2.button("Demo Find & Vet (no API keys)")
+
+        if run_live or run_demo:
+            status = st.empty()
             try:
-                results = search_places(
-                    company.get("google_places_api_key") or "",
+                result = find_and_vet_shippers(
+                    company,
                     freight_type=freight,
                     state=state,
                     county=county,
                     zip_code=zip_code,
-                    custom_query=custom_q,
+                    min_score=min_score,
+                    enrich_websites=enrich and not run_demo,
+                    use_demo=bool(run_demo) or not has_places,
+                    progress_cb=lambda m: status.info(m),
                 )
-                st.session_state.search_results = results
-                st.success(f"Found {len(results)}")
+                st.session_state.vet_result = result
+                status.success(
+                    f"Done — {len(result['qualified'])} qualified / maybe from "
+                    f"{len(result['candidates'])} raw "
+                    f"(rejected {result['rejected_count']})."
+                )
             except Exception as e:
                 st.error(str(e))
-        if b2.button("Demo search (no API key)"):
-            st.session_state.search_results = demo_places_results(freight, state, zip_code)
-            st.info("Demo only — add real emails before outreach.")
 
-        results = st.session_state.get("search_results", [])
-        if results:
-            options = {
-                f"{r['company_name']} | {r.get('phone','')} | {r.get('address', r.get('zip',''))}": r
-                for r in results
-            }
-            picked = st.multiselect("Select", list(options.keys()))
-            edited = []
-            for label in picked:
-                r = dict(options[label])
-                email = st.text_input(
-                    f"Email — {r['company_name']}",
-                    value=r.get("email", ""),
-                    key=f"em_{r.get('id') or r['company_name']}",
+        result = st.session_state.get("vet_result")
+        if result:
+            if result.get("used_demo"):
+                st.warning(
+                    "Demo / no Places key — sample companies only. "
+                    "Add google_places_api_key in Streamlit Secrets for real local shippers."
                 )
-                contact = st.text_input(
-                    f"Contact — {r['company_name']}",
-                    value=r.get("contact_name", ""),
-                    key=f"ct_{r.get('id') or r['company_name']}",
+            qualified = list(result.get("qualified") or [])
+            if not qualified:
+                st.info("No leads passed the vet filter. Lower the min score or try another zip.")
+            else:
+                st.subheader("Vetted list — select who to load into pipeline")
+                rows = []
+                for q in qualified:
+                    rows.append(
+                        {
+                            "Select": bool(q.get("email")),
+                            "Score": int(q.get("vet_score") or 0),
+                            "Status": q.get("vet_status") or "",
+                            "Company": q.get("company_name") or "",
+                            "Email": q.get("email") or "",
+                            "Phone": q.get("phone") or "",
+                            "City/Addr": (q.get("address") or "")[:60],
+                            "Why vetted": (q.get("vet_reason") or "")[:120],
+                            "Website": q.get("website") or "",
+                            "_id": q.get("id") or q.get("company_name"),
+                        }
+                    )
+                edited = st.data_editor(
+                    pd.DataFrame(rows),
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=[c for c in rows[0].keys() if c not in ("Select", "Email")],
+                    key="vet_editor",
+                    height=360,
                 )
-                r["email"] = email
-                r["contact_name"] = contact
-                edited.append(r)
-            if st.button("Save selected") and edited:
-                added, updated = upsert_leads(edited)
-                st.success(
-                    f"Saved {added} new, {updated} updated. "
-                    "Re-import never wipes Do Not Contact or contact history."
-                )
-                _refresh_leads()
+
+                by_id = {q.get("id") or q.get("company_name"): q for q in qualified}
+                to_save = []
+                for _, row in edited.iterrows():
+                    if not row.get("Select"):
+                        continue
+                    base = dict(by_id.get(row["_id"]) or {})
+                    email = str(row.get("Email") or "").strip()
+                    base["email"] = email
+                    if not email:
+                        st.warning(
+                            f"{base.get('company_name')}: no email yet — type one in Email column."
+                        )
+                        continue
+                    to_save.append(base)
+
+                csave, cact = st.columns(2)
+                if csave.button("Save selected vetted leads") and to_save:
+                    added, updated = upsert_leads(to_save)
+                    st.success(f"Saved {added} new, {updated} updated to Cloud DB.")
+                    _refresh_leads()
+                if cact.button("Save + Activate pipeline", type="primary") and to_save:
+                    added, updated = upsert_leads(to_save)
+                    leads = _refresh_leads()
+                    keys = [lead_key(t) for t in to_save]
+                    n, skipped = activate_sequence(leads, keys, force=False)
+                    st.success(
+                        f"Saved ({added}/{updated}) and activated {n}. Go to Pipeline → Start."
+                    )
+                    for s in skipped:
+                        st.warning(s)
+                    _refresh_leads()
+
+            with st.expander("Show rejected / low-score (noise filtered out)"):
+                qual_ids = {(q.get("id") or q.get("company_name")) for q in (result.get("qualified") or [])}
+                weak = [
+                    v
+                    for v in (result.get("vetted") or [])
+                    if (v.get("id") or v.get("company_name")) not in qual_ids
+                ]
+                if not weak:
+                    st.write("None")
+                else:
+                    st.dataframe(
+                        pd.DataFrame(
+                            [
+                                {
+                                    "Score": v.get("vet_score"),
+                                    "Status": v.get("vet_status"),
+                                    "Company": v.get("company_name"),
+                                    "Reason": v.get("vet_reason"),
+                                }
+                                for v in weak
+                            ]
+                        ),
+                        hide_index=True,
+                        use_container_width=True,
+                    )
 
     with tab_import:
+        st.markdown(
+            "Import exports from ThomasNet / LinkedIn Sales Navigator / state agencies. "
+            "We do not auto-scrape those sites (against their terms)."
+        )
         uploaded = st.file_uploader("CSV", type=["csv"])
         if uploaded and st.button("Import"):
             rows = parse_import_csv(uploaded.read())
@@ -448,7 +542,7 @@ def page_find_leads():
                 st.error("No rows found.")
             else:
                 added, updated = upsert_leads(rows)
-                st.success(f"Imported — {added} new, {updated} updated (history protected).")
+                st.success(f"Imported — {added} new, {updated} updated.")
                 _refresh_leads()
 
     with tab_manual:
@@ -488,6 +582,27 @@ def page_find_leads():
                     st.success("Added.")
                     _refresh_leads()
 
+    with tab_limits:
+        st.markdown(
+            """
+### Automated in this app (legal)
+- Google Places / Business-style search by state, county, zip
+- Public website email harvest
+- Logistics LLM / rules vetting (drops brokers, restaurants, noise)
+
+### Not automated (ToS / legal — CSV import instead)
+- LinkedIn, ThomasNet, Yellow Pages scraping
+
+### Public directories (CSV import)
+- State Dept of Agriculture, USDA/AMS lists
+
+### Your time
+1. Find & Vet
+2. Select high-score leads with email
+3. Save + Activate → Pipeline Start
+4. Jump in only when bot escalates rates/contracts/loads
+"""
+        )
 
 def page_pipeline():
     st.title("Pipeline & Outreach")
