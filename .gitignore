@@ -5,6 +5,7 @@ data/leads_db.json
 data/outbound_log.json
 data/inbox.json
 data/alerts.json
+data/team_rbac.json
 .streamlit/secrets.toml
 __pycache__/
 *.pyc
