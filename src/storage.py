@@ -244,6 +244,7 @@ def test_sheet_connection() -> str:
 
 
 def _open_worksheet():
+    """Open the leads worksheet. Read path must never mutate the Sheet."""
     import gspread
     from google.oauth2.service_account import Credentials
 
@@ -265,45 +266,24 @@ def _open_worksheet():
     client = gspread.authorize(creds)
     sh = client.open_by_key(sheet_id)
     try:
-        ws = sh.worksheet("leads")
+        return sh.worksheet("leads")
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(title="leads", rows=2000, cols=len(SHEET_COLUMNS))
         ws.append_row(SHEET_COLUMNS)
         return ws
 
-    header = ws.row_values(1)
-    if header == SHEET_COLUMNS:
-        return ws
-    if not header:
-        ws.append_row(SHEET_COLUMNS)
-        return ws
-
-    missing = [c for c in SHEET_COLUMNS if c not in header]
-    if missing:
-        start_col = len(header) + 1
-        for i, col in enumerate(missing):
-            ws.update_cell(1, start_col + i, col)
-        header = ws.row_values(1)
-
-    # Normalize column order without dropping rows (rewrite from records)
-    if header[: len(SHEET_COLUMNS)] != SHEET_COLUMNS:
-        records = ws.get_all_records()
-        values = [SHEET_COLUMNS]
-        for r in records:
-            row = _to_sheet_row(_normalize(r))
-            values.append([row.get(c, "") for c in SHEET_COLUMNS])
-        ws.clear()
-        ws.update("A1", values, value_input_option="USER_ENTERED")
-    return ws
-
 
 def _load_sheets() -> list[dict]:
     ws = _open_worksheet()
+    values = ws.get_all_values()
+    if not values or len(values) < 2:
+        return []
     rows = ws.get_all_records()
     return [_normalize(r) for r in rows if r.get("company_name") or r.get("email")]
 
 
 def _save_sheets(leads: list[dict]) -> None:
+    """Full rewrite — also migrates new columns (e.g. assigned_to) safely."""
     ws = _open_worksheet()
     values = [SHEET_COLUMNS]
     for lead in leads:

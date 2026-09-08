@@ -244,44 +244,51 @@ st.markdown(
     box-shadow: var(--lg-shadow);
   }
 
-  /* Sidebar nav — glass pills; selected glows + ~20% larger */
-  section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] {
-    border-radius: 14px !important;
-    padding: 0.35rem 0.65rem !important;
-    margin: 0.22rem 0 !important;
-    transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
-    border: 1px solid transparent;
-    background: rgba(255, 255, 255, 0.22);
-  }
-  section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] p,
-  section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] span {
+  /* Sidebar chevron nav (buttons, not radios) */
+  section[data-testid="stSidebar"] div.stButton > button {
+    width: 100% !important;
+    justify-content: flex-start !important;
+    text-align: left !important;
+    border-radius: 12px !important;
+    padding: 0.55rem 0.85rem !important;
+    margin: 0.12rem 0 !important;
     font-size: 0.95rem !important;
     font-weight: 500 !important;
-    color: var(--lg-deep) !important;
+    border: 1px solid rgba(14, 165, 233, 0.18) !important;
+    background: rgba(255, 255, 255, 0.35) !important;
+    box-shadow: none !important;
+    transform: none !important;
   }
-  section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) {
-    transform: scale(1.2);
-    transform-origin: left center;
-    margin: 0.55rem 0.15rem 0.55rem 0 !important;
-    padding: 0.55rem 0.85rem !important;
+  section[data-testid="stSidebar"] div.stButton > button[kind="primary"],
+  section[data-testid="stSidebar"] div.stButton > button[data-testid="baseButton-primary"] {
+    font-size: 1.12rem !important;
+    font-weight: 700 !important;
+    padding: 0.72rem 1rem !important;
     background: linear-gradient(
       135deg,
-      rgba(14, 165, 233, 0.42),
-      rgba(20, 184, 166, 0.48),
-      rgba(16, 185, 129, 0.38)
+      rgba(14, 165, 233, 0.92),
+      rgba(20, 184, 166, 0.9),
+      rgba(16, 185, 129, 0.88)
     ) !important;
-    border: 1px solid rgba(255, 255, 255, 0.75) !important;
+    color: #fff !important;
+    border: 1px solid rgba(255, 255, 255, 0.55) !important;
     box-shadow:
-      0 0 0 1px rgba(14, 165, 233, 0.35),
-      0 0 18px rgba(14, 165, 233, 0.55),
-      0 0 36px rgba(16, 185, 129, 0.35),
-      inset 0 1px 0 rgba(255, 255, 255, 0.55) !important;
-    backdrop-filter: blur(12px);
+      0 0 0 1px rgba(14, 165, 233, 0.25),
+      0 0 20px rgba(14, 165, 233, 0.45),
+      0 0 36px rgba(16, 185, 129, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.4) !important;
   }
-  section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) p,
-  section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) span {
-    font-size: 1.14rem !important;
-    font-weight: 700 !important;
+  section[data-testid="stSidebar"] div.stButton > button:hover {
+    border-color: rgba(20, 184, 166, 0.55) !important;
+    background: rgba(255, 255, 255, 0.55) !important;
+  }
+  section[data-testid="stSidebar"] div.stButton > button[kind="primary"]:hover {
+    background: linear-gradient(
+      135deg,
+      rgba(14, 165, 233, 1),
+      rgba(16, 185, 129, 0.95)
+    ) !important;
+    color: #fff !important;
   }
 
   /* Slider */
@@ -1530,13 +1537,23 @@ def main():
         st.error("No modules enabled for your account. Ask Super Admin.")
         return
 
+    if st.session_state.get("nav_page") not in pages_available:
+        st.session_state.nav_page = pages_available[0]
+
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        page = st.radio(
-            "Go to",
-            pages_available,
-            label_visibility="collapsed",
-        )
+        for label in pages_available:
+            selected = st.session_state.nav_page == label
+            chevron = "▾" if selected else "›"
+            if st.button(
+                f"{chevron}  {label}",
+                key=f"nav_{label}",
+                type="primary" if selected else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state.nav_page = label
+                st.rerun()
+
         company = _company()
         st.divider()
         st.caption(f"{user.get('name')} · {ROLE_PRESETS.get(user.get('role'), {}).get('label', user.get('role'))}")
@@ -1550,10 +1567,11 @@ def main():
             st.error("LIVE EMAIL")
         else:
             st.success("Dry run")
-        if st.button("Sign out"):
+        if st.button("Sign out", use_container_width=True):
             st.session_state.pop("auth_user", None)
             st.rerun()
 
+    page = st.session_state.nav_page
     pages = {
         "Dashboard": page_dashboard,
         "Leads List": page_leads_list,
