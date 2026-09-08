@@ -299,6 +299,10 @@ st.markdown(
     ) !important;
     color: #fff !important;
   }
+  /* Nested funnel pages (● / ○) sit slightly indented via label spacing */
+  section[data-testid="stSidebar"] div.stButton > button p {
+    text-align: left !important;
+  }
 
   /* Slider */
   div[data-testid="stSlider"] [role="slider"] {
@@ -1641,23 +1645,128 @@ def main():
         st.error("No modules enabled for your account. Ask Super Admin.")
         return
 
+    shipper_pages = [
+        p
+        for p in ("Find Leads", "Leads List", "Pipeline & Outreach", "Inbox Bot")
+        if p in pages_available
+    ]
+    carrier_pages = [
+        p
+        for p in ("Find Carriers", "Carrier Leads", "Carrier Pipeline", "Carrier Inbox")
+        if p in pages_available
+    ]
+    top_pages = [
+        p for p in ("Dashboard", "Org Setup", "Cloud Hosting", "Help") if p in pages_available
+    ]
+
     if st.session_state.get("nav_page") not in pages_available:
         st.session_state.nav_page = pages_available[0]
 
+    # Keep group open when browsing a funnel page
+    cur = st.session_state.nav_page
+    if cur in shipper_pages:
+        st.session_state.nav_group = "shipper"
+    elif cur in carrier_pages:
+        st.session_state.nav_group = "carrier"
+
+    def _goto(page: str, group: str | None = None):
+        st.session_state.nav_page = page
+        if group is not None:
+            st.session_state.nav_group = group
+        st.rerun()
+
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.08c · Shipper + Carrier")
-        for label in pages_available:
-            selected = st.session_state.nav_page == label
-            chevron = "▾" if selected else "›"
+        st.caption("v2026.09.08d · grouped Shipper / Carrier")
+
+        # Top-level: Dashboard first
+        if "Dashboard" in top_pages:
+            sel = cur == "Dashboard"
             if st.button(
-                f"{chevron}  {label}",
-                key=f"nav_{label}",
-                type="primary" if selected else "secondary",
+                f"{'▾' if sel else '›'}  Dashboard",
+                key="nav_Dashboard",
+                type="primary" if sel else "secondary",
                 use_container_width=True,
             ):
-                st.session_state.nav_page = label
-                st.rerun()
+                _goto("Dashboard", group="")
+
+        # Shipper group
+        if shipper_pages:
+            ship_open = st.session_state.get("nav_group") == "shipper"
+            ship_active = cur in shipper_pages
+            if st.button(
+                f"{'▾' if ship_open else '›'}  Shipper",
+                key="nav_group_shipper",
+                type="primary" if ship_active else "secondary",
+                use_container_width=True,
+            ):
+                # Toggle open; land on first shipper page
+                if ship_open and ship_active:
+                    st.session_state.nav_group = ""
+                    st.rerun()
+                else:
+                    _goto(shipper_pages[0], group="shipper")
+            if ship_open:
+                for label in shipper_pages:
+                    selected = cur == label
+                    short = {
+                        "Find Leads": "Find Leads",
+                        "Leads List": "Leads List",
+                        "Pipeline & Outreach": "Pipeline",
+                        "Inbox Bot": "Inbox Bot",
+                    }.get(label, label)
+                    if st.button(
+                        f"{'●' if selected else '○'}  {short}",
+                        key=f"nav_{label}",
+                        type="primary" if selected else "secondary",
+                        use_container_width=True,
+                    ):
+                        _goto(label, group="shipper")
+
+        # Carrier group
+        if carrier_pages:
+            car_open = st.session_state.get("nav_group") == "carrier"
+            car_active = cur in carrier_pages
+            if st.button(
+                f"{'▾' if car_open else '›'}  Carrier",
+                key="nav_group_carrier",
+                type="primary" if car_active else "secondary",
+                use_container_width=True,
+            ):
+                if car_open and car_active:
+                    st.session_state.nav_group = ""
+                    st.rerun()
+                else:
+                    _goto(carrier_pages[0], group="carrier")
+            if car_open:
+                for label in carrier_pages:
+                    selected = cur == label
+                    short = {
+                        "Find Carriers": "Find Carriers",
+                        "Carrier Leads": "Carrier Leads",
+                        "Carrier Pipeline": "Pipeline",
+                        "Carrier Inbox": "Inbox",
+                    }.get(label, label)
+                    if st.button(
+                        f"{'●' if selected else '○'}  {short}",
+                        key=f"nav_{label}",
+                        type="primary" if selected else "secondary",
+                        use_container_width=True,
+                    ):
+                        _goto(label, group="carrier")
+
+        # Remaining top-level pages
+        for label in ("Org Setup", "Cloud Hosting", "Help"):
+            if label not in top_pages:
+                continue
+            sel = cur == label
+            if st.button(
+                f"{'▾' if sel else '›'}  {label}",
+                key=f"nav_{label}",
+                type="primary" if sel else "secondary",
+                use_container_width=True,
+            ):
+                _goto(label, group="")
 
         company = _company()
         st.divider()
