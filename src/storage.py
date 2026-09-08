@@ -232,66 +232,6 @@ def sheets_configured(secrets: Optional[dict] = None) -> bool:
     return bool(_get_sheet_id()) and bool(_get_gcp_info())
 
 
-def secret_status() -> dict:
-    """Safe diagnostic for the UI (no private key values)."""
-    keys = []
-    try:
-        import streamlit as st
-
-        keys = list(st.secrets.keys())
-    except Exception as e:
-        return {"keys": [], "error": str(e)}
-
-    info = _get_gcp_info()
-    return {
-        "keys": keys,
-        "sheet_id_present": bool(_get_sheet_id()),
-        "sheet_id_preview": (_get_sheet_id()[:8] + "…") if _get_sheet_id() else "",
-        "gcp_loaded": bool(info),
-        "gcp_client_email": (info or {}).get("client_email", ""),
-        "cloud_ready": sheets_configured(),
-    }
-
-
-def json_to_b64_secret(json_text: str) -> str:
-    """Turn downloaded service-account JSON into one safe Secrets line."""
-    import base64
-
-    data = json.loads(json_text.strip())
-    if data.get("type") != "service_account":
-        raise ValueError("This does not look like a Google service account JSON file.")
-    if "private_key" not in data or "client_email" not in data:
-        raise ValueError("JSON is missing private_key or client_email.")
-    compact = json.dumps(data, separators=(",", ":"))
-    return base64.b64encode(compact.encode("utf-8")).decode("ascii")
-
-
-def build_simple_secrets_toml(sheet_id: str, json_text: str) -> str:
-    b64 = json_to_b64_secret(json_text)
-    return (
-        f'google_sheet_id = "{sheet_id.strip()}"\n'
-        f"send_live_emails = false\n"
-        f'gcp_sa_b64 = "{b64}"\n'
-        "\n"
-        "[company]\n"
-        'my_company = "LogixTrek LLC"\n'
-        'my_name = "LogixTrek Dispatch"\n'
-        'my_phone = "(443) 891-8543"\n'
-        'my_email = "accounts@logixtrek.com"\n'
-        'my_mc = "MC-1590829"\n'
-        'my_dot = "DOT-4146389"\n'
-        'website = "https://www.logixtrek.com"\n'
-        'physical_address = "1030 Derry Ln Apt 36, Macomb, IL 61455"\n'
-        'equipment = "53\' Reefer (also Dry Van / Box capacity)"\n'
-        'origin_area = "Macomb, IL / Midwest"\n'
-        'owner_notify_email = "accounts@logixtrek.com"\n'
-        'smtp_host = "smtp.gmail.com"\n'
-        "smtp_port = 587\n"
-        'smtp_user = "accounts@logixtrek.com"\n'
-        'unsubscribe_note = "LogixTrek LLC | 1030 Derry Ln Apt 36, Macomb, IL 61455 | www.logixtrek.com | Reply STOP to opt out of future emails."\n'
-    )
-
-
 def test_sheet_connection() -> str:
     """Try reading/writing the Sheet. Returns OK message or error."""
     ws = _open_worksheet()
@@ -380,6 +320,10 @@ def upsert_leads(new_leads: list[dict]) -> tuple[int, int]:
 
     for raw in new_leads:
         incoming = _normalize(raw)
+        if not (incoming.get("email") or "").strip() and not (
+            incoming.get("company_name") or ""
+        ).strip():
+            continue
         if not incoming.get("id"):
             incoming["id"] = f"L{datetime.now().strftime('%Y%m%d%H%M%S')}{added + updated}"
         key = lead_key(incoming)

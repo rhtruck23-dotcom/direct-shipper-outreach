@@ -1,0 +1,16 @@
+# Coverage config — business logic in src/ (Streamlit UI app.py excluded by design)
+[run]
+source = src
+branch = False
+omit =
+    src/__init__.py
+
+[report]
+precision = 1
+show_missing = True
+skip_empty = True
+fail_under = 95
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError

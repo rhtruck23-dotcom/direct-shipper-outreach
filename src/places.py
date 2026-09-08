@@ -126,15 +126,30 @@ def _parse_address_bits(
         elif "postal_code" in types:
             zip_code = short.split("-")[0]
     if not state and formatted:
-        # crude fallback: look for ", ST "
+        # crude fallback: ", City, ST ZIP" or ", ST ZIP, USA"
         parts = [p.strip() for p in formatted.split(",")]
         if len(parts) >= 2:
-            last = parts[-1].replace("USA", "").replace("US", "").strip()
-            toks = last.split()
-            if toks and len(toks[0]) == 2:
-                state = toks[0]
-            if len(toks) >= 2 and toks[1][:5].isdigit():
-                zip_code = toks[1][:5]
+            candidates = []
+            for part in reversed(parts):
+                cleaned = (
+                    part.replace("USA", "")
+                    .replace("US", "")
+                    .strip()
+                )
+                if cleaned:
+                    candidates.append(cleaned)
+            for cand in candidates:
+                toks = cand.split()
+                if toks and len(toks[0]) == 2 and toks[0].isalpha():
+                    state = toks[0].upper()
+                    if len(toks) >= 2 and toks[1][:5].isdigit():
+                        zip_code = toks[1][:5]
+                    break
+                if len(toks) >= 2 and len(toks[-2]) == 2 and toks[-2].isalpha():
+                    state = toks[-2].upper()
+                    if toks[-1][:5].isdigit():
+                        zip_code = toks[-1][:5]
+                    break
     return state, county, zip_code
 
 

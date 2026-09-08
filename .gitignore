@@ -13,3 +13,5 @@ __pycache__/
 venv/
 *.json.key
 service_account.json
+
+coverage.json

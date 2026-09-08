@@ -125,6 +125,16 @@ def page_dashboard():
     leads = _refresh_leads()
     _storage_banner()
 
+    from src.involvement import involvement_report
+
+    inv = involvement_report(include_optional_paca=False)
+    st.metric(
+        "Your involvement (target ≤10%)",
+        f"{inv['involvement_pct']}%",
+        delta="under target" if inv["under_target"] else "over target",
+    )
+    st.caption(inv["summary"])
+
     active = [l for l in leads if l.get("active_sequence")]
     due = [l for l in active if next_action_for_lead(l) is not None]
     responded = [l for l in leads if l.get("status") == "responded"]
