@@ -1,13 +1,19 @@
 """
-End-to-end: discover → enrich emails → LLM/rules vet → qualified list.
+End-to-end Find & Vet — wires Claude handoff discover_leads into our pipeline.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
-from .discovery import discover_candidates
-from .enrich import enrich_lead
-from .vetting import filter_vetted, llm_vet_batch
+from .lead_discovery_agent import discover_leads, paca_manual_search_instructions
+from .vetting import filter_vetted
+
+
+# re-export for UI
+__all__ = [
+    "find_and_vet_shippers",
+    "paca_manual_search_instructions",
+]
 
 
 def find_and_vet_shippers(
@@ -22,56 +28,43 @@ def find_and_vet_shippers(
     progress_cb=None,
 ) -> dict[str, Any]:
     """
-    Returns {
-      candidates, vetted, qualified, rejected_count, method_notes
-    }
+    Returns candidates / vetted / qualified using Places + CSE + Gemini.
+    enrich_websites is handled inside discover_leads.
     """
+    config = {
+        "google_places_api_key": (company.get("google_places_api_key") or "").strip(),
+        "google_cse_api_key": (company.get("google_cse_api_key") or "").strip(),
+        "google_cse_id": (company.get("google_cse_id") or "").strip(),
+        "gemini_api_key": (company.get("gemini_api_key") or "").strip(),
+        "use_demo": use_demo,
+    }
+    # county currently folded into location via zip/state in agent
+    _ = county
+    _ = enrich_websites
 
-    def prog(msg: str):
-        if progress_cb:
-            progress_cb(msg)
-
-    api_key = (company.get("google_places_api_key") or "").strip()
-    prog("Searching Google Business / Places for shipper-type companies…")
-    candidates = discover_candidates(
-        api_key,
-        freight_type=freight_type,
+    equipment = company.get("equipment") or "53' Reefer"
+    leads = discover_leads(
         state=state,
-        county=county,
         zip_code=zip_code,
-        use_demo=use_demo or not api_key,
+        freight_type=freight_type,
+        equipment=equipment,
+        config=config,
+        max_per_source=15,
+        progress_cb=progress_cb,
     )
-    prog(f"Found {len(candidates)} raw candidates. Enriching public websites…")
 
-    enriched = []
-    for i, c in enumerate(candidates):
-        if enrich_websites and not use_demo:
-            prog(f"Checking website {i+1}/{len(candidates)}: {c.get('company_name')}")
-            enriched.append(enrich_lead(c))
-        else:
-            enriched.append(dict(c))
-
-    prog("Running logistics vetting (LLM if key present, else rules)…")
-    vetted = llm_vet_batch(enriched, company=company)
-    qualified = filter_vetted(vetted, min_score=min_score, include_maybe=True)
-    rejected = [v for v in vetted if (v.get("vet_status") or "") == "reject"]
-
-    # Stamp remarks for pipeline memory
-    for q in qualified:
-        score = q.get("vet_score")
-        reason = q.get("vet_reason") or ""
-        q["remarks"] = f"Vetted score {score}/10 — {reason}"[:500]
-        note = q.get("notes") or ""
-        q["notes"] = (note + f" | vet:{q.get('vet_method')}").strip(" |")
+    # filter_vetted uses vet_score 1-10
+    qualified = filter_vetted(leads, min_score=min_score, include_maybe=True)
+    rejected = [v for v in leads if (v.get("vet_status") or "") == "reject"]
 
     return {
-        "candidates": candidates,
-        "vetted": vetted,
+        "candidates": leads,
+        "vetted": leads,
         "qualified": qualified,
         "rejected_count": len(rejected),
-        "used_demo": bool(use_demo or not api_key),
-        "has_places_key": bool(api_key),
-        "has_gemini": bool(
-            (company.get("gemini_api_key") or "").strip()
-        ),
+        "used_demo": bool(use_demo or not config["google_places_api_key"]),
+        "has_places_key": bool(config["google_places_api_key"]),
+        "has_gemini": bool(config["gemini_api_key"]),
+        "has_cse": bool(config["google_cse_api_key"] and config["google_cse_id"]),
+        "paca_hint": paca_manual_search_instructions(zip_code or state or "your state"),
     }

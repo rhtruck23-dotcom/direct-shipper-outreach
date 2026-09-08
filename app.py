@@ -69,6 +69,8 @@ def _company() -> dict:
                 "smtp_password",
                 "google_places_api_key",
                 "gemini_api_key",
+                "google_cse_api_key",
+                "google_cse_id",
                 "smtp_host",
                 "smtp_user",
                 "my_email",
@@ -325,6 +327,20 @@ def page_org_setup():
             value=company.get("google_places_api_key", ""),
             type="password",
         )
+        gemini_key = st.text_input(
+            "Gemini API key (AI Studio)",
+            value=company.get("gemini_api_key", ""),
+            type="password",
+        )
+        cse_key = st.text_input(
+            "Google Custom Search API key",
+            value=company.get("google_cse_api_key", ""),
+            type="password",
+        )
+        cse_id = st.text_input(
+            "Google Custom Search Engine ID (cx)",
+            value=company.get("google_cse_id", ""),
+        )
         bot_auto = st.toggle(
             "Bot auto-send safe replies", value=bool(company.get("bot_auto_reply", True))
         )
@@ -352,6 +368,9 @@ def page_org_setup():
                 "smtp_password": smtp_password,
                 "send_live_emails": send_live,
                 "google_places_api_key": google_key,
+                "gemini_api_key": gemini_key,
+                "google_cse_api_key": cse_key,
+                "google_cse_id": cse_id,
                 "bot_auto_reply": bot_auto,
             }
             try:
@@ -383,12 +402,13 @@ def page_find_leads():
     )
     company = _company()
 
-    tab_vet, tab_import, tab_manual, tab_limits = st.tabs(
+    tab_vet, tab_paca, tab_import, tab_manual, tab_limits = st.tabs(
         [
             "Find & Vet (main)",
+            "USDA PACA (reefer gold)",
             "Import CSV",
             "Add one lead",
-            "What we can / cannot auto-search",
+            "Sources / limits",
         ]
     )
 
@@ -403,9 +423,14 @@ def page_find_leads():
 
         has_places = bool((company.get("google_places_api_key") or "").strip())
         has_gemini = bool((company.get("gemini_api_key") or "").strip())
+        has_cse = bool(
+            (company.get("google_cse_api_key") or "").strip()
+            and (company.get("google_cse_id") or "").strip()
+        )
         st.write(
-            f"Places API: {'ready' if has_places else 'missing (demo until you add key)'} · "
-            f"Gemini LLM: {'ready' if has_gemini else 'missing (rules vetting still runs)'}"
+            f"Places: {'ready' if has_places else 'missing'} · "
+            f"Google Search (CSE): {'ready' if has_cse else 'missing'} · "
+            f"Gemini: {'ready' if has_gemini else 'rules only'}"
         )
 
         b1, b2 = st.columns(2)
@@ -449,16 +474,19 @@ def page_find_leads():
                 st.subheader("Vetted list — select who to load into pipeline")
                 rows = []
                 for q in qualified:
+                    needs = "NEEDS EMAIL" if not (q.get("email") or "").strip() else "OK"
                     rows.append(
                         {
                             "Select": bool(q.get("email")),
-                            "Score": int(q.get("vet_score") or 0),
+                            "Fit": int(q.get("fit_score") or int(q.get("vet_score") or 0) * 10),
+                            "Email?": needs,
                             "Status": q.get("vet_status") or "",
                             "Company": q.get("company_name") or "",
                             "Email": q.get("email") or "",
                             "Phone": q.get("phone") or "",
                             "City/Addr": (q.get("address") or "")[:60],
-                            "Why vetted": (q.get("vet_reason") or "")[:120],
+                            "Why vetted": (q.get("vet_reason") or q.get("remarks") or "")[:120],
+                            "Source": q.get("source") or "",
                             "Website": q.get("website") or "",
                             "_id": q.get("id") or q.get("company_name"),
                         }
@@ -530,9 +558,33 @@ def page_find_leads():
                         use_container_width=True,
                     )
 
+    with tab_paca:
+        from src.lead_discovery_agent import PACA_SEARCH_URL, paca_manual_search_instructions
+
+        st.subheader("USDA PACA — best free reefer shipper list")
+        st.markdown(
+            f"""
+This is a **federal** database of businesses licensed to buy/sell fresh & frozen produce
+(your ideal reefer customer). Free and real.
+
+**Live search (manual — site blocks bots):** [{PACA_SEARCH_URL}]({PACA_SEARCH_URL})
+
+**2-minute workflow**
+1. Open the link → search by **State** or **Zip / zip range**
+2. Copy company name + city/state into Excel/Sheets
+3. Save as CSV with columns: `company_name,state,zip,freight_type` (set freight_type to Reefer)
+4. Use **Import CSV** tab — then Pipeline / Activate
+
+{paca_manual_search_instructions("IL")}
+"""
+        )
+        st.info(
+            "We will not scrape PACA. Same rule as LinkedIn/ThomasNet — robots.txt says no bots."
+        )
+
     with tab_import:
         st.markdown(
-            "Import exports from ThomasNet / LinkedIn Sales Navigator / state agencies. "
+            "Import exports from ThomasNet / LinkedIn Sales Navigator / state agencies / PACA paste. "
             "We do not auto-scrape those sites (against their terms)."
         )
         uploaded = st.file_uploader("CSV", type=["csv"])
@@ -585,22 +637,28 @@ def page_find_leads():
     with tab_limits:
         st.markdown(
             """
-### Automated in this app (legal)
-- Google Places / Business-style search by state, county, zip
-- Public website email harvest
-- Logistics LLM / rules vetting (drops brokers, restaurants, noise)
+### Automated (legal)
+| Source | What it does |
+|--------|----------------|
+| Google Places / Business | State/zip business search |
+| Google Programmable Search | Web results + read company sites for emails |
+| Gemini LLM | Fit score 0–100 + one-line reason |
+| Rules fallback | Works even without Gemini |
 
-### Not automated (ToS / legal — CSV import instead)
-- LinkedIn, ThomasNet, Yellow Pages scraping
+### Manual but high-value
+| Source | How |
+|--------|-----|
+| **USDA PACA** | 2 min search → CSV import (see PACA tab) |
+| LinkedIn / ThomasNet / Yellow Pages | Export yourself → CSV import |
 
-### Public directories (CSV import)
-- State Dept of Agriculture, USDA/AMS lists
+### Not scraped (ToS / robots.txt)
+LinkedIn, ThomasNet, Yellow Pages directories, PACA live search automation.
 
-### Your time
-1. Find & Vet
-2. Select high-score leads with email
+### Your time after this
+1. Find & Vet (or PACA CSV)
+2. Select high Fit scores with email (or add email)
 3. Save + Activate → Pipeline Start
-4. Jump in only when bot escalates rates/contracts/loads
+4. Only jump in when Inbox Bot escalates rates / contracts / loads
 """
         )
 
