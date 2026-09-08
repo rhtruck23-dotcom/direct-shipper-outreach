@@ -118,8 +118,9 @@ def test_open_worksheet_mocked():
 
     ws = MagicMock()
     ws.row_values.return_value = storage.SHEET_COLUMNS
-    ws.get_all_records.return_value = [
-        {"company_name": "X", "email": "x@y.com", "status": "not_started"}
+    ws.get_all_values.return_value = [
+        ["company_name", "email", "status"],
+        ["X", "x@y.com", "not_started"],
     ]
     sh = MagicMock()
     sh.worksheet.return_value = ws

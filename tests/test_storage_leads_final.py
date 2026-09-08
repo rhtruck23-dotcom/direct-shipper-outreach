@@ -151,9 +151,9 @@ def test_worksheet_not_found_and_header_reset():
     with patch.dict("sys.modules", {"streamlit": st}):
         with patch("gspread.authorize", return_value=client):
             with patch("google.oauth2.service_account.Credentials.from_service_account_info"):
-                ws = storage._open_worksheet()
-    assert new_ws.clear.called
-    assert new_ws.append_row.called
+                ws = storage._open_worksheet(create_if_missing=True)
+    assert ws is new_ws
+    assert new_ws.update.called
 
 
 def test_test_sheet_connection_ok():
