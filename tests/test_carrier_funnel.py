@@ -38,7 +38,7 @@ def test_carrier_upsert_and_activate(tmp_path, monkeypatch):
     assert leads[0]["active_sequence"] is True
 
 
-def test_carrier_templates_mention_40k_and_mc():
+def test_carrier_templates_mention_mc_not_hard_earnings():
     subj, body = ctmpl.render_carrier_email(
         1,
         {"contact_name": "Sam", "company_name": "Sam Trucking", "mc_number": "MC-9"},
@@ -54,9 +54,11 @@ def test_carrier_templates_mention_40k_and_mc():
             "origin_area": "IL",
         },
     )
-    assert "40k" in subj or "40k" in body
+    assert "40k" not in subj.lower() and "40k" not in body.lower()
+    assert "$40" not in body
     assert "MC-1590829" in body
     assert "Sam" in body
+    assert "walk through real pay" in body
 
 
 def test_carrier_campaign_dry_run(tmp_path, monkeypatch):
@@ -207,7 +209,23 @@ def test_mark_hired():
     lead = {"status": "responded", "active_sequence": True, "remarks": ""}
     cleads.mark_carrier_hired(lead)
     assert lead["status"] == "converted"
+    assert lead["deal_stage"] == "signed_onboarded"
     assert "Hired under" in lead["remarks"]
+
+
+def test_carrier_deal_stage_progression():
+    from src.stages import set_carrier_deal_stage
+
+    lead = {"status": "emailed_1", "active_sequence": True, "responded": False}
+    set_carrier_deal_stage(lead, "applied")
+    assert lead["status"] == "responded"
+    assert lead["active_sequence"] is False
+    set_carrier_deal_stage(lead, "packet_sent")
+    assert lead["deal_stage"] == "packet_sent"
+    set_carrier_deal_stage(lead, "docs_reviewed")
+    set_carrier_deal_stage(lead, "signed_onboarded")
+    assert lead["status"] == "converted"
+    assert lead["deal_stage"] == "signed_onboarded"
 
 
 def test_shipper_modules_still_present():

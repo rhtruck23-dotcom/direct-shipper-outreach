@@ -78,3 +78,37 @@ def may_start_outreach(lead: dict, force: bool = False) -> tuple[bool, str]:
         if status.startswith("emailed_"):
             return False, "Already contacted — activate only with Force restart if needed"
     return True, "OK"
+
+
+# Carrier onboarding deal stages (after they reply — separate from email status)
+CARRIER_DEAL_STAGES = {
+    "": ("—", "#E8E8E8", "#333"),
+    "applied": ("Applied / Responded", "#D5F5E3", "#145A32"),
+    "packet_sent": ("Packet sent", "#D6EAF8", "#1A5276"),
+    "docs_reviewed": ("Docs under review", "#FCF3CF", "#7D6608"),
+    "signed_onboarded": ("Signed & onboarded", "#27AE60", "#FFFFFF"),
+    "not_qualified": ("Not qualified", "#F5B7B1", "#7B241C"),
+}
+
+
+def carrier_deal_label(stage: str) -> str:
+    return CARRIER_DEAL_STAGES.get(stage or "", ("—", "#eee", "#000"))[0]
+
+
+def set_carrier_deal_stage(lead: dict, stage: str) -> None:
+    """Advance carrier onboarding. signed_onboarded also marks status=converted."""
+    stage = (stage or "").strip()
+    if stage and stage not in CARRIER_DEAL_STAGES:
+        raise ValueError(f"Unknown carrier deal stage: {stage}")
+    lead["deal_stage"] = stage
+    if stage == "signed_onboarded":
+        lead["status"] = "converted"
+        lead["active_sequence"] = False
+        lead["responded"] = True
+    elif stage == "applied":
+        lead["status"] = "responded"
+        lead["active_sequence"] = False
+        lead["responded"] = True
+    elif stage == "not_qualified":
+        lead["active_sequence"] = False
+

@@ -1121,7 +1121,8 @@ def page_find_leads():
         st.markdown("#### Paste anything → filter → follow-up")
         st.caption(
             "1) Copy from LinkedIn / ThomasNet / Excel / email  ·  2) Paste here  ·  "
-            "3) Filter  ·  4) Save + Activate. App does the rest (same 4-email pipeline)."
+            "3) Filter  ·  4) Validate (optional)  ·  5) Save + Activate. "
+            "No Chrome scraper needed — sorting already lives here."
         )
         from src.paste_dump import (
             filter_paste_leads,
@@ -1182,6 +1183,37 @@ def page_find_leads():
                     kept.append((i, l))
             st.caption(f"Showing {len(kept)} of {len(parsed)} after filters.")
 
+            if st.button("Validate with Logistics bot", key="paste_validate"):
+                from src.paste_validate import validate_paste_leads
+
+                company = _company()
+                prog = st.progress(0.0, text="Validating…")
+                batch = [dict(l) for _, l in kept]
+
+                def _cb(msg: str) -> None:
+                    # lightweight status only
+                    prog.progress(min(0.95, 0.1), text=msg[:80])
+
+                validated = validate_paste_leads(
+                    batch,
+                    company=company,
+                    enrich_websites=True,
+                    use_llm=True,
+                    progress_cb=_cb,
+                )
+                # Write vet fields back onto session paste_leads by index
+                for (orig_i, _), v in zip(kept, validated):
+                    parsed[orig_i] = {**parsed[orig_i], **v}
+                st.session_state["paste_leads"] = parsed
+                ready_n = sum(1 for v in validated if v.get("validation_ready"))
+                blocked_n = len(validated) - ready_n
+                prog.progress(1.0, text="Done")
+                st.success(
+                    f"Validated {len(validated)}: {ready_n} ready/review, {blocked_n} blocked. "
+                    "Check Valid / Score columns, then save."
+                )
+                st.rerun()
+
             rows = []
             for orig_i, l in kept:
                 has_email = bool((l.get("email") or "").strip())
@@ -1191,15 +1223,21 @@ def page_find_leads():
                     sel = has_email
                 else:
                     sel = False
+                # If validated, default-select only ready/review (not blocked)
+                if l.get("validation_status") == "blocked":
+                    sel = False
                 rows.append(
                     {
                         "Select": sel,
+                        "Valid": l.get("validation_status") or "—",
+                        "Score": l.get("vet_score") if l.get("vet_score") is not None else "",
                         "Company": l.get("company_name") or "",
                         "Contact": l.get("contact_name") or "",
                         "Email": l.get("email") or "",
                         "Phone": l.get("phone") or "",
                         "State": l.get("state") or p_state,
                         "Freight": l.get("freight_type") or p_freight,
+                        "Notes": (l.get("validation_notes") or "")[:120],
                         "_i": orig_i,
                     }
                 )
@@ -1207,7 +1245,7 @@ def page_find_leads():
                 pd.DataFrame(rows),
                 hide_index=True,
                 use_container_width=True,
-                disabled=["_i"],
+                disabled=["_i", "Valid", "Score", "Notes"],
                 key="paste_editor",
                 height=320,
             )
@@ -1438,18 +1476,119 @@ This is a **federal** database of businesses licensed to buy/sell fresh & frozen
 
     with tab_import:
         st.markdown(
-            "Import exports from ThomasNet / LinkedIn Sales Navigator / state agencies / PACA paste. "
-            "We do not auto-scrape those sites (against their terms)."
+            "Import CSV exports **or** the National Shipper Contact List PDF. "
+            "Filter by **State** before saving so you do not activate the whole country at once."
         )
-        uploaded = st.file_uploader("CSV", type=["csv"])
-        if uploaded and st.button("Import"):
-            rows = parse_import_csv(uploaded.read())
-            if not rows:
-                st.error("No rows found.")
-            else:
-                added, updated = upsert_leads(rows)
-                st.success(f"Imported — {added} new, {updated} updated.")
-                _refresh_leads()
+        sub_csv, sub_pdf = st.tabs(["CSV file", "National Shipper PDF"])
+        with sub_csv:
+            uploaded = st.file_uploader("CSV", type=["csv"], key="import_csv_file")
+            if uploaded and st.button("Import CSV", key="import_csv_btn"):
+                rows = parse_import_csv(uploaded.read())
+                if not rows:
+                    st.error("No rows found.")
+                else:
+                    added, updated = upsert_leads(rows)
+                    st.success(f"Imported — {added} new, {updated} updated.")
+                    _refresh_leads()
+
+        with sub_pdf:
+            from src.shipper_pdf import (
+                filter_by_states,
+                parse_national_shipper_pdf,
+                state_counts,
+            )
+
+            st.caption(
+                "Upload a SHIPPER CONTACT LIST PDF (NAME / NUMBER / E-MAIL / PHONE / FAX). "
+                "We pull **State** from the city/state in each name line."
+            )
+            pdf = st.file_uploader("PDF", type=["pdf"], key="import_pdf_file")
+            if pdf and st.button("Parse PDF", type="primary", key="import_pdf_parse"):
+                with st.spinner("Reading PDF (can take ~15–30s for large lists)…"):
+                    parsed = parse_national_shipper_pdf(pdf.read())
+                st.session_state["national_pdf_leads"] = parsed
+                st.success(
+                    f"Parsed {len(parsed)} shippers "
+                    f"({sum(1 for x in parsed if x.get('email'))} with email)."
+                )
+
+            parsed = st.session_state.get("national_pdf_leads") or []
+            if parsed:
+                counts = state_counts(parsed)
+                st.write("**By state (top):** ", ", ".join(f"{k}:{v}" for k, v in list(counts.items())[:20]))
+                us_codes = sorted(
+                    k for k in counts if len(k) == 2 and k.isalpha() and k not in {"ON", "QC", "BC"}
+                )
+                f1, f2, f3 = st.columns(3)
+                pick_states = f1.multiselect(
+                    "Filter states (empty = all shown below)",
+                    options=us_codes or sorted(k for k in counts if k != "(blank)"),
+                    default=[],
+                    key="nat_pdf_states",
+                )
+                only_email = f2.checkbox("Only rows with email", value=True, key="nat_pdf_email")
+                us_only = f3.checkbox("US states only", value=True, key="nat_pdf_us")
+                filtered = filter_by_states(
+                    parsed,
+                    pick_states,
+                    us_only=us_only,
+                    require_email=only_email,
+                )
+                st.info(
+                    f"Showing **{len(filtered)}** of {len(parsed)} after filters. "
+                    "Select a few states (e.g. VA, MD, PA) — do not save all 2,800 at once."
+                )
+                rows = [
+                    {
+                        "Select": bool(pick_states) and bool(l.get("email")),
+                        "State": l.get("state") or "",
+                        "City": l.get("city") or "",
+                        "Company": l.get("company_name") or "",
+                        "Email": l.get("email") or "",
+                        "Phone": l.get("phone") or "",
+                        "PACA": l.get("paca_number") or "",
+                        "_i": i,
+                    }
+                    for i, l in enumerate(filtered)
+                ]
+                # If no state picked, default Select False to avoid accidental nation-wide save
+                if not pick_states:
+                    for r in rows:
+                        r["Select"] = False
+                edited = st.data_editor(
+                    pd.DataFrame(rows) if rows else pd.DataFrame(),
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=["_i", "State", "City", "Company", "Email", "Phone", "PACA"],
+                    key="nat_pdf_editor",
+                    height=360,
+                )
+                to_save = []
+                if len(edited):
+                    for _, row in edited.iterrows():
+                        if not row.get("Select"):
+                            continue
+                        base = dict(filtered[int(row["_i"])])
+                        if not base.get("email"):
+                            continue
+                        to_save.append(base)
+
+                b1, b2 = st.columns(2)
+                if b1.button("Save selected to Leads", key="nat_pdf_save") and to_save:
+                    a, u = upsert_leads(to_save)
+                    st.success(f"Saved {a} new, {u} updated. Open Leads List / Pipeline next.")
+                    _refresh_leads()
+                if b2.button("Save selected + Activate", type="primary", key="nat_pdf_act") and to_save:
+                    a, u = upsert_leads(to_save)
+                    leads = _refresh_leads()
+                    keys = [lead_key(t) for t in to_save]
+                    n, skipped = activate_sequence(leads, keys, force=False)
+                    st.success(f"Saved ({a}/{u}), activated {n}. Pipeline → Start when ready.")
+                    for s in skipped[:8]:
+                        st.warning(s)
+                    _refresh_leads()
+                if not to_save:
+                    st.caption("Tip: pick 1–3 states, check Select on rows you want, then Save.")
 
     with tab_manual:
         with st.form("manual"):
@@ -1858,7 +1997,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.08g · paste + filters")
+        st.caption("v2026.09.09b · national PDF + state filter")
 
         # Top-level: Dashboard first
         if "Dashboard" in top_pages:

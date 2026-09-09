@@ -1,20 +1,22 @@
-"""Email templates — owner-operator / carrier recruiting under LogixTrek MC."""
+"""Email templates — owner-operator / carrier recruiting under LogixTrek MC.
+
+Earnings language stays general (no guaranteed $ figure) — walk real numbers on a call.
+"""
 from __future__ import annotations
 
 TEMPLATES = {
     1: {
-        "subject": "Lease-on under {my_mc} — earn toward $40k gross with {my_company}",
+        "subject": "Lease on with {my_company} — keep your truck, drop the overhead",
         "body": """Hi {contact_name},
 
-I'm reaching out from {my_company} ({my_mc} / {my_dot}). We're onboarding a small number of owner-operators to run under our authority — so you can haul and earn without carrying the full authority / compliance load alone.
+I'm {my_name} with {my_company}, and we're looking for a few more owner-operators to run under our authority (MC# {my_mc} / DOT# {my_dot}).
 
-What we offer lease-on carriers:
-- Run under our MC with dispatch support
-- Clear path toward ~$40k gross (lane + equipment dependent — we'll talk numbers honestly on a call)
-- Straightforward settlement, no broker games on your side
-- Equipment focus: {equipment}
+If you're tired of chasing your own authority paperwork, insurance renewals, and broker headaches, running under our MC means:
+- You keep your truck; we handle the authority side, with dispatch support
+- Freight focus: {equipment} lanes in {lane_or_region} and beyond
+- No long-term lock-in just to talk — we'll walk through real pay and lanes on a call (results vary by hours, lanes, and equipment)
 
-I found {company_name}{mc_line} while looking for solid operators in {lane_or_region}. If you're open to lease-on / owner-operator work under a reputable MC, I'd like 10 minutes to see if we're a fit.
+I found {company_name}{mc_line} while looking for solid operators. If you've got your own truck and a clean record, I'd like 10 minutes to see if this is a fit.
 
 {my_name}
 {my_company}
@@ -24,15 +26,15 @@ I found {company_name}{mc_line} while looking for solid operators in {lane_or_re
 {unsubscribe_note}""",
     },
     2: {
-        "subject": "Following up — owner-operator seats under {my_mc}",
+        "subject": "Following up — owner-operator spot with {my_company}",
         "body": """Hi {contact_name},
 
-Quick follow-up from {my_company}. We're still filling a few owner-operator seats under {my_mc}.
+Following up on my note — figured it might have gotten buried.
 
-Operators who lease on with us usually want:
-- Steady freight without hunting boards alone every day
-- A clean authority home (we handle the MC-side compliance)
-- Transparent gross potential — we talk ~$40k gross targets openly
+Owner-operators who lease on with us usually care about:
+- Who's actually running dispatch (a real person, not a call center)
+- How pay actually works (we'll walk the cycle honestly)
+- Whether there's real freight in their lanes, not just promises
 
 If timing is bad, just tell me — or point me to the right person at {company_name}.
 
@@ -42,14 +44,14 @@ If timing is bad, just tell me — or point me to the right person at {company_n
 {unsubscribe_note}""",
     },
     3: {
-        "subject": "Still hiring O/Os under {my_company} authority",
+        "subject": "Still onboarding O/Os under {my_company}",
         "body": """Hi {contact_name},
 
 Last push from my side, then I'll leave the ball in your court.
 
-If you've been thinking about leasing onto an MC instead of running authority solo (or sitting between loads), {my_company} is actively onboarding owner-operators now. We keep the roster small on purpose — better freight, better communication.
+If you've been thinking about leasing onto an MC instead of running authority solo (or sitting between loads), {my_company} is actively onboarding a small number of owner-operators now. We keep the roster small on purpose.
 
-Reply "interested" or call {my_phone} and I'll walk you through equipment, lanes, and realistic gross toward the $40k range.
+Reply "interested" or call {my_phone} and I'll walk equipment, lanes, and realistic pay — not a canned pitch.
 
 {my_name}
 {my_company} | {my_mc} / {my_dot}
@@ -62,7 +64,7 @@ Reply "interested" or call {my_phone} and I'll walk you through equipment, lanes
 
 I won't keep filling your inbox. This is my last note for now.
 
-If you or another operator at {company_name} wants to lease on under {my_mc} later, my direct line stays open: {my_phone}. Happy to explain the program, settlements, and gross expectations anytime.
+If you or another operator at {company_name} wants to lease on under {my_mc} later, my direct line stays open: {my_phone}. Happy to explain the program anytime.
 
 Wishing you safe miles either way.
 

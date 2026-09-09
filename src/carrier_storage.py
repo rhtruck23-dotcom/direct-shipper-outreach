@@ -42,6 +42,7 @@ CARRIER_COLUMNS = [
     "active_sequence",
     "contact_count",
     "assigned_to",
+    "deal_stage",
     "conversation_json",
 ]
 
@@ -75,6 +76,7 @@ def _blank_carrier() -> dict[str, Any]:
         "active_sequence": False,
         "contact_count": 0,
         "assigned_to": "",
+        "deal_stage": "",
         "conversation": [],
     }
 
@@ -118,6 +120,7 @@ def _normalize(raw: dict) -> dict:
     if not lead.get("status"):
         lead["status"] = "not_started"
     lead["assigned_to"] = str(lead.get("assigned_to") or "").strip()
+    lead["deal_stage"] = str(lead.get("deal_stage") or "").strip()
     # normalize MC/DOT display
     mc = str(lead.get("mc_number") or "").strip()
     if mc and not mc.upper().startswith("MC"):

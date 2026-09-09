@@ -28,7 +28,14 @@ from src.rbac import (
     scope_leads,
 )
 from src.schedule import days_until_next, next_action_for_lead
-from src.stages import STAGE_STYLE, contact_indicator, stage_label
+from src.stages import (
+    CARRIER_DEAL_STAGES,
+    STAGE_STYLE,
+    carrier_deal_label,
+    contact_indicator,
+    set_carrier_deal_stage,
+    stage_label,
+)
 from src.storage import using_cloud
 
 
@@ -257,7 +264,8 @@ def page_carrier_leads():
         st.error("No access to Carrier Leads.")
         return
     st.caption(
-        "Owner-operator recruiting memory. Color = stage. Converted = Hired under LogixTrek MC."
+        "Owner-operator recruiting memory. Color = email stage. "
+        "Deal stage = onboarding after they reply (packet → docs → hired)."
     )
     if not is_super_admin(user):
         st.info("You only see carriers assigned to you.")
@@ -293,6 +301,7 @@ def page_carrier_leads():
     for l in filtered:
         row = {
             "Stage": stage_label(l.get("status") or "not_started"),
+            "Deal": carrier_deal_label(l.get("deal_stage") or ""),
             "Indicator": _carrier_indicator(l),
             "Company": l.get("company_name") or "",
             "Contact": l.get("contact_name") or "",
@@ -337,12 +346,25 @@ def page_carrier_leads():
         st.write(f"**{_carrier_indicator(lead)}**")
         st.write(f"**MC:** {lead.get('mc_number') or '—'} · **DOT:** {lead.get('dot_number') or '—'}")
         st.write(f"**Assigned:** {_assignee_name(lead.get('assigned_to') or '')}")
+        deal_keys = list(CARRIER_DEAL_STAGES.keys())
+        cur_deal = lead.get("deal_stage") or ""
+        if cur_deal not in deal_keys:
+            cur_deal = ""
+        new_deal = st.selectbox(
+            "Onboarding deal stage",
+            deal_keys,
+            index=deal_keys.index(cur_deal),
+            format_func=carrier_deal_label,
+            key=f"cl_deal_{key}",
+        )
 
     b1, b2, b3, b4 = st.columns(4)
     if b1.button("Save", type="primary", key="cl_save"):
         lead["remarks"] = new_remarks
         lead["email"] = new_email
         lead["phone"] = new_phone
+        if new_deal != (lead.get("deal_stage") or ""):
+            set_carrier_deal_stage(lead, new_deal)
         _persist_one(lead)
         st.success("Saved.")
         st.rerun()
@@ -359,7 +381,7 @@ def page_carrier_leads():
     if b4.button("Mark Responded 📞", key="cl_resp"):
         mark_carrier_response(lead, positive=True)
         _persist_one(lead)
-        st.success("Sequence stopped.")
+        st.success("Sequence stopped · deal = Applied.")
         st.rerun()
 
 

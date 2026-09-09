@@ -105,7 +105,10 @@ def mark_carrier_response(lead: dict, positive: bool = True) -> None:
     lead["responded"] = True
     lead["active_sequence"] = False
     lead["status"] = "responded" if positive else "do_not_contact"
-    if not positive:
+    if positive:
+        lead["deal_stage"] = lead.get("deal_stage") or "applied"
+    else:
+        lead["deal_stage"] = "not_qualified"
         note = lead.get("remarks") or ""
         if "STOP / DNC" not in note:
             lead["remarks"] = (note + " | STOP / DNC").strip(" |")
@@ -115,6 +118,7 @@ def mark_carrier_hired(lead: dict) -> None:
     lead["status"] = "converted"
     lead["active_sequence"] = False
     lead["responded"] = True
+    lead["deal_stage"] = "signed_onboarded"
     note = lead.get("remarks") or ""
     if "Hired under MC" not in note:
         lead["remarks"] = (note + " | Hired under LogixTrek MC").strip(" |")
