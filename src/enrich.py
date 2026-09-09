@@ -37,6 +37,10 @@ SKIP_DOMAINS = (
     "gstatic.com",
     "facebook.com",
     "linkedin.com",
+    "duckduckgo.com",
+    "duck.com",
+    "bing.com",
+    "yahoo.com",
 )
 
 

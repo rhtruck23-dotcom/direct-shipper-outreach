@@ -607,6 +607,110 @@ def page_leads_list():
         st.warning("No leads yet. Use Find Leads to search or import.")
         return
 
+    missing_email = [l for l in filtered if not (l.get("email") or "").strip()]
+    st.caption(
+        f"Showing {len(filtered)} leads · **{len(missing_email)} missing email** "
+        "(Pipeline needs email to send)."
+    )
+
+    if can(user, "leads", "update") and missing_email:
+        with st.expander("Email enrichment agent (public web)", expanded=len(missing_email) > 0):
+            st.markdown(
+                "Searches the public web for each blank-email lead: company website → "
+                "contact pages → fill email when found. "
+                "**Does not** scrape LinkedIn / ThomasNet / directory sites."
+            )
+            e1, e2, e3 = st.columns(3)
+            enrich_state = e1.text_input(
+                "Only this state (blank = all shown)",
+                value=f_state or "",
+                key="enrich_state",
+            )
+            enrich_max = e2.number_input(
+                "Max leads this run",
+                min_value=1,
+                max_value=100,
+                value=min(40, len(missing_email)),
+                key="enrich_max",
+            )
+            use_shown = e3.checkbox(
+                "Only leads in current filter table",
+                value=True,
+                key="enrich_shown",
+            )
+            company = _company()
+            has_cse = bool(
+                (company.get("google_cse_api_key") or "").strip()
+                and (company.get("google_cse_id") or "").strip()
+            )
+            st.caption(
+                f"Google CSE: {'ready (best)' if has_cse else 'optional — add keys in Org Setup for better website matching'}"
+            )
+            if st.button("Run email agent on missing emails", type="primary", key="run_email_agent"):
+                from src.email_agent import enrich_leads_missing_email
+                from src.storage import lead_key as _lk
+                from src.storage import save_all_leads
+
+                pool = filtered if use_shown else _all_leads()
+                prog = st.progress(0.0, text="Starting…")
+
+                def _cb(msg: str, frac: float) -> None:
+                    prog.progress(min(1.0, float(frac)), text=msg[:90])
+
+                result = enrich_leads_missing_email(
+                    pool,
+                    company,
+                    state=enrich_state or "",
+                    max_leads=int(enrich_max),
+                    progress_cb=_cb,
+                )
+                # merge updates into full DB (match by company+state first — IMS keys change when email is added)
+                full = _all_leads()
+                applied = 0
+                for u in result.get("updated") or []:
+                    cname = (u.get("company_name") or "").strip().lower()
+                    stt = (u.get("state") or "").strip().upper()
+                    matched = False
+                    for old in full:
+                        if (old.get("company_name") or "").strip().lower() != cname:
+                            continue
+                        if stt and (old.get("state") or "").strip().upper() != stt:
+                            continue
+                        if u.get("email"):
+                            old["email"] = u["email"]
+                        if u.get("website"):
+                            old["website"] = u["website"]
+                        if u.get("remarks"):
+                            old["remarks"] = u["remarks"]
+                        if u.get("notes"):
+                            old["notes"] = u["notes"]
+                        applied += 1
+                        matched = True
+                        break
+                    if not matched:
+                        # fallback: email key / id key
+                        k = _lk(u)
+                        for old in full:
+                            if _lk(old) == k:
+                                if u.get("email"):
+                                    old["email"] = u["email"]
+                                if u.get("website"):
+                                    old["website"] = u["website"]
+                                applied += 1
+                                break
+                save_all_leads(full)
+                prog.progress(1.0, text="Done")
+                st.success(
+                    f"Scanned {result.get('scanned', 0)} · filled **{result.get('filled', 0)}** emails · "
+                    f"{result.get('not_found', 0)} still blank · applied {applied}."
+                )
+                if result.get("filled", 0) == 0:
+                    st.warning(
+                        "No public emails found this run. Many IMS plants hide contact emails. "
+                        "Add Google CSE keys in Org Setup, or import a contact list that already has emails."
+                    )
+                st.rerun()
+
     rows = []
     for l in filtered:
         row = {
@@ -2014,7 +2118,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.09c · pipeline select all")
+        st.caption("v2026.09.09d · email enrichment agent")
 
         # Top-level: Dashboard first
         if "Dashboard" in top_pages:
