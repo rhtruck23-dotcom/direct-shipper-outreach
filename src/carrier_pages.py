@@ -400,6 +400,23 @@ def page_carrier_pipeline():
         st.warning("No outreach-eligible carriers.")
         return
 
+    if "cpipe_sel_nonce" not in st.session_state:
+        st.session_state["cpipe_sel_nonce"] = 0
+    if "cpipe_select_default" not in st.session_state:
+        st.session_state["cpipe_select_default"] = False
+
+    s_all, s_clear, s_hint = st.columns([1, 1, 2])
+    if s_all.button("Select all", key="cpipe_sel_all"):
+        st.session_state["cpipe_select_default"] = True
+        st.session_state["cpipe_sel_nonce"] = int(st.session_state["cpipe_sel_nonce"]) + 1
+        st.rerun()
+    if s_clear.button("Clear selection", key="cpipe_sel_clear"):
+        st.session_state["cpipe_select_default"] = False
+        st.session_state["cpipe_sel_nonce"] = int(st.session_state["cpipe_sel_nonce"]) + 1
+        st.rerun()
+    s_hint.caption(f"{len(filtered)} carriers shown")
+
+    default_sel = bool(st.session_state.get("cpipe_select_default"))
     key_by_idx = []
     rows = []
     for l in filtered:
@@ -407,7 +424,7 @@ def page_carrier_pipeline():
         key_by_idx.append(carrier_key(l))
         rows.append(
             {
-                "Select": False,
+                "Select": default_sel,
                 "Stage": stage_label(l.get("status") or "not_started"),
                 "Indicator": _carrier_indicator(l),
                 "Company": l.get("company_name"),
@@ -425,7 +442,7 @@ def page_carrier_pipeline():
         hide_index=True,
         use_container_width=True,
         disabled=[c for c in rows[0].keys() if c != "Select"],
-        key="cpipe_editor",
+        key=f"cpipe_editor_{st.session_state['cpipe_sel_nonce']}",
     )
     selected_keys = [
         key_by_idx[i] for i, sel in enumerate(edited["Select"].tolist()) if sel

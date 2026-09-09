@@ -1687,6 +1687,23 @@ def page_pipeline():
         st.warning("No outreach-eligible leads (DNC hidden).")
         return
 
+    if "pipe_sel_nonce" not in st.session_state:
+        st.session_state["pipe_sel_nonce"] = 0
+    if "pipe_select_default" not in st.session_state:
+        st.session_state["pipe_select_default"] = False
+
+    s_all, s_clear, s_hint = st.columns([1, 1, 2])
+    if s_all.button("Select all", key="pipe_sel_all"):
+        st.session_state["pipe_select_default"] = True
+        st.session_state["pipe_sel_nonce"] = int(st.session_state["pipe_sel_nonce"]) + 1
+        st.rerun()
+    if s_clear.button("Clear selection", key="pipe_sel_clear"):
+        st.session_state["pipe_select_default"] = False
+        st.session_state["pipe_sel_nonce"] = int(st.session_state["pipe_sel_nonce"]) + 1
+        st.rerun()
+    s_hint.caption(f"{len(filtered)} leads shown · tip: set State filter to IL first")
+
+    default_sel = bool(st.session_state.get("pipe_select_default"))
     key_by_idx = []
     rows = []
     for l in filtered:
@@ -1694,7 +1711,7 @@ def page_pipeline():
         key_by_idx.append(lead_key(l))
         rows.append(
             {
-                "Select": False,
+                "Select": default_sel,
                 "Stage": stage_label(l.get("status") or "not_started"),
                 "Indicator": contact_indicator(l),
                 "Company": l.get("company_name"),
@@ -1712,7 +1729,7 @@ def page_pipeline():
         hide_index=True,
         use_container_width=True,
         disabled=[c for c in rows[0].keys() if c != "Select"],
-        key="pipe_editor",
+        key=f"pipe_editor_{st.session_state['pipe_sel_nonce']}",
     )
     selected_keys = [
         key_by_idx[i] for i, sel in enumerate(edited["Select"].tolist()) if sel
@@ -1997,7 +2014,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.09b · national PDF + state filter")
+        st.caption("v2026.09.09c · pipeline select all")
 
         # Top-level: Dashboard first
         if "Dashboard" in top_pages:
