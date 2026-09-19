@@ -1154,6 +1154,55 @@ def page_org_setup():
                 )
                 st.success("Saved for this session. On Streamlit Cloud, also put secrets in the app settings.")
 
+        st.markdown("#### Live test email (one shot)")
+        st.caption(
+            "Sends **one** real email now. Requires App password filled above (Save first) "
+            "or `smtp_password` in Streamlit Secrets. Turn **Send LIVE emails** ON before testing."
+        )
+        company_now = _company()
+        t1, t2 = st.columns([2, 1])
+        test_to = t1.text_input(
+            "Send test to",
+            value="heronmb3@gmail.com",
+            key="live_test_to",
+        )
+        if t2.button("Send live test now", type="primary", key="live_test_btn"):
+            from src.emailer import send_email
+
+            if not (test_to or "").strip() or "@" not in test_to:
+                st.error("Enter a valid test email.")
+            elif not company_now.get("send_live_emails"):
+                st.error("Turn ON **Send LIVE emails** and click Save first.")
+            elif not (company_now.get("smtp_password") or "").strip():
+                st.error(
+                    "SMTP App password is empty. Paste Gmail App Password in Org Setup "
+                    "(or Streamlit Secrets `smtp_password`) and Save."
+                )
+            else:
+                body = (
+                    f"LogixTrek live email test.\n\n"
+                    f"If you received this, SMTP is working.\n"
+                    f"From: {company_now.get('my_email')}\n"
+                    f"Company: {company_now.get('my_company')}\n"
+                    f"Time: {__import__('datetime').datetime.now().isoformat(timespec='seconds')}\n\n"
+                    f"{company_now.get('unsubscribe_note') or ''}"
+                )
+                # Force live for this one-shot even if somehow toggled mid-session
+                cfg = {**company_now, "send_live_emails": True}
+                result = send_email(
+                    test_to.strip(),
+                    "LogixTrek live SMTP test",
+                    body,
+                    cfg,
+                    meta={"type": "live_test"},
+                )
+                if result.get("ok") and result.get("mode") == "live":
+                    st.success(f"Sent live to {test_to}. Check Inbox + Spam.")
+                else:
+                    st.error(
+                        f"Send failed ({result.get('mode')}): {result.get('error') or 'unknown error'}"
+                    )
+
     with tab_team:
         _page_team_access()
 
@@ -2118,7 +2167,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.09d · email enrichment agent")
+        st.caption("v2026.09.19a · live test email")
 
         # Top-level: Dashboard first
         if "Dashboard" in top_pages:
