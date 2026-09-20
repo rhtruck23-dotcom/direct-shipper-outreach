@@ -8,6 +8,8 @@ data/inbox.json
 data/alerts.json
 data/team_rbac.json
 data/national_shippers_parsed.csv
+data/gmail_oauth_token.json
+data/ims_july2026_parsed.csv
 .streamlit/secrets.toml
 __pycache__/
 *.pyc

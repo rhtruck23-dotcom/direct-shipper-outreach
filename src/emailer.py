@@ -28,7 +28,7 @@ def send_email(
     company: dict[str, Any],
     meta: dict | None = None,
 ) -> dict:
-    """Send or dry-run. Returns result dict."""
+    """Send or dry-run. Prefer Sign-in-with-Google Gmail when connected."""
     live = bool(company.get("send_live_emails"))
     result = {
         "to": to_addr,
@@ -46,6 +46,29 @@ def send_email(
         _append_log(result)
         return result
 
+    # 1) Easy path: Gmail OAuth (Sign in with Google)
+    try:
+        from .gmail_oauth import gmail_connected, send_via_gmail
+
+        if gmail_connected():
+            sent = send_via_gmail(
+                to_addr,
+                subject,
+                body,
+                from_email=str(company.get("my_email") or ""),
+            )
+            result["mode"] = "live_gmail"
+            result["gmail_id"] = sent.get("id")
+            result["from"] = sent.get("email")
+            _append_log(result)
+            return result
+    except Exception as e:
+        # Fall through to SMTP if OAuth fails and password exists
+        oauth_err = str(e)
+    else:
+        oauth_err = None
+
+    # 2) SMTP / App password fallback
     msg = MIMEText(body)
     msg["Subject"] = subject
     msg["From"] = company["my_email"]
@@ -58,7 +81,10 @@ def send_email(
             server.starttls(context=context)
             password = company.get("smtp_password") or ""
             if not password:
-                raise ValueError("SMTP password is empty — set it in Org Setup or .env")
+                raise ValueError(
+                    oauth_err
+                    or "Connect Gmail (Sign in with Google) in Org Setup, or set SMTP App password."
+                )
             server.login(company["smtp_user"], password)
             server.sendmail(company["my_email"], [to_addr], msg.as_string())
         result["mode"] = "live"
