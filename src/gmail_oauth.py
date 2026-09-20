@@ -1,8 +1,12 @@
 """
 Gmail send via Sign in with Google (OAuth) — no App Password needed.
 
-One-time: put OAuth Web client id/secret in Streamlit Secrets.
-Daily use: click Connect Gmail → pick Google account → Send test.
+Credentials (any one source is enough):
+  1) Streamlit Secrets
+  2) company dict in st.session_state (paste in Org Setup / Dashboard)
+  3) company.json on disk
+
+Daily use: click Sign in with Google → pick account → Send test.
 """
 from __future__ import annotations
 
@@ -21,30 +25,61 @@ SCOPES = [
     "openid",
 ]
 
+_OAUTH_KEYS = (
+    ("client_id", "google_oauth_client_id"),
+    ("client_secret", "google_oauth_client_secret"),
+    ("redirect_uri", "google_oauth_redirect_uri"),
+)
+
+
+def _fill_from_mapping(out: dict[str, str], src: Any) -> None:
+    if not src:
+        return
+    try:
+        getter = src.get if hasattr(src, "get") else None
+        if getter is None:
+            return
+        for dest, key in _OAUTH_KEYS:
+            if out[dest]:
+                continue
+            val = getter(key, "") if key else ""
+            out[dest] = str(val or "").strip()
+    except Exception:
+        pass
+
 
 def _oauth_secrets() -> dict[str, str]:
+    """Resolve OAuth client id/secret/redirect from secrets → session company → file."""
     out = {"client_id": "", "client_secret": "", "redirect_uri": ""}
+
+    # 1) Streamlit Secrets (top-level + [company] table)
     try:
         import streamlit as st
 
-        out["client_id"] = str(st.secrets.get("google_oauth_client_id", "") or "").strip()
-        out["client_secret"] = str(
-            st.secrets.get("google_oauth_client_secret", "") or ""
-        ).strip()
-        out["redirect_uri"] = str(
-            st.secrets.get("google_oauth_redirect_uri", "") or ""
-        ).strip()
-        # allow company table overrides
+        _fill_from_mapping(out, st.secrets)
         if "company" in st.secrets:
-            c = st.secrets["company"]
-            out["client_id"] = out["client_id"] or str(
-                c.get("google_oauth_client_id", "") or ""
-            ).strip()
-            out["client_secret"] = out["client_secret"] or str(
-                c.get("google_oauth_client_secret", "") or ""
-            ).strip()
+            _fill_from_mapping(out, st.secrets["company"])
     except Exception:
         pass
+
+    # 2) Company in session (pasted in app UI)
+    try:
+        import streamlit as st
+
+        company = st.session_state.get("company")
+        if isinstance(company, dict):
+            _fill_from_mapping(out, company)
+    except Exception:
+        pass
+
+    # 3) Company file on disk
+    try:
+        from .company import load_company
+
+        _fill_from_mapping(out, load_company())
+    except Exception:
+        pass
+
     return out
 
 

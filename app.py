@@ -346,6 +346,9 @@ def _company() -> dict:
                 "smtp_host",
                 "smtp_user",
                 "my_email",
+                "google_oauth_client_id",
+                "google_oauth_client_secret",
+                "google_oauth_redirect_uri",
             ):
                 if k in st.secrets:
                     cfg[k] = st.secrets[k]
@@ -355,6 +358,179 @@ def _company() -> dict:
             pass
         st.session_state.company = cfg
     return st.session_state.company
+
+
+def _handle_gmail_oauth_callback() -> None:
+    """Finish Google OAuth when redirected back with ?code= (any page)."""
+    from src.gmail_oauth import default_redirect_uri, exchange_code
+
+    try:
+        qp = st.query_params
+        code = qp.get("code")
+        if isinstance(code, list):
+            code = code[0] if code else None
+    except Exception:
+        code = None
+    if not code or st.session_state.get("_gmail_code_done"):
+        return
+    try:
+        data = exchange_code(str(code), default_redirect_uri())
+        st.session_state["_gmail_code_done"] = True
+        st.success(f"Gmail connected: **{data.get('email') or 'OK'}**")
+        try:
+            st.query_params.clear()
+        except Exception:
+            pass
+    except Exception as exc:
+        st.error(f"Google sign-in failed: {exc}")
+
+
+def _save_company_oauth_fields(
+    client_id: str,
+    client_secret: str,
+    redirect_uri: str,
+) -> dict:
+    company = {**_company()}
+    company["google_oauth_client_id"] = (client_id or "").strip()
+    company["google_oauth_client_secret"] = (client_secret or "").strip()
+    if (redirect_uri or "").strip():
+        company["google_oauth_redirect_uri"] = redirect_uri.strip()
+    try:
+        save_company(company)
+    except Exception:
+        pass
+    st.session_state.company = company
+    return company
+
+
+def _email_setup_card(*, key_prefix: str, show_credential_fields: bool = True) -> None:
+    """One clear Email setup section — paste OAuth, Sign in, LIVE toggle, send test."""
+    from src.gmail_oauth import (
+        build_auth_url,
+        clear_token,
+        connected_email,
+        default_redirect_uri,
+        gmail_connected,
+        oauth_configured,
+    )
+
+    company = _company()
+    st.markdown("### Email setup")
+
+    if gmail_connected():
+        st.success(f"Status: Connected as **{connected_email() or 'Gmail'}**")
+    else:
+        st.info("Status: **Not connected**")
+
+    if show_credential_fields:
+        with st.form(f"{key_prefix}_oauth_creds"):
+            st.caption("Paste your Google OAuth Web client (once). Secrets are optional backup.")
+            oid = st.text_input(
+                "OAuth Client ID",
+                value=company.get("google_oauth_client_id", ""),
+                key=f"{key_prefix}_oid",
+            )
+            osec = st.text_input(
+                "OAuth Client Secret",
+                value=company.get("google_oauth_client_secret", ""),
+                type="password",
+                key=f"{key_prefix}_osec",
+            )
+            oredir = st.text_input(
+                "Redirect URI",
+                value=company.get("google_oauth_redirect_uri") or default_redirect_uri(),
+                key=f"{key_prefix}_oredir",
+                help="Must match Authorized redirect URI in Google Cloud Console.",
+            )
+            if st.form_submit_button("Save Google credentials", type="primary"):
+                _save_company_oauth_fields(oid, osec, oredir)
+                st.success("Saved. Click **Sign in with Google** below.")
+                st.rerun()
+    elif not oauth_configured():
+        st.caption("Need Client ID + Secret first — open **Org Setup** or fill fields below.")
+        if st.button("Go to Org Setup", key=f"{key_prefix}_goto_org"):
+            st.session_state.nav_page = "Org Setup"
+            st.rerun()
+
+    if not oauth_configured():
+        with st.expander("Optional: use Streamlit Secrets instead", expanded=False):
+            st.caption(
+                "Only if you prefer Cloud Secrets. Pasting in the app above is enough."
+            )
+            st.code(
+                'google_oauth_client_id = "YOUR_CLIENT_ID"\n'
+                'google_oauth_client_secret = "YOUR_CLIENT_SECRET"\n'
+                f'google_oauth_redirect_uri = "{default_redirect_uri()}"',
+                language="toml",
+            )
+    elif gmail_connected():
+        if st.button("Disconnect Gmail", key=f"{key_prefix}_gmail_disconnect"):
+            clear_token()
+            st.rerun()
+    else:
+        try:
+            auth_url, state = build_auth_url(default_redirect_uri())
+            st.session_state["gmail_oauth_state"] = state
+            st.link_button("Sign in with Google", auth_url, type="primary")
+            st.caption("Opens Google → allow Send email → returns here.")
+        except Exception as exc:
+            st.error(f"Could not start Google sign-in: {exc}")
+
+    company_now = _company()
+    live_on = st.toggle(
+        "Turn LIVE email ON",
+        value=bool(company_now.get("send_live_emails")),
+        key=f"{key_prefix}_live_toggle",
+    )
+    if live_on != bool(company_now.get("send_live_emails")):
+        company_now = {**company_now, "send_live_emails": live_on}
+        st.session_state.company = company_now
+        try:
+            save_company(company_now)
+        except Exception:
+            pass
+
+    t1, t2 = st.columns([2, 1])
+    test_to = t1.text_input(
+        "Send test to",
+        value="heronmb3@gmail.com",
+        key=f"{key_prefix}_live_test_to",
+    )
+    if t2.button("Send test", type="primary", key=f"{key_prefix}_live_test_btn"):
+        from src.emailer import send_email
+        from src.gmail_oauth import connected_email as _ce, gmail_connected as _gc
+
+        if not (test_to or "").strip() or "@" not in test_to:
+            st.error("Enter a valid test email.")
+        elif not company_now.get("send_live_emails"):
+            st.error("Turn LIVE email ON first.")
+        elif not _gc() and not (company_now.get("smtp_password") or "").strip():
+            st.error("Click **Sign in with Google** first, then try again.")
+        else:
+            body = (
+                f"LogixTrek live email test.\n\n"
+                f"If you received this, sending works.\n"
+                f"From: {_ce() or company_now.get('my_email')}\n"
+                f"Company: {company_now.get('my_company')}\n"
+                f"Time: {__import__('datetime').datetime.now().isoformat(timespec='seconds')}\n\n"
+                f"{company_now.get('unsubscribe_note') or ''}"
+            )
+            cfg = {**company_now, "send_live_emails": True}
+            result = send_email(
+                test_to.strip(),
+                "LogixTrek live SMTP test",
+                body,
+                cfg,
+                meta={"type": "live_test"},
+            )
+            if result.get("ok") and str(result.get("mode", "")).startswith("live"):
+                st.success(
+                    f"Sent ({result.get('mode')}) to {test_to}. Check Inbox + Spam."
+                )
+            else:
+                st.error(
+                    f"Send failed ({result.get('mode')}): {result.get('error') or 'unknown error'}"
+                )
 
 
 def _current_user() -> dict | None:
@@ -556,6 +732,13 @@ def page_dashboard():
         st.info("Open **Find Leads**, search by state/zip, add emails, then activate.")
     else:
         st.info("Check **Leads List** for color-coded status, or find more leads.")
+
+    from src.gmail_oauth import gmail_connected
+
+    if is_super_admin(user) or can(user, "org_setup", "update"):
+        if not gmail_connected() or not company.get("send_live_emails"):
+            st.divider()
+            _email_setup_card(key_prefix="dash_email", show_credential_fields=True)
 
 
 def page_leads_list():
@@ -1154,123 +1337,14 @@ def page_org_setup():
                 )
                 st.success("Saved for this session. On Streamlit Cloud, also put secrets in the app settings.")
 
-        # ---- EASY LIVE EMAIL: Sign in with Google ----
-        from src.gmail_oauth import (
-            build_auth_url,
-            clear_token,
-            connected_email,
-            default_redirect_uri,
-            exchange_code,
-            gmail_connected,
-            oauth_configured,
-        )
-
-        st.markdown("### Easy live email — Sign in with Google")
+        # ---- EASY LIVE EMAIL: paste OAuth in-app + Sign in with Google ----
+        st.divider()
+        _email_setup_card(key_prefix="org_email", show_credential_fields=True)
         st.caption(
-            "No App Password. Connect once with your Google account, then send a test to any inbox."
+            "Create Client ID/Secret at "
+            "[Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials) "
+            "→ OAuth client → **Web application** → redirect URI = your app URL. Enable **Gmail API**."
         )
-
-        # Finish OAuth if Google redirected back with ?code=
-        try:
-            qp = st.query_params
-            code = qp.get("code")
-            if isinstance(code, list):
-                code = code[0] if code else None
-        except Exception:
-            code = None
-        if code and not st.session_state.get("_gmail_code_done"):
-            try:
-                data = exchange_code(str(code), default_redirect_uri())
-                st.session_state["_gmail_code_done"] = True
-                st.success(f"Gmail connected: **{data.get('email') or 'OK'}**")
-                try:
-                    st.query_params.clear()
-                except Exception:
-                    pass
-            except Exception as exc:
-                st.error(f"Google sign-in failed: {exc}")
-
-        if not oauth_configured():
-            st.warning(
-                "One-time setup (2 minutes): add these to **Streamlit Secrets**, then reboot:\n\n"
-                "```\n"
-                'google_oauth_client_id = "YOUR_CLIENT_ID"\n'
-                'google_oauth_client_secret = "YOUR_CLIENT_SECRET"\n'
-                f'google_oauth_redirect_uri = "{default_redirect_uri()}"\n'
-                "```\n\n"
-                "Create them at [Google Cloud Console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials) "
-                "→ Create OAuth client → type **Web application** → Authorized redirect URI = your app URL. "
-                "Also enable **Gmail API**."
-            )
-        elif gmail_connected():
-            st.success(f"Connected as **{connected_email() or 'Gmail'}** — ready to send live.")
-            if st.button("Disconnect Gmail", key="gmail_disconnect"):
-                clear_token()
-                st.rerun()
-        else:
-            try:
-                auth_url, state = build_auth_url(default_redirect_uri())
-                st.session_state["gmail_oauth_state"] = state
-                st.link_button("Sign in with Google", auth_url, type="primary")
-                st.caption("Opens Google → allow Send email → returns here automatically.")
-            except Exception as exc:
-                st.error(f"Could not start Google sign-in: {exc}")
-
-        company_now = _company()
-        live_on = st.toggle(
-            "Send LIVE emails (required for real delivery)",
-            value=bool(company_now.get("send_live_emails")),
-            key="easy_live_toggle",
-        )
-        if live_on != bool(company_now.get("send_live_emails")):
-            company_now = {**company_now, "send_live_emails": live_on}
-            st.session_state.company = company_now
-            try:
-                save_company(company_now)
-            except Exception:
-                pass
-
-        st.markdown("#### Send live test (one click)")
-        t1, t2 = st.columns([2, 1])
-        test_to = t1.text_input(
-            "Send test to",
-            value="heronmb3@gmail.com",
-            key="live_test_to",
-        )
-        if t2.button("Send live test now", type="primary", key="live_test_btn"):
-            from src.emailer import send_email
-
-            if not (test_to or "").strip() or "@" not in test_to:
-                st.error("Enter a valid test email.")
-            elif not company_now.get("send_live_emails"):
-                st.error("Turn ON **Send LIVE emails** above first.")
-            elif not gmail_connected() and not (company_now.get("smtp_password") or "").strip():
-                st.error("Click **Sign in with Google** first (easiest), then try again.")
-            else:
-                body = (
-                    f"LogixTrek live email test.\n\n"
-                    f"If you received this, sending works.\n"
-                    f"From: {connected_email() or company_now.get('my_email')}\n"
-                    f"Company: {company_now.get('my_company')}\n"
-                    f"Time: {__import__('datetime').datetime.now().isoformat(timespec='seconds')}\n\n"
-                    f"{company_now.get('unsubscribe_note') or ''}"
-                )
-                cfg = {**company_now, "send_live_emails": True}
-                result = send_email(
-                    test_to.strip(),
-                    "LogixTrek live SMTP test",
-                    body,
-                    cfg,
-                    meta={"type": "live_test"},
-                )
-                if result.get("ok") and str(result.get("mode", "")).startswith("live"):
-                    st.success(
-                        f"Sent ({result.get('mode')}) to {test_to}. Check Inbox + Spam."
-                    )
-                else:
-                    st.error(
-                        f"Send failed ({result.get('mode')}): {result.get('error') or 'unknown error'}"
-                    )
 
         with st.expander("Advanced: SMTP App Password (optional fallback)"):
             st.caption("Only if you cannot use Sign in with Google. Most people can ignore this.")
@@ -2202,6 +2276,8 @@ def main():
     if not user:
         return
 
+    _handle_gmail_oauth_callback()
+
     pages_available = allowed_pages(user)
     if not pages_available:
         st.error("No modules enabled for your account. Ask Super Admin.")
@@ -2239,7 +2315,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.19b · Sign in with Google email")
+        st.caption("v2026.09.19c · easy Google live")
 
         # Top-level: Dashboard first
         if "Dashboard" in top_pages:

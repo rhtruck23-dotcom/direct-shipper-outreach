@@ -19,6 +19,9 @@
   "smtp_user": "accounts@logixtrek.com",
   "smtp_password": "",
   "send_live_emails": false,
+  "google_oauth_client_id": "",
+  "google_oauth_client_secret": "",
+  "google_oauth_redirect_uri": "",
   "google_places_api_key": "",
   "bot_auto_reply": true,
   "escalate_on": ["rate", "price", "contract", "insurance", "onboard", "commitment", "load now", "need truck"]
