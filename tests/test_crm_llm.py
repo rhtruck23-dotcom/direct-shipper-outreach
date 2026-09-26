@@ -92,7 +92,10 @@ def test_tasks_due_logic(tmp_path, monkeypatch):
 
 def test_llm_fallback_chain_and_rules():
     company = {"llm_provider": "ollama", "gemini_api_key": "", "groq_api_key": ""}
-    assert llm.fallback_chain(company) == ["ollama", "gemini"]
+    chain0 = llm.fallback_chain(company)
+    assert chain0[0] == "ollama"
+    assert "gemini" in chain0
+    assert "groq" in chain0
 
     company2 = {
         "llm_provider": "gemini",

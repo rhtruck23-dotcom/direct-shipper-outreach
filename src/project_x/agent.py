@@ -1,7 +1,7 @@
 """
 Lead-for-X LLM agent — molds emails/replies from Project Scope.
 
-Uses unified llm.py (gemini | ollama | groq) with fallback chain;
+Uses unified llm.py priority failover (gemini → groq → ollama → rules);
 otherwise solid rule-based templates. Injects RAG context pack + outcome learning.
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ import json
 import re
 from typing import Any, Optional
 
-from ..llm import extract_json_object, generate
+from ..llm import complete, extract_json_object
 from ..outcome_learning import patterns_for_prompt
 from ..rag import build_context_pack
 from .templates import default_templates_for_scope, ensure_templates, render_x_email
@@ -57,10 +57,13 @@ Return ONLY valid JSON:
 {{"1":{{"subject":"...","body":"..."}},"2":{{...}},"3":{{...}},"4":{{...}}}}
 """
     try:
-        result = generate(prompt, company)
-        if not result.ok:
-            return fallback, "rules"
-        data = extract_json_object(result.text)
+        import json as _json
+
+        rules_payload = _json.dumps(
+            {str(k): v for k, v in fallback.items()}, ensure_ascii=False
+        )
+        result = complete(prompt, company, rules_fallback=rules_payload)
+        data = extract_json_object(result.text) if result.ok else None
         if not data:
             return fallback, "rules"
         out: dict[int, dict[str, str]] = {}
@@ -73,7 +76,7 @@ Return ONLY valid JSON:
                     "subject": str(t["subject"]).strip(),
                     "body": str(t["body"]).strip(),
                 }
-        return out, result.provider
+        return out, result.provider if result.provider != "none" else "rules"
     except Exception:
         return fallback, "rules"
 
@@ -121,12 +124,16 @@ Draft body:
 {body}
 """
     try:
-        result = generate(prompt, company)
-        if not result.ok:
-            return subject, body, reasoning + " (rules — no LLM)"
-        data = extract_json_object(result.text)
+        import json as _json
+
+        rules_payload = _json.dumps(
+            {"subject": subject, "body": body, "reasoning": reasoning + " (rules)"},
+            ensure_ascii=False,
+        )
+        result = complete(prompt, company, rules_fallback=rules_payload)
+        data = extract_json_object(result.text) if result.text else None
         if not data:
-            return subject, body, reasoning + f" ({result.provider} parse miss)"
+            return subject, body, reasoning + " (rules — no LLM)"
         subj = str(data.get("subject") or subject).strip()
         bod = str(data.get("body") or body).strip()
         reason = str(data.get("reasoning") or reasoning).strip()[:240]
@@ -216,12 +223,16 @@ Draft a short professional reply. If intent is opt_out, confirm removal politely
 Return ONLY JSON: {{"subject":"...","body":"...","reasoning":"one sentence"}}
 """
     try:
-        result = generate(prompt, company)
-        if not result.ok:
-            return subject, body, reasoning + " (rules — no LLM)"
-        data = extract_json_object(result.text)
+        import json as _json
+
+        rules_payload = _json.dumps(
+            {"subject": subject, "body": body, "reasoning": reasoning + " (rules)"},
+            ensure_ascii=False,
+        )
+        result = complete(prompt, company, rules_fallback=rules_payload)
+        data = extract_json_object(result.text) if result.text else None
         if not data:
-            return subject, body, reasoning + f" ({result.provider} miss)"
+            return subject, body, reasoning + " (rules — no LLM)"
         return (
             str(data.get("subject") or subject).strip(),
             str(data.get("body") or body).strip(),

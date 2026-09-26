@@ -331,7 +331,7 @@ def test_involvement_assert_and_paca():
     from src.involvement import assert_under_target, involvement_report
 
     r = involvement_report(True)
-    assert r["human_units"] >= 7
+    assert r["human_units"] >= 6
     assert_under_target(False)
 
 

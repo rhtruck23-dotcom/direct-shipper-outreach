@@ -1,16 +1,17 @@
-# CRM + free/local LLM (v2026.09.26c)
+# CRM + free/local LLM (v2026.09.26c → autonomy in 26d)
 
 ## Honest scope
 
 - **Ollama** = free local Llama (or Mistral) if you install [Ollama](https://ollama.com) on the machine running the app. Not magic cloud free forever.
 - **Groq** = optional free-tier API key when set in secrets / Org Setup.
 - **Gemini** = existing AI Studio key path.
-- **Full RL is future.** We shipped **outcome learning** (feedback store of convert/DNC/reply patterns) + **RAG context pack v1** (scope + notes + recent conversation, concat/TF-IDF — no vector DB yet).
+- **Priority failover** = Org Setup Priority 1→2→3 (default gemini → groq → ollama → rules). See **`docs/AGENT_AUTONOMY.md`**.
+- **Full RL is future.** We shipped **outcome learning** (feedback store of convert/DNC/reply patterns) + **RAG context pack v1** (scope + notes + recent conversation, concat/TF-IDF — no vector DB yet) + **agent autonomy** (CRM tools + due-lead runner).
 
 ## Enable Ollama (2 steps)
 
 1. Install Ollama, then pull a model: `ollama pull llama3.2` (or `mistral`).
-2. In **Org Setup → Company & SMTP**, set **LLM provider preference** = `ollama` and **Ollama model** = `llama3.2`. Fallback chain is still preferred → gemini → ollama → rules.
+2. In **Org Setup → Company & SMTP**, set a Priority slot to `ollama` and the model name. Failover is Priority 1 → 2 → 3 → rules.
 
 ## Lead CRM
 
@@ -23,4 +24,4 @@ Open a lead under **Shipper → Leads List** or **Lead for X → Leads List** (C
 
 ## Dashboard
 
-Shows **Past due / Due today / Upcoming (7 days)** task cards with inline **Done**, plus optional sales-stage funnel counts.
+Shows **Past due / Due today / Upcoming (7 days)** task cards with inline **Done**, optional sales-stage funnel counts, plus **Run agent now** / **Auto-pilot (due leads)**.

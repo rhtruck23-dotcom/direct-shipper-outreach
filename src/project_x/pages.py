@@ -691,17 +691,17 @@ def page_x_templates():
 
     st.caption(
         f"**{project.get('name')}** · type `{project.get('project_type')}` · "
-        "Generate from Project Scope (preferred LLM → gemini → ollama → rules)."
+        "Generate from Project Scope (Priority 1→2→3 LLM → rules)."
     )
     with st.expander("Current Project Scope", expanded=False):
         st.write(project.get("scope") or "_(empty — add scope in Project Setup)_")
 
-    from src.llm import preferred_provider
+    from src.llm import llm_priority
 
-    pref = preferred_provider(company)
+    chain = " → ".join(llm_priority(company) + ["rules"])
     has_gemini = bool((company.get("gemini_api_key") or "").strip())
     st.write(
-        f"LLM preference: **{pref}** · Gemini key: "
+        f"LLM failover: **{chain}** · Gemini key: "
         f"{'ready' if has_gemini else 'not set'} · "
         f"Ollama model: `{company.get('ollama_model') or 'llama3.2'}`"
     )

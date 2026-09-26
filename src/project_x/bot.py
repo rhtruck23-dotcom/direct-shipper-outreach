@@ -86,36 +86,51 @@ def process_inbox_reply(
     )
 
     if decision.auto_send and company.get("bot_auto_reply", True) and decision.reply_body:
-        result = send_email(
-            lead["email"],
-            decision.reply_subject,
-            decision.reply_body,
-            company,
-            meta={
-                "type": "x_bot_reply",
-                "intent": decision.intent,
-                "project_id": project.get("id"),
-            },
-        )
-        conv.append(
-            {
-                "at": result.get("at") or datetime.now().isoformat(),
-                "direction": "outbound_bot",
-                "subject": decision.reply_subject,
-                "body": decision.reply_body,
-                "mode": result.get("mode"),
-                "funnel": "lead_x",
-            }
-        )
-        summary["sent"] = bool(result.get("ok"))
-        summary["mode"] = result.get("mode") or ""
+        from ..agent_tools import is_dnc
+
+        if is_dnc(lead):
+            summary["sent"] = False
+            summary["mode"] = "blocked_dnc"
+        else:
+            result = send_email(
+                lead["email"],
+                decision.reply_subject,
+                decision.reply_body,
+                company,
+                meta={
+                    "type": "x_bot_reply",
+                    "intent": decision.intent,
+                    "project_id": project.get("id"),
+                },
+            )
+            conv.append(
+                {
+                    "at": result.get("at") or datetime.now().isoformat(),
+                    "direction": "outbound_bot",
+                    "subject": decision.reply_subject,
+                    "body": decision.reply_body,
+                    "mode": result.get("mode"),
+                    "funnel": "lead_x",
+                }
+            )
+            summary["sent"] = bool(result.get("ok"))
+            summary["mode"] = result.get("mode") or ""
 
     if decision.escalate_to_owner and decision.owner_alert:
+        from ..agent_tools import tool_append_note
+
         notify_owner(
             company,
             f"X {decision.intent.upper()}: {lead.get('company_name')} [{project.get('name')}]",
             decision.owner_alert,
         )
+        if decision.intent == "escalate":
+            tool_append_note(
+                lead,
+                f"[ESCALATE] {decision.owner_alert[:200]}",
+                author="agent",
+            )
+            lead["active_sequence"] = False
 
     rem = lead.get("remarks") or ""
     tag = f"XReply:{decision.intent}"

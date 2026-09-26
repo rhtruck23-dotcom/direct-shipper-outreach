@@ -796,7 +796,7 @@ def page_dashboard():
 
     inv = involvement_report(include_optional_paca=False)
     st.metric(
-        "Your involvement (target ≤10%)",
+        "Your involvement (target ≤5%)",
         f"{inv['involvement_pct']}%",
         delta="under target" if inv["under_target"] else "over target",
     )
@@ -877,6 +877,60 @@ def page_dashboard():
 
     st.markdown(_legend_html(), unsafe_allow_html=True)
     st.caption(f"🚫 Do Not Contact locked: {len(dnc)} — these people will never be emailed again.")
+
+    # Agent autonomy — Run now + autopilot toggle
+    try:
+        from src.autonomy import format_pass_summary, run_autonomy_pass
+        from src.company import save_company
+        from src.llm import llm_priority
+
+        st.subheader("Agent autonomy")
+        prio = " → ".join(llm_priority(company) + ["rules"])
+        st.caption(
+            f"LLM failover: **{prio}**. Agent can update CRM fields, notes, tasks, "
+            f"schedule follow-ups, and send emails (dry-run or LIVE). "
+            f"Escalates rate/contract/legal to you. Autopilot defaults **off**."
+        )
+        ag1, ag2, ag3 = st.columns([2, 2, 3])
+        if ag1.button("Run agent now", type="primary", key="dash_run_agent"):
+            with st.spinner("Agent working due leads…"):
+                result = run_autonomy_pass(company, force=True)
+            st.session_state["last_autonomy_result"] = result
+            st.success(format_pass_summary(result))
+            st.rerun()
+        auto_on = ag2.toggle(
+            "Auto-pilot (due leads)",
+            value=bool(company.get("autonomy_autopilot")),
+            key="dash_autopilot",
+            help="When on, due/past-due leads are processed without clicking Run. "
+            "Still respects DNC, daily email cap, and Send LIVE emails.",
+        )
+        if auto_on != bool(company.get("autonomy_autopilot")):
+            company = {**company, "autonomy_autopilot": bool(auto_on)}
+            try:
+                save_company(company)
+            except Exception:
+                pass
+            st.session_state.company = company
+            st.rerun()
+        ag3.caption(
+            f"Cap {company.get('autonomy_daily_email_cap') or 50}/day · "
+            f"max {company.get('autonomy_max_leads') or 10}/pass · "
+            f"{'LIVE' if company.get('send_live_emails') else 'dry-run'} mail"
+        )
+        if company.get("autonomy_autopilot"):
+            # Soft auto-run once per session load when toggle is on
+            if not st.session_state.get("_autopilot_ran_session"):
+                result = run_autonomy_pass(company, force=False)
+                st.session_state["_autopilot_ran_session"] = True
+                if result.get("ran") and result.get("processed"):
+                    st.info(format_pass_summary(result))
+        last = st.session_state.get("last_autonomy_result")
+        if last and last.get("summaries"):
+            with st.expander("Last agent pass", expanded=False):
+                st.code(format_pass_summary(last))
+    except Exception:
+        pass
 
     # CRM task notifications
     try:
@@ -1502,23 +1556,96 @@ def page_org_setup():
                 "Groq API key (optional free tier)",
                 value=company.get("groq_api_key", ""),
                 type="password",
-                help="Optional. Used when llm_provider=groq or as fallback if preferred fails.",
+                help="Optional free-tier key — used when Priority includes groq.",
             )
-            llm_provider = st.selectbox(
-                "LLM provider preference",
-                ["gemini", "ollama", "groq"],
-                index=["gemini", "ollama", "groq"].index(
-                    (company.get("llm_provider") or "gemini").lower()
-                    if (company.get("llm_provider") or "gemini").lower()
-                    in ("gemini", "ollama", "groq")
-                    else 0
-                ),
-                help="Fallback chain: preferred → gemini → ollama → rules. Ollama = free local Llama.",
+            st.markdown("#### LLM priority failover")
+            st.caption(
+                "Priority 1 → 2 → 3 until one answers. Final fallback is always **rules** "
+                "(templates / bot heuristics) so email & replies never hard-fail."
             )
-            ollama_model = st.text_input(
-                "Ollama model",
-                value=company.get("ollama_model") or "llama3.2",
-                help="Install Ollama, then: ollama pull llama3.2 (or mistral)",
+            _prov_opts = ["gemini", "groq", "ollama"]
+            _prio = company.get("llm_priority") if isinstance(company.get("llm_priority"), list) else []
+
+            def _slot_default(idx: int, fallback: str) -> str:
+                key = f"llm_provider_{idx}"
+                if company.get(key):
+                    return str(company.get(key))
+                if idx == 1 and company.get("llm_provider"):
+                    return str(company.get("llm_provider"))
+                if len(_prio) >= idx and _prio[idx - 1]:
+                    return str(_prio[idx - 1])
+                return fallback
+
+            _defaults = (
+                _slot_default(1, "gemini"),
+                _slot_default(2, "groq"),
+                _slot_default(3, "ollama"),
+            )
+
+            def _prov_idx(val: str) -> int:
+                v = (val or "gemini").lower()
+                return _prov_opts.index(v) if v in _prov_opts else 0
+
+            lp1, lp2, lp3 = st.columns(3)
+            llm_provider_1 = lp1.selectbox(
+                "Priority 1 provider",
+                _prov_opts,
+                index=_prov_idx(str(_defaults[0])),
+                key="org_llm_p1",
+            )
+            llm_model_1 = lp1.text_input(
+                "Priority 1 model",
+                value=company.get("llm_model_1")
+                or company.get("gemini_model")
+                or "gemini-2.0-flash",
+                key="org_llm_m1",
+            )
+            llm_provider_2 = lp2.selectbox(
+                "Priority 2 provider",
+                _prov_opts,
+                index=_prov_idx(str(_defaults[1])),
+                key="org_llm_p2",
+            )
+            llm_model_2 = lp2.text_input(
+                "Priority 2 model",
+                value=company.get("llm_model_2")
+                or company.get("groq_model")
+                or "llama-3.1-8b-instant",
+                key="org_llm_m2",
+            )
+            llm_provider_3 = lp3.selectbox(
+                "Priority 3 provider",
+                _prov_opts,
+                index=_prov_idx(str(_defaults[2])),
+                key="org_llm_p3",
+            )
+            llm_model_3 = lp3.text_input(
+                "Priority 3 model",
+                value=company.get("llm_model_3")
+                or company.get("ollama_model")
+                or "llama3.2",
+                key="org_llm_m3",
+                help="Ollama: install locally, then `ollama pull llama3.2`",
+            )
+            st.markdown("#### Agent autonomy")
+            autonomy_autopilot = st.toggle(
+                "Auto-pilot (due leads)",
+                value=bool(company.get("autonomy_autopilot")),
+                help="OFF by default. When ON, due/past-due leads get an agent pass "
+                "(notes/tasks/emails). Live sends still respect Send LIVE emails + DNC + daily cap.",
+            )
+            ac1, ac2 = st.columns(2)
+            autonomy_max_leads = ac1.number_input(
+                "Max leads per agent pass",
+                min_value=1,
+                max_value=100,
+                value=int(company.get("autonomy_max_leads") or 10),
+            )
+            autonomy_daily_email_cap = ac2.number_input(
+                "Daily email soft cap (agent)",
+                min_value=1,
+                max_value=500,
+                value=int(company.get("autonomy_daily_email_cap") or 50),
             )
             st.caption(
                 "Outcome learning (not RL): convert/DNC/reply outcomes feed future email hints. "
@@ -1538,6 +1665,20 @@ def page_org_setup():
             )
 
             if st.form_submit_button("Save", type="primary"):
+                # Keep ollama_model / legacy llm_provider in sync with priority slots
+                ollama_model = (
+                    llm_model_3
+                    if llm_provider_3 == "ollama"
+                    else (
+                        llm_model_2
+                        if llm_provider_2 == "ollama"
+                        else (
+                            llm_model_1
+                            if llm_provider_1 == "ollama"
+                            else company.get("ollama_model") or "llama3.2"
+                        )
+                    )
+                )
                 updated = {
                     **company,
                     "my_company": my_company,
@@ -1562,8 +1703,24 @@ def page_org_setup():
                     "google_places_api_key": google_key,
                     "gemini_api_key": gemini_key,
                     "groq_api_key": groq_key,
-                    "llm_provider": llm_provider,
+                    "llm_provider": llm_provider_1,
+                    "llm_provider_1": llm_provider_1,
+                    "llm_provider_2": llm_provider_2,
+                    "llm_provider_3": llm_provider_3,
+                    "llm_model_1": llm_model_1,
+                    "llm_model_2": llm_model_2,
+                    "llm_model_3": llm_model_3,
+                    "llm_priority": [llm_provider_1, llm_provider_2, llm_provider_3],
                     "ollama_model": ollama_model,
+                    "gemini_model": llm_model_1
+                    if llm_provider_1 == "gemini"
+                    else company.get("gemini_model") or "gemini-2.0-flash",
+                    "groq_model": llm_model_2
+                    if llm_provider_2 == "groq"
+                    else company.get("groq_model") or "llama-3.1-8b-instant",
+                    "autonomy_autopilot": bool(autonomy_autopilot),
+                    "autonomy_max_leads": int(autonomy_max_leads),
+                    "autonomy_daily_email_cap": int(autonomy_daily_email_cap),
                     "google_cse_api_key": cse_key,
                     "google_cse_id": cse_id,
                     "bot_auto_reply": bot_auto,
@@ -2354,6 +2511,8 @@ def page_inbox():
     inbound = st.text_area("Paste their reply", height=160)
 
     if st.button("Process with Logistics Bot", type="primary") and inbound.strip():
+        from src.agent_tools import is_dnc, tool_append_note, tool_escalate_to_owner
+
         decision = handle_reply(lead, inbound, company)
         st.markdown(f"**Intent:** `{decision.intent}`")
         if decision.stop_sequence:
@@ -2370,7 +2529,20 @@ def page_inbox():
             }
         )
 
-        if decision.auto_send and company.get("bot_auto_reply", True) and decision.reply_body:
+        if decision.intent == "escalate":
+            tool_escalate_to_owner(
+                lead,
+                company,
+                reason=decision.owner_alert or "Rate/contract/load language in reply",
+                funnel="shipper",
+            )
+            st.warning("Escalated — you close rates / loads yourself.")
+        elif (
+            decision.auto_send
+            and company.get("bot_auto_reply", True)
+            and decision.reply_body
+            and not is_dnc(lead)
+        ):
             from src.emailer import send_email
 
             result = send_email(
@@ -2392,15 +2564,20 @@ def page_inbox():
             st.success(f"Bot reply {'sent' if result.get('live') else 'drafted (dry run)'}.")
             with st.expander("Bot reply"):
                 st.code(decision.reply_body)
-        elif decision.intent == "escalate":
-            st.warning("Escalated — you close rates / loads yourself.")
+        elif is_dnc(lead):
+            st.warning("Do Not Contact — bot will not email this lead.")
 
-        if decision.escalate_to_owner and decision.owner_alert:
+        if decision.escalate_to_owner and decision.owner_alert and decision.intent != "escalate":
+            # positive/referral/unclear already notify; escalate handled above
             notify_owner(
                 company,
                 f"{decision.intent.upper()}: {lead.get('company_name')}",
                 decision.owner_alert,
             )
+            tool_append_note(lead, f"[bot] {decision.intent}: owner alerted", author="agent")
+            st.info("Owner alert logged.")
+            st.code(decision.owner_alert)
+        elif decision.escalate_to_owner and decision.intent == "escalate":
             st.info("Owner alert logged.")
             st.code(decision.owner_alert)
 

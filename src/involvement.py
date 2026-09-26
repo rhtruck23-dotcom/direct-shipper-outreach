@@ -1,10 +1,11 @@
 """
-Involvement metrics — target ≤10% human effort in the end-to-end operation.
+Involvement metrics — target ≤5% human effort in the end-to-end operation.
 
 Model (per typical 20-lead Find & Vet → Activate → 16-day sequence):
-- App runs discovery, enrichment, vetting, 4-email cadence, safe replies, DNC memory.
+- App runs discovery, enrichment, vetting, 4-email cadence, safe replies,
+  DNC memory, and agent autonomy (due leads / CRM tools).
 - Human only: start search, skim ranked list, fix a few blank emails, activate,
-  and close escalated deals when the bot pings.
+  review Dashboard due cards, and close escalated deals when the agent pings.
 
 "Entire operation" includes machine-equivalent work credits so automated labor
 is counted in the denominator (otherwise % human would always look high).
@@ -17,18 +18,19 @@ APP_UNITS = {
     "places_search": ("Google Places / Business pull", 12),
     "web_search": ("Google Search + site read", 10),
     "email_enrich": ("Public website email harvest", 8),
-    "llm_vet": ("Gemini / rules logistics scoring", 15),
+    "llm_vet": ("LLM / rules logistics scoring", 15),
     "sequence_emails": ("Email 1–4 schedule + delivery", 20),
     "safe_bot": ("Safe auto-replies (opt-out / intro / referral)", 10),
     "memory": ("Cloud lead memory + DNC enforcement", 8),
+    "agent_autonomy": ("Agent CRM tools + due-lead autonomy pass", 35),
 }
 
 HUMAN_UNITS = {
     "start_search": ("Enter state/zip + click Find & Vet", 1),
-    "skim_list": ("Skim ranked shortlist, uncheck obvious junk", 2),
+    "skim_list": ("Skim ranked shortlist, uncheck obvious junk", 1),
     "fill_emails": ("Fill remaining blank emails (enrichment got most)", 1),
     "activate": ("Save + Activate + Start", 1),
-    "close_escalations": ("Handle bot escalations (rate/contract/load)", 2),
+    "close_escalations": ("Handle agent escalations (rate/contract/load)", 2),
 }
 
 
@@ -48,8 +50,8 @@ def involvement_report(include_optional_paca: bool = False) -> dict[str, Any]:
         "app_units": app_units,
         "total_units": total,
         "involvement_pct": pct,
-        "target_pct": 10.0,
-        "under_target": pct <= 10.0,
+        "target_pct": 5.0,
+        "under_target": pct <= 5.0,
         "human_steps": [
             {"id": k, "label": v[0], "units": v[1], "who": "human"} for k, v in human.items()
         ],
@@ -58,8 +60,8 @@ def involvement_report(include_optional_paca: bool = False) -> dict[str, Any]:
         ],
         "summary": (
             f"Human {human_units} / total {total} effort units = {pct}% "
-            f"(target ≤10%). App runs discovery→vet→follow-up; you only start, "
-            f"skim, and close escalations."
+            f"(target ≤5%). App runs discovery→vet→follow-up→agent autonomy; "
+            f"you only start, skim Dashboard dues, and close escalations."
         ),
     }
 

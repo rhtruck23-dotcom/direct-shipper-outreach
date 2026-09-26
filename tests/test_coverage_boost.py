@@ -20,10 +20,11 @@ sys.path.insert(0, str(ROOT))
 from src.involvement import assert_under_target, involvement_report
 
 
-def test_involvement_under_10_percent():
+def test_involvement_under_5_percent():
     r = involvement_report(include_optional_paca=False)
     assert r["under_target"] is True
-    assert r["involvement_pct"] <= 10.0
+    assert r["involvement_pct"] <= 5.0
+    assert r["target_pct"] == 5.0
     assert_under_target(False)
 
 

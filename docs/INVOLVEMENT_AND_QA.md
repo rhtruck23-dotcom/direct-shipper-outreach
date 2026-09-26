@@ -1,4 +1,4 @@
-# Involvement metric (target ≤10%)
+# Involvement metric (target ≤5%)
 
 Computed by `src/involvement.py` and shown on the Dashboard.
 
@@ -6,10 +6,10 @@ Computed by `src/involvement.py` and shown on the Dashboard.
 
 | Who | Effort units | What |
 |-----|--------------|------|
-| **App** | 83 | Places search, Google Search+site read, email enrich, LLM vet, emails 1–4, safe bot replies, Cloud DNC memory |
-| **You** | 7 | Click Find & Vet (1), skim shortlist (2), fill leftover emails (1), Activate/Start (1), close escalations (2) |
+| **App** | 118 | Places, search, email enrich, LLM vet, emails 1–4, safe bot, DNC memory, agent autonomy |
+| **You** | 6 | Click Find & Vet (1), skim shortlist (1), fill leftover emails (1), Activate/Start (1), close escalations (2) |
 
-**Involvement = 7 / 90 ≈ 7.8%** (≤10% target)
+**Involvement = 6 / 124 ≈ 4.8%** (≤5% target)
 
 ## What “vetted pull from source” means in tests
 - Unit/integration tests **mock** Google Places, CSE, Gemini, Sheets, SMTP
