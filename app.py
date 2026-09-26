@@ -434,17 +434,18 @@ def _email_setup_card(*, key_prefix: str, show_credential_fields: bool = True) -
         or "accounts@logixtrek.com"
     )
     email_val = st.text_input(
-        "Email (smtp_user / my_email)",
+        "From email",
         value=default_email,
         key=f"{key_prefix}_smtp_email",
+        help="Gmail address that will send (e.g. accounts@logixtrek.com).",
     )
     app_pw = st.text_input(
-        "App password (16-character Gmail app password)",
+        "App password",
         value="",
         type="password",
         key=f"{key_prefix}_app_pw",
         placeholder="xxxx xxxx xxxx xxxx",
-        help="Paste the App Password from Google Account → Security → App passwords.",
+        help="16-character Gmail App Password (Google Account → Security → App passwords).",
     )
 
     if st.button(
@@ -525,7 +526,7 @@ def _email_setup_card(*, key_prefix: str, show_credential_fields: bool = True) -
 
     # OAuth stays available but collapsed — never the first thing users see
     if show_credential_fields:
-        with st.expander("Advanced (optional) — OAuth Client ID / Secret", expanded=False):
+        with st.expander("Advanced: Sign in with Google (optional)", expanded=False):
             from src.gmail_oauth import (
                 build_auth_url,
                 clear_token,
@@ -745,6 +746,11 @@ def page_dashboard():
     c5.metric("Responded", len(responded))
     c6.metric("Converted", len(converted))
 
+    # Email setup first after metrics — paste App Password, enable LIVE, send test
+    if is_super_admin(user) or can(user, "org_setup", "update"):
+        st.divider()
+        _email_setup_card(key_prefix="dash_email", show_credential_fields=True)
+
     if can(user, "carrier_leads", "read") or is_super_admin(user):
         try:
             carriers = scope_leads(load_carriers(), user)
@@ -774,14 +780,6 @@ def page_dashboard():
         st.info("Open **Find Leads**, search by state/zip, add emails, then activate.")
     else:
         st.info("Check **Leads List** for color-coded status, or find more leads.")
-
-    if is_super_admin(user) or can(user, "org_setup", "update"):
-        ready = bool((company.get("smtp_password") or "").strip()) and bool(
-            company.get("send_live_emails")
-        )
-        if not ready:
-            st.divider()
-            _email_setup_card(key_prefix="dash_email", show_credential_fields=True)
 
 
 def page_leads_list():
@@ -2356,7 +2354,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.19d · simple Gmail live")
+        st.caption("v2026.09.25a · bare-min live mail")
 
         # Top-level: Dashboard first
         if "Dashboard" in top_pages:
