@@ -468,6 +468,19 @@ def page_x_leads_list():
         st.success("Sequence stopped.")
         st.rerun()
 
+    st.divider()
+    from src.crm_ui import render_lead_crm_panel
+
+    render_lead_crm_panel(
+        lead,
+        _company(),
+        funnel="lead_x",
+        persist=update_x_lead,
+        project=project,
+        key_prefix="x_crm",
+        show_agent_chat=True,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Pipeline
@@ -678,13 +691,20 @@ def page_x_templates():
 
     st.caption(
         f"**{project.get('name')}** · type `{project.get('project_type')}` · "
-        "Generate from Project Scope (Gemini if key set, else rule-based)."
+        "Generate from Project Scope (preferred LLM → gemini → ollama → rules)."
     )
     with st.expander("Current Project Scope", expanded=False):
         st.write(project.get("scope") or "_(empty — add scope in Project Setup)_")
 
+    from src.llm import preferred_provider
+
+    pref = preferred_provider(company)
     has_gemini = bool((company.get("gemini_api_key") or "").strip())
-    st.write(f"Gemini: {'ready' if has_gemini else 'not set → rule-based templates'}")
+    st.write(
+        f"LLM preference: **{pref}** · Gemini key: "
+        f"{'ready' if has_gemini else 'not set'} · "
+        f"Ollama model: `{company.get('ollama_model') or 'llama3.2'}`"
+    )
 
     if can(user, "x_templates", "update") or is_super_admin(user):
         if st.button("Generate from Project Scope (LLM)", type="primary", key="x_gen_tmpl"):

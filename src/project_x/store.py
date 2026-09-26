@@ -59,6 +59,11 @@ LEAD_COLUMNS = [
     "active_sequence",
     "contact_count",
     "assigned_to",
+    "crm_status",
+    "sales_stage",
+    "priority",
+    "next_contact_at",
+    "notes_timeline_json",
     "conversation_json",
 ]
 
@@ -116,6 +121,11 @@ def _blank_lead() -> dict[str, Any]:
         "active_sequence": False,
         "contact_count": 0,
         "assigned_to": "",
+        "crm_status": "open",
+        "sales_stage": "new",
+        "priority": "medium",
+        "next_contact_at": "",
+        "notes_timeline": [],
         "conversation": [],
     }
 
@@ -172,6 +182,8 @@ def _normalize_project(raw: dict) -> dict:
 
 
 def _normalize_lead(raw: dict) -> dict:
+    from ..crm_picklists import apply_crm_defaults
+
     lead = _blank_lead()
     for k in lead:
         if k in raw and raw[k] not in (None, ""):
@@ -186,6 +198,16 @@ def _normalize_lead(raw: dict) -> dict:
             lead["conversation"] = json.loads(lead["conversation"])
         except Exception:
             lead["conversation"] = []
+    if "notes_timeline_json" in raw and raw["notes_timeline_json"]:
+        try:
+            lead["notes_timeline"] = json.loads(raw["notes_timeline_json"])
+        except Exception:
+            lead["notes_timeline"] = []
+    if isinstance(lead.get("notes_timeline"), str):
+        try:
+            lead["notes_timeline"] = json.loads(lead["notes_timeline"])
+        except Exception:
+            lead["notes_timeline"] = []
     lead["last_step_sent"] = int(lead.get("last_step_sent") or 0)
     lead["contact_count"] = int(lead.get("contact_count") or 0)
     lead["responded"] = str(lead.get("responded")).lower() in ("1", "true", "yes")
@@ -199,6 +221,7 @@ def _normalize_lead(raw: dict) -> dict:
     lead["assigned_to"] = str(lead.get("assigned_to") or "").strip()
     lead["project_id"] = str(lead.get("project_id") or "").strip()
     lead["reasoning"] = str(lead.get("reasoning") or "")
+    apply_crm_defaults(lead)
     return lead
 
 
@@ -216,13 +239,18 @@ def _project_to_sheet_row(p: dict) -> dict:
 
 
 def _lead_to_sheet_row(lead: dict) -> dict:
-    row = {c: lead.get(c, "") for c in LEAD_COLUMNS if c != "conversation_json"}
+    row = {
+        c: lead.get(c, "")
+        for c in LEAD_COLUMNS
+        if c not in ("conversation_json", "notes_timeline_json")
+    }
     row["conversation_json"] = json.dumps(lead.get("conversation") or [], ensure_ascii=False)
+    row["notes_timeline_json"] = json.dumps(lead.get("notes_timeline") or [], ensure_ascii=False)
     row["responded"] = "true" if lead.get("responded") else "false"
     row["active_sequence"] = "true" if lead.get("active_sequence") else "false"
     row["last_step_sent"] = str(int(lead.get("last_step_sent") or 0))
     row["contact_count"] = str(int(lead.get("contact_count") or 0))
-    for k in ("first_contacted", "last_emailed"):
+    for k in ("first_contacted", "last_emailed", "next_contact_at"):
         row[k] = lead.get(k) or ""
     return row
 

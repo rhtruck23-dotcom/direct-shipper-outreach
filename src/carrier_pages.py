@@ -384,6 +384,18 @@ def page_carrier_leads():
         st.success("Sequence stopped · deal = Applied.")
         st.rerun()
 
+    st.divider()
+    from src.crm_ui import render_lead_crm_panel
+
+    render_lead_crm_panel(
+        lead,
+        _company(),
+        funnel="carrier",
+        persist=_persist_one,
+        key_prefix="car_crm",
+        show_agent_chat=False,
+    )
+
 
 def page_carrier_pipeline():
     st.title("Carrier Pipeline")

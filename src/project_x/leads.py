@@ -126,6 +126,31 @@ def mark_x_response(lead: dict, positive: bool = True) -> None:
         note = lead.get("remarks") or ""
         if "STOP / DNC" not in note:
             lead["remarks"] = (note + " | STOP / DNC").strip(" |")
+        try:
+            from ..crm_picklists import normalize_crm_status, normalize_sales_stage
+            from ..outcome_learning import record_outcome
+
+            lead["crm_status"] = normalize_crm_status("dnc")
+            lead["sales_stage"] = normalize_sales_stage(lead.get("sales_stage") or "lost")
+            record_outcome(outcome="dnc", lead=lead, intent="opt_out", funnel="lead_x")
+        except Exception:
+            pass
+    else:
+        try:
+            from ..crm_picklists import normalize_crm_status, normalize_sales_stage
+            from ..outcome_learning import record_outcome
+
+            lead["crm_status"] = normalize_crm_status("waiting_reply")
+            if not lead.get("sales_stage") or lead.get("sales_stage") == "new":
+                lead["sales_stage"] = normalize_sales_stage("engaged")
+            record_outcome(
+                outcome="positive_reply",
+                lead=lead,
+                intent="positive",
+                funnel="lead_x",
+            )
+        except Exception:
+            pass
 
 
 def mark_x_converted(lead: dict) -> None:
@@ -135,3 +160,12 @@ def mark_x_converted(lead: dict) -> None:
     note = lead.get("remarks") or ""
     if "Converted" not in note:
         lead["remarks"] = (note + " | Converted").strip(" |")
+    try:
+        from ..crm_picklists import normalize_crm_status, normalize_sales_stage
+        from ..outcome_learning import record_outcome
+
+        lead["crm_status"] = normalize_crm_status("converted")
+        lead["sales_stage"] = normalize_sales_stage("converted")
+        record_outcome(outcome="converted", lead=lead, intent="converted", funnel="lead_x")
+    except Exception:
+        pass

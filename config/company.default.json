@@ -24,5 +24,9 @@
   "google_oauth_redirect_uri": "",
   "google_places_api_key": "",
   "bot_auto_reply": true,
-  "escalate_on": ["rate", "price", "contract", "insurance", "onboard", "commitment", "load now", "need truck"]
+  "escalate_on": ["rate", "price", "contract", "insurance", "onboard", "commitment", "load now", "need truck"],
+  "llm_provider": "gemini",
+  "ollama_model": "llama3.2",
+  "gemini_api_key": "",
+  "groq_api_key": ""
 }

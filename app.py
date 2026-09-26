@@ -878,6 +878,49 @@ def page_dashboard():
     st.markdown(_legend_html(), unsafe_allow_html=True)
     st.caption(f"🚫 Do Not Contact locked: {len(dnc)} — these people will never be emailed again.")
 
+    # CRM task notifications
+    try:
+        from src.crm_picklists import sales_stage_label
+        from src.lead_crm import group_open_tasks, mark_task_done
+
+        buckets = group_open_tasks()
+        st.subheader("CRM tasks")
+        t1, t2, t3 = st.columns(3)
+        t1.metric("Past due", len(buckets["past_due"]))
+        t2.metric("Due today", len(buckets["due_today"]))
+        t3.metric("Upcoming (7d)", len(buckets["upcoming"]))
+
+        def _task_table(title: str, items: list, *, mark_key: str):
+            if not items:
+                return
+            st.markdown(f"**{title}**")
+            for t in items[:15]:
+                cols = st.columns([4, 2, 1, 1])
+                cols[0].write(
+                    f"**{t.get('title') or 'Task'}** · {t.get('company_name') or t.get('lead_id') or ''}"
+                )
+                cols[1].caption(f"{t.get('funnel') or ''} · due {(t.get('due_at') or '')[:16]}")
+                cols[2].caption(t.get("status") or "open")
+                if cols[3].button("Done", key=f"{mark_key}_{t.get('id')}"):
+                    mark_task_done(t["id"])
+                    st.rerun()
+
+        _task_table("Past due", buckets["past_due"], mark_key="dash_pd")
+        _task_table("Due today", buckets["due_today"], mark_key="dash_td")
+        _task_table("Upcoming", buckets["upcoming"], mark_key="dash_up")
+
+        # Funnel counts by sales_stage when present
+        stage_counts: dict[str, int] = {}
+        for l in leads:
+            ss = l.get("sales_stage") or "new"
+            stage_counts[ss] = stage_counts.get(ss, 0) + 1
+        if any(v for v in stage_counts.values()):
+            with st.expander("Shipper funnel (sales stage)", expanded=False):
+                for ss, n in sorted(stage_counts.items(), key=lambda x: -x[1]):
+                    st.write(f"{sales_stage_label(ss)}: **{n}**")
+    except Exception:
+        pass
+
     st.subheader("What to do next")
     if due:
         st.success(f"{len(due)} shipper lead(s) due — open **Pipeline** and click Start.")
@@ -1082,7 +1125,7 @@ def page_leads_list():
         st.caption("Read-only access.")
         return
 
-    st.subheader("Edit remarks / mark status")
+    st.subheader("Edit lead / CRM")
     labels = {
         f"{r['Company']} <{r['Email']}> — {r['Stage']}": r["_key"] for r in rows
     }
@@ -1093,7 +1136,7 @@ def page_leads_list():
     r1, r2 = st.columns(2)
     with r1:
         new_remarks = st.text_area("Remarks", value=lead.get("remarks") or "", height=100)
-        new_notes = st.text_area("Notes", value=lead.get("notes") or "", height=80)
+        new_notes = st.text_area("Notes (legacy free-text)", value=lead.get("notes") or "", height=80)
     with r2:
         st.write(f"**Indicator:** {contact_indicator(lead)}")
         st.write(f"**Stage:** {stage_label(lead.get('status') or 'not_started')}")
@@ -1132,6 +1175,18 @@ def page_leads_list():
         _persist_one(lead)
         st.success("Sequence stopped — they replied.")
         st.rerun()
+
+    st.divider()
+    from src.crm_ui import render_lead_crm_panel
+
+    render_lead_crm_panel(
+        lead,
+        _company(),
+        funnel="shipper",
+        persist=_persist_one,
+        key_prefix="ship_crm",
+        show_agent_chat=True,
+    )
 
 
 def _page_team_access():
@@ -1443,6 +1498,32 @@ def page_org_setup():
                 value=company.get("gemini_api_key", ""),
                 type="password",
             )
+            groq_key = st.text_input(
+                "Groq API key (optional free tier)",
+                value=company.get("groq_api_key", ""),
+                type="password",
+                help="Optional. Used when llm_provider=groq or as fallback if preferred fails.",
+            )
+            llm_provider = st.selectbox(
+                "LLM provider preference",
+                ["gemini", "ollama", "groq"],
+                index=["gemini", "ollama", "groq"].index(
+                    (company.get("llm_provider") or "gemini").lower()
+                    if (company.get("llm_provider") or "gemini").lower()
+                    in ("gemini", "ollama", "groq")
+                    else 0
+                ),
+                help="Fallback chain: preferred → gemini → ollama → rules. Ollama = free local Llama.",
+            )
+            ollama_model = st.text_input(
+                "Ollama model",
+                value=company.get("ollama_model") or "llama3.2",
+                help="Install Ollama, then: ollama pull llama3.2 (or mistral)",
+            )
+            st.caption(
+                "Outcome learning (not RL): convert/DNC/reply outcomes feed future email hints. "
+                "RAG v1 injects project scope + notes + recent conversation (no vector DB yet)."
+            )
             cse_key = st.text_input(
                 "Google Custom Search API key",
                 value=company.get("google_cse_api_key", ""),
@@ -1480,6 +1561,9 @@ def page_org_setup():
                     "send_live_emails": send_live,
                     "google_places_api_key": google_key,
                     "gemini_api_key": gemini_key,
+                    "groq_api_key": groq_key,
+                    "llm_provider": llm_provider,
+                    "ollama_model": ollama_model,
                     "google_cse_api_key": cse_key,
                     "google_cse_id": cse_id,
                     "bot_auto_reply": bot_auto,
@@ -2531,7 +2615,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.26b · nav fix")
+        st.caption("v2026.09.19d · simple Gmail live")
 
         # Top-level: Dashboard first
         if "Dashboard" in pages_available:

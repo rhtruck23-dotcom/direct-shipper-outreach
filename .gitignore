@@ -7,6 +7,11 @@ data/outbound_log.json
 data/inbox.json
 data/alerts.json
 data/team_rbac.json
+data/agent_feedback.json
+data/lead_tasks.json
+data/x_projects.json
+data/x_leads.json
+data/x_active.json
 data/national_shippers_parsed.csv
 data/gmail_oauth_token.json
 data/ims_july2026_parsed.csv
