@@ -38,6 +38,14 @@ from src.carrier_pages import (
     page_find_carriers,
 )
 from src.carrier_leads import load_carriers, persist_carriers
+from src.project_x.pages import (
+    page_x_find_leads,
+    page_x_inbox,
+    page_x_leads_list,
+    page_x_pipeline,
+    page_x_projects,
+    page_x_templates,
+)
 from src.rbac import (
     ACTIONS,
     MODULES,
@@ -252,7 +260,9 @@ st.markdown(
     box-shadow: var(--lg-shadow);
   }
 
-  /* Sidebar chevron nav (buttons, not radios) */
+  /* Sidebar chevron nav (buttons, not radios)
+     Parent markers → bold; expanded/active parent = blue
+     Child markers → indented; selected child = orange */
   section[data-testid="stSidebar"] div.stButton > button {
     width: 100% !important;
     justify-content: flex-start !important;
@@ -267,39 +277,96 @@ st.markdown(
     box-shadow: none !important;
     transform: none !important;
     min-height: 2.1rem !important;
+    color: #0B3D4A !important;
   }
-  section[data-testid="stSidebar"] div.stButton > button[kind="primary"],
-  section[data-testid="stSidebar"] div.stButton > button[data-testid="baseButton-primary"] {
-    font-size: 1.08rem !important;
-    font-weight: 700 !important;
+  /* Parent group labels — always bold, distinct from children */
+  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-parent)
+    + div.element-container div.stButton > button {
+    font-size: 1.05rem !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.01em !important;
     padding: 0.5rem 0.85rem !important;
-    min-height: 2.45rem !important;    background: linear-gradient(
+    min-height: 2.45rem !important;
+    background: rgba(226, 242, 253, 0.75) !important;
+    border: 1px solid rgba(14, 165, 233, 0.35) !important;
+    color: #0369A1 !important;
+  }
+  /* Expanded / active parent = blue */
+  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-parent)
+    + div.element-container div.stButton > button[kind="primary"],
+  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-parent)
+    + div.element-container div.stButton > button[data-testid="baseButton-primary"] {
+    background: linear-gradient(
       135deg,
-      rgba(14, 165, 233, 0.92),
-      rgba(20, 184, 166, 0.9),
-      rgba(16, 185, 129, 0.88)
+      rgba(14, 165, 233, 0.95),
+      rgba(2, 132, 199, 0.92)
     ) !important;
     color: #fff !important;
     border: 1px solid rgba(255, 255, 255, 0.55) !important;
     box-shadow:
-      0 0 0 1px rgba(14, 165, 233, 0.25),
-      0 0 20px rgba(14, 165, 233, 0.45),
-      0 0 36px rgba(16, 185, 129, 0.28),
-      inset 0 1px 0 rgba(255, 255, 255, 0.4) !important;
+      0 0 0 1px rgba(14, 165, 233, 0.3),
+      0 0 18px rgba(14, 165, 233, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+  }
+  /* Child pages — lighter, indented feel */
+  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-child)
+    + div.element-container div.stButton > button {
+    font-size: 0.92rem !important;
+    font-weight: 500 !important;
+    margin-left: 0.55rem !important;
+    width: calc(100% - 0.55rem) !important;
+    background: rgba(255, 255, 255, 0.4) !important;
+    border: 1px solid rgba(148, 163, 184, 0.35) !important;
+    color: #334155 !important;
+  }
+  /* Selected / active child = orange (clear contrast vs blue parent) */
+  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-child)
+    + div.element-container div.stButton > button[kind="primary"],
+  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-child)
+    + div.element-container div.stButton > button[data-testid="baseButton-primary"] {
+    background: linear-gradient(
+      135deg,
+      rgba(249, 115, 22, 0.95),
+      rgba(234, 88, 12, 0.92)
+    ) !important;
+    color: #fff !important;
+    font-weight: 700 !important;
+    border: 1px solid rgba(255, 255, 255, 0.5) !important;
+    box-shadow:
+      0 0 0 1px rgba(249, 115, 22, 0.35),
+      0 0 16px rgba(249, 115, 22, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
   }
   section[data-testid="stSidebar"] div.stButton > button:hover {
     border-color: rgba(20, 184, 166, 0.55) !important;
     background: rgba(255, 255, 255, 0.55) !important;
   }
-  section[data-testid="stSidebar"] div.stButton > button[kind="primary"]:hover {
+  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-parent)
+    + div.element-container div.stButton > button[kind="primary"]:hover {
     background: linear-gradient(
       135deg,
-      rgba(14, 165, 233, 1),
-      rgba(16, 185, 129, 0.95)
+      rgba(2, 132, 199, 1),
+      rgba(14, 165, 233, 1)
     ) !important;
     color: #fff !important;
   }
-  /* Nested funnel pages (● / ○) sit slightly indented via label spacing */
+  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-child)
+    + div.element-container div.stButton > button[kind="primary"]:hover {
+    background: linear-gradient(
+      135deg,
+      rgba(234, 88, 12, 1),
+      rgba(249, 115, 22, 1)
+    ) !important;
+    color: #fff !important;
+  }
+  /* Hide marker paragraphs */
+  div[data-testid="stSidebar"] p.lt-nav-parent,
+  div[data-testid="stSidebar"] p.lt-nav-child {
+    display: none !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
   section[data-testid="stSidebar"] div.stButton > button p {
     text-align: left !important;
   }
@@ -768,12 +835,42 @@ def page_dashboard():
             len([l for l in ca if next_action_for_lead(l) is not None]),
         )
 
+    if can(user, "x_projects", "read") or is_super_admin(user):
+        try:
+            from src.project_x.store import get_active_project, list_projects, load_leads_for_project
+
+            x_projects = list_projects()
+            x_active = get_active_project()
+            x_leads = load_leads_for_project(x_active["id"]) if x_active else []
+            x_leads = scope_leads(x_leads, user)
+            xa = [l for l in x_leads if l.get("active_sequence")]
+            xc = [l for l in x_leads if l.get("status") == "converted"]
+            st.subheader("Lead for X")
+            y1, y2, y3, y4 = st.columns(4)
+            y1.metric("Projects", len(x_projects))
+            y2.metric(
+                "Active project leads",
+                len(x_leads),
+                help=x_active.get("name") if x_active else "None selected",
+            )
+            y3.metric("X active sequence", len(xa))
+            y4.metric("X converted", len(xc))
+            if not x_projects:
+                st.caption("Create your first project under **Lead for X → Project Setup**.")
+        except Exception:
+            pass
+
     st.markdown(_legend_html(), unsafe_allow_html=True)
     st.caption(f"🚫 Do Not Contact locked: {len(dnc)} — these people will never be emailed again.")
 
     st.subheader("What to do next")
     if due:
         st.success(f"{len(due)} shipper lead(s) due — open **Pipeline** and click Start.")
+    elif can(user, "x_pipeline", "read"):
+        st.info(
+            "Use **Lead for X → Project Setup** for any buyer/seller campaign, "
+            "or **Find Carriers** / shipper **Find Leads**."
+        )
     elif can(user, "carrier_pipeline", "read"):
         st.info("Check **Find Carriers** / **Carrier Pipeline**, or shipper **Find Leads**.")
     elif not leads:
@@ -2301,11 +2398,20 @@ def page_help():
 4. **Carrier Inbox** for replies; mark **Hired** when they lease on.  
 5. Data lives in Google Sheet tab `carrier_leads` (separate from shippers).
 
+### Lead for X (any buyer/seller project)
+1. **Project Setup** — create a project (e.g. *Shrimp buyers*), set type **buyer** or **seller**, paste **Project Scope**.  
+2. **Templates** → **Generate from Project Scope (LLM)** (Gemini if key set, else rule-based).  
+3. **Find Leads** — paste dump or CSV into the active project.  
+4. **Pipeline** → Select all → Activate → **Start** (days 0 / 4 / 9 / 16).  
+5. **Inbox** — paste replies; bot uses Project Scope for framing.  
+6. Storage: local `data/x_*.json` or Sheet tabs `x_projects` / `x_leads`.
+
 ### Email templates
-- **Shipper** and **Carrier** templates: **Org Setup → Email templates (Shipper + Carrier)**  
+- **Shipper** and **Carrier** templates: **Settings → Org Setup → Email templates**  
+- **Lead for X** templates: **Lead for X → Templates**  
 - Also previewed inside each funnel’s Pipeline page.
 
-Email opens the door. **Phone within 2 hours** of a positive reply closes the account / lease-on.
+Email opens the door. **Phone within 2 hours** of a positive reply closes the account / lease-on / deal.
 """
     )
 
@@ -2332,8 +2438,20 @@ def main():
         for p in ("Find Carriers", "Carrier Leads", "Carrier Pipeline", "Carrier Inbox")
         if p in pages_available
     ]
-    top_pages = [
-        p for p in ("Dashboard", "Org Setup", "Cloud Hosting", "Help") if p in pages_available
+    lead_x_pages = [
+        p
+        for p in (
+            "Project Setup",
+            "X Find Leads",
+            "X Leads List",
+            "X Pipeline",
+            "X Inbox",
+            "X Templates",
+        )
+        if p in pages_available
+    ]
+    settings_pages = [
+        p for p in ("Org Setup", "Cloud Hosting", "Help") if p in pages_available
     ]
 
     if st.session_state.get("nav_page") not in pages_available:
@@ -2345,6 +2463,10 @@ def main():
         st.session_state.nav_group = "shipper"
     elif cur in carrier_pages:
         st.session_state.nav_group = "carrier"
+    elif cur in lead_x_pages:
+        st.session_state.nav_group = "lead_x"
+    elif cur in settings_pages:
+        st.session_state.nav_group = "settings"
 
     def _goto(page: str, group: str | None = None):
         st.session_state.nav_page = page
@@ -2352,98 +2474,109 @@ def main():
             st.session_state.nav_group = group
         st.rerun()
 
+    def _nav_parent(label: str):
+        st.markdown(f'<p class="lt-nav-parent">{label}</p>', unsafe_allow_html=True)
+
+    def _nav_child(label: str):
+        st.markdown(f'<p class="lt-nav-child">{label}</p>', unsafe_allow_html=True)
+
+    def _nav_group_block(
+        *,
+        group_id: str,
+        title: str,
+        pages: list[str],
+        short_map: dict[str, str],
+    ):
+        if not pages:
+            return
+        open_ = st.session_state.get("nav_group") == group_id
+        active = cur in pages
+        _nav_parent(title)
+        if st.button(
+            f"{'▾' if open_ else '▸'}  {title}",
+            key=f"nav_group_{group_id}",
+            type="primary" if (open_ or active) else "secondary",
+            use_container_width=True,
+        ):
+            if open_ and active:
+                st.session_state.nav_group = ""
+                st.rerun()
+            else:
+                _goto(pages[0], group=group_id)
+        if open_:
+            for label in pages:
+                selected = cur == label
+                short = short_map.get(label, label)
+                _nav_child(label)
+                if st.button(
+                    f"{'●' if selected else '○'}  {short}",
+                    key=f"nav_{label}",
+                    type="primary" if selected else "secondary",
+                    use_container_width=True,
+                ):
+                    _goto(label, group=group_id)
+
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.25a · bare-min live mail")
+        st.caption("v2026.09.26a · Lead for X")
 
         # Top-level: Dashboard first
-        if "Dashboard" in top_pages:
+        if "Dashboard" in pages_available:
             sel = cur == "Dashboard"
+            _nav_parent("Dashboard")
             if st.button(
-                f"{'▾' if sel else '›'}  Dashboard",
+                f"{'▾' if sel else '▸'}  Dashboard",
                 key="nav_Dashboard",
                 type="primary" if sel else "secondary",
                 use_container_width=True,
             ):
                 _goto("Dashboard", group="")
 
-        # Shipper group
-        if shipper_pages:
-            ship_open = st.session_state.get("nav_group") == "shipper"
-            ship_active = cur in shipper_pages
-            if st.button(
-                f"{'▾' if ship_open else '›'}  Shipper",
-                key="nav_group_shipper",
-                type="primary" if ship_active else "secondary",
-                use_container_width=True,
-            ):
-                # Toggle open; land on first shipper page
-                if ship_open and ship_active:
-                    st.session_state.nav_group = ""
-                    st.rerun()
-                else:
-                    _goto(shipper_pages[0], group="shipper")
-            if ship_open:
-                for label in shipper_pages:
-                    selected = cur == label
-                    short = {
-                        "Find Leads": "Find Leads",
-                        "Leads List": "Leads List",
-                        "Pipeline & Outreach": "Pipeline",
-                        "Inbox Bot": "Inbox Bot",
-                    }.get(label, label)
-                    if st.button(
-                        f"{'●' if selected else '○'}  {short}",
-                        key=f"nav_{label}",
-                        type="primary" if selected else "secondary",
-                        use_container_width=True,
-                    ):
-                        _goto(label, group="shipper")
-
-        # Carrier group
-        if carrier_pages:
-            car_open = st.session_state.get("nav_group") == "carrier"
-            car_active = cur in carrier_pages
-            if st.button(
-                f"{'▾' if car_open else '›'}  Carrier",
-                key="nav_group_carrier",
-                type="primary" if car_active else "secondary",
-                use_container_width=True,
-            ):
-                if car_open and car_active:
-                    st.session_state.nav_group = ""
-                    st.rerun()
-                else:
-                    _goto(carrier_pages[0], group="carrier")
-            if car_open:
-                for label in carrier_pages:
-                    selected = cur == label
-                    short = {
-                        "Find Carriers": "Find Carriers",
-                        "Carrier Leads": "Carrier Leads",
-                        "Carrier Pipeline": "Pipeline",
-                        "Carrier Inbox": "Inbox",
-                    }.get(label, label)
-                    if st.button(
-                        f"{'●' if selected else '○'}  {short}",
-                        key=f"nav_{label}",
-                        type="primary" if selected else "secondary",
-                        use_container_width=True,
-                    ):
-                        _goto(label, group="carrier")
-
-        # Remaining top-level pages
-        for label in ("Org Setup", "Cloud Hosting", "Help"):
-            if label not in top_pages:
-                continue
-            sel = cur == label
-            if st.button(
-                f"{'▾' if sel else '›'}  {label}",
-                key=f"nav_{label}",
-                type="primary" if sel else "secondary",
-                use_container_width=True,
-            ):
-                _goto(label, group="")
+        _nav_group_block(
+            group_id="shipper",
+            title="Shipper",
+            pages=shipper_pages,
+            short_map={
+                "Find Leads": "Find Leads",
+                "Leads List": "Leads List",
+                "Pipeline & Outreach": "Pipeline",
+                "Inbox Bot": "Inbox Bot",
+            },
+        )
+        _nav_group_block(
+            group_id="carrier",
+            title="Carrier",
+            pages=carrier_pages,
+            short_map={
+                "Find Carriers": "Find Carriers",
+                "Carrier Leads": "Carrier Leads",
+                "Carrier Pipeline": "Pipeline",
+                "Carrier Inbox": "Inbox",
+            },
+        )
+        _nav_group_block(
+            group_id="lead_x",
+            title="Lead for X",
+            pages=lead_x_pages,
+            short_map={
+                "Project Setup": "Project Setup",
+                "X Find Leads": "Find Leads",
+                "X Leads List": "Leads List",
+                "X Pipeline": "Pipeline",
+                "X Inbox": "Inbox",
+                "X Templates": "Templates",
+            },
+        )
+        _nav_group_block(
+            group_id="settings",
+            title="Settings",
+            pages=settings_pages,
+            short_map={
+                "Org Setup": "Org Setup",
+                "Cloud Hosting": "Cloud Hosting",
+                "Help": "Help",
+            },
+        )
 
         company = _company()
         st.divider()
@@ -2473,6 +2606,12 @@ def main():
         "Find Carriers": page_find_carriers,
         "Carrier Pipeline": page_carrier_pipeline,
         "Carrier Inbox": page_carrier_inbox,
+        "Project Setup": page_x_projects,
+        "X Find Leads": page_x_find_leads,
+        "X Leads List": page_x_leads_list,
+        "X Pipeline": page_x_pipeline,
+        "X Inbox": page_x_inbox,
+        "X Templates": page_x_templates,
         "Org Setup": page_org_setup,
         "Cloud Hosting": page_cloud,
         "Help": page_help,
