@@ -260,41 +260,62 @@ st.markdown(
     box-shadow: var(--lg-shadow);
   }
 
-  /* Sidebar chevron nav (buttons, not radios)
-     Parent markers → bold; expanded/active parent = blue
-     Child markers → indented; selected child = orange */
+  /* Sidebar chevron nav — compact parents; blue parent / orange child.
+     Empty .lt-nav-* markers (no text) tag the next button; marker rows are collapsed. */
+  section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+    gap: 0.12rem !important;
+  }
+  section[data-testid="stSidebar"] div.element-container:has(div.stButton) {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  /* Collapse empty marker rows so they never show labels or add whitespace.
+     Keep in DOM (no display:none) so adjacent-sibling button styling still matches. */
+  section[data-testid="stSidebar"] div.element-container:has(.lt-nav-parent),
+  section[data-testid="stSidebar"] div.element-container:has(.lt-nav-child) {
+    height: 0 !important;
+    max-height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    border: none !important;
+    line-height: 0 !important;
+  }
   section[data-testid="stSidebar"] div.stButton > button {
     width: 100% !important;
     justify-content: flex-start !important;
     text-align: left !important;
     border-radius: 12px !important;
-    padding: 0.4rem 0.75rem !important;
-    margin: 0.06rem 0 !important;
+    padding: 0.38rem 0.75rem !important;
+    margin: 0 !important;
     font-size: 0.95rem !important;
     font-weight: 500 !important;
     border: 1px solid rgba(14, 165, 233, 0.18) !important;
     background: rgba(255, 255, 255, 0.35) !important;
     box-shadow: none !important;
     transform: none !important;
-    min-height: 2.1rem !important;
+    min-height: 2.05rem !important;
     color: #0B3D4A !important;
   }
-  /* Parent group labels — always bold, distinct from children */
-  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-parent)
+  /* Parent buttons — bold; inactive = light blue tint */
+  section[data-testid="stSidebar"] div.element-container:has(.lt-nav-parent)
     + div.element-container div.stButton > button {
-    font-size: 1.05rem !important;
+    font-size: 1.02rem !important;
     font-weight: 800 !important;
     letter-spacing: 0.01em !important;
-    padding: 0.5rem 0.85rem !important;
-    min-height: 2.45rem !important;
+    padding: 0.45rem 0.8rem !important;
+    min-height: 2.3rem !important;
     background: rgba(226, 242, 253, 0.75) !important;
     border: 1px solid rgba(14, 165, 233, 0.35) !important;
     color: #0369A1 !important;
   }
   /* Expanded / active parent = blue */
-  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-parent)
+  section[data-testid="stSidebar"] div.element-container:has(.lt-nav-parent)
     + div.element-container div.stButton > button[kind="primary"],
-  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-parent)
+  section[data-testid="stSidebar"] div.element-container:has(.lt-nav-parent)
     + div.element-container div.stButton > button[data-testid="baseButton-primary"] {
     background: linear-gradient(
       135deg,
@@ -308,21 +329,23 @@ st.markdown(
       0 0 18px rgba(14, 165, 233, 0.4),
       inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
   }
-  /* Child pages — lighter, indented feel */
-  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-child)
+  /* Child pages — indented, light, circle bullet */
+  section[data-testid="stSidebar"] div.element-container:has(.lt-nav-child)
     + div.element-container div.stButton > button {
-    font-size: 0.92rem !important;
+    font-size: 0.9rem !important;
     font-weight: 500 !important;
-    margin-left: 0.55rem !important;
-    width: calc(100% - 0.55rem) !important;
-    background: rgba(255, 255, 255, 0.4) !important;
+    margin-left: 0.65rem !important;
+    width: calc(100% - 0.65rem) !important;
+    min-height: 1.95rem !important;
+    padding: 0.32rem 0.7rem !important;
+    background: rgba(255, 255, 255, 0.55) !important;
     border: 1px solid rgba(148, 163, 184, 0.35) !important;
     color: #334155 !important;
   }
-  /* Selected / active child = orange (clear contrast vs blue parent) */
-  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-child)
+  /* Active child = orange */
+  section[data-testid="stSidebar"] div.element-container:has(.lt-nav-child)
     + div.element-container div.stButton > button[kind="primary"],
-  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-child)
+  section[data-testid="stSidebar"] div.element-container:has(.lt-nav-child)
     + div.element-container div.stButton > button[data-testid="baseButton-primary"] {
     background: linear-gradient(
       135deg,
@@ -341,7 +364,7 @@ st.markdown(
     border-color: rgba(20, 184, 166, 0.55) !important;
     background: rgba(255, 255, 255, 0.55) !important;
   }
-  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-parent)
+  section[data-testid="stSidebar"] div.element-container:has(.lt-nav-parent)
     + div.element-container div.stButton > button[kind="primary"]:hover {
     background: linear-gradient(
       135deg,
@@ -350,7 +373,7 @@ st.markdown(
     ) !important;
     color: #fff !important;
   }
-  div[data-testid="stSidebar"] div.element-container:has(p.lt-nav-child)
+  section[data-testid="stSidebar"] div.element-container:has(.lt-nav-child)
     + div.element-container div.stButton > button[kind="primary"]:hover {
     background: linear-gradient(
       135deg,
@@ -358,14 +381,6 @@ st.markdown(
       rgba(249, 115, 22, 1)
     ) !important;
     color: #fff !important;
-  }
-  /* Hide marker paragraphs */
-  div[data-testid="stSidebar"] p.lt-nav-parent,
-  div[data-testid="stSidebar"] p.lt-nav-child {
-    display: none !important;
-    height: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
   }
   section[data-testid="stSidebar"] div.stButton > button p {
     text-align: left !important;
@@ -2474,11 +2489,9 @@ def main():
             st.session_state.nav_group = group
         st.rerun()
 
-    def _nav_parent(label: str):
-        st.markdown(f'<p class="lt-nav-parent">{label}</p>', unsafe_allow_html=True)
-
-    def _nav_child(label: str):
-        st.markdown(f'<p class="lt-nav-child">{label}</p>', unsafe_allow_html=True)
+    def _nav_mark(kind: str):
+        # Empty marker only — never put a visible label here (that caused duplicate text).
+        st.markdown(f'<div class="lt-nav-{kind}"></div>', unsafe_allow_html=True)
 
     def _nav_group_block(
         *,
@@ -2491,7 +2504,7 @@ def main():
             return
         open_ = st.session_state.get("nav_group") == group_id
         active = cur in pages
-        _nav_parent(title)
+        _nav_mark("parent")
         if st.button(
             f"{'▾' if open_ else '▸'}  {title}",
             key=f"nav_group_{group_id}",
@@ -2507,7 +2520,7 @@ def main():
             for label in pages:
                 selected = cur == label
                 short = short_map.get(label, label)
-                _nav_child(label)
+                _nav_mark("child")
                 if st.button(
                     f"{'●' if selected else '○'}  {short}",
                     key=f"nav_{label}",
@@ -2518,12 +2531,12 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.26a · Lead for X")
+        st.caption("v2026.09.26b · nav fix")
 
         # Top-level: Dashboard first
         if "Dashboard" in pages_available:
             sel = cur == "Dashboard"
-            _nav_parent("Dashboard")
+            _nav_mark("parent")
             if st.button(
                 f"{'▾' if sel else '▸'}  Dashboard",
                 key="nav_Dashboard",
