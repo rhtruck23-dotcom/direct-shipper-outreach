@@ -122,12 +122,43 @@ def under_daily_email_cap(
     *,
     today: Optional[date] = None,
 ) -> tuple[bool, int, int]:
-    """Return (ok_to_send, sent_today, cap)."""
-    cap = int((company or {}).get("autonomy_daily_email_cap") or DEFAULT_DAILY_EMAIL_CAP)
+    """Return (ok_to_send, sent_today, cap).
+
+    Cap is autonomy_daily_email_cap, optionally lowered by autopilot_daily_target.
+    When a Gmail send pool is active, also stop once pool remaining capacity is 0
+    (all mailboxes at their per-account daily_cap).
+    """
+    company = company or {}
+    try:
+        cap = int(company.get("autonomy_daily_email_cap") or DEFAULT_DAILY_EMAIL_CAP)
+    except Exception:
+        cap = DEFAULT_DAILY_EMAIL_CAP
     if cap <= 0:
         cap = DEFAULT_DAILY_EMAIL_CAP
+    try:
+        target = int(company.get("autopilot_daily_target") or 0)
+    except Exception:
+        target = 0
+    if target > 0:
+        cap = min(cap, target)
+
     sent = emails_sent_today(today=today)
-    return sent < cap, sent, cap
+    ok = sent < cap
+
+    # Soft-stop when multi-Gmail pool is exhausted for the day
+    try:
+        from .mailboxes import pool_exhausted, pool_usable, total_remaining_capacity
+
+        if pool_usable() and pool_exhausted():
+            ok = False
+            # Surface pool total as the effective remaining-aware cap for UI
+            pool_rem = total_remaining_capacity()
+            # Keep reporting company cap; caller sees under_email_cap=False
+            _ = pool_rem
+    except Exception:
+        pass
+
+    return ok, sent, cap
 
 
 def parse_action_json(text: str) -> Optional[dict[str, Any]]:
@@ -306,10 +337,19 @@ def tool_send_email(
         )
     ok_cap, sent, cap = under_daily_email_cap(company)
     if not ok_cap:
+        try:
+            from .mailboxes import pool_exhausted, pool_usable
+
+            if pool_usable() and pool_exhausted():
+                msg = f"Gmail pool at daily cap ({sent}/{cap}); resumes next day"
+            else:
+                msg = f"daily email cap reached ({sent}/{cap})"
+        except Exception:
+            msg = f"daily email cap reached ({sent}/{cap})"
         return ToolResult(
             ok=False,
             action="send_email",
-            message=f"daily email cap reached ({sent}/{cap})",
+            message=msg,
             skipped=True,
             data={"sent_today": sent, "cap": cap},
         )

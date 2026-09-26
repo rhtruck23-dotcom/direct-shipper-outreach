@@ -40,5 +40,6 @@
   "groq_api_key": "",
   "autonomy_autopilot": false,
   "autonomy_max_leads": 10,
-  "autonomy_daily_email_cap": 50
+  "autonomy_daily_email_cap": 50,
+  "autopilot_daily_target": 0
 }

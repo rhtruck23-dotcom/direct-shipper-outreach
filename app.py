@@ -574,12 +574,19 @@ def _email_setup_card(*, key_prefix: str, show_credential_fields: bool = True) -
         from src.emailer import send_email
 
         company_now = _company()
+        from src.mailboxes import pool_usable
+
+        has_company_pw = bool((company_now.get("smtp_password") or "").strip())
+        has_pool = pool_usable()
         if not (test_to or "").strip() or "@" not in test_to:
             st.error("Enter a valid test email.")
         elif not company_now.get("send_live_emails"):
             st.error("Click **Save & enable LIVE** first.")
-        elif not (company_now.get("smtp_password") or "").strip():
-            st.error("Paste App Password and click **Save & enable LIVE** first.")
+        elif not has_company_pw and not has_pool:
+            st.error(
+                "Add a Gmail to the send pool (or paste App Password and "
+                "click **Save & enable LIVE**) first."
+            )
         else:
             body = (
                 f"LogixTrek live email test.\n\n"
@@ -598,8 +605,11 @@ def _email_setup_card(*, key_prefix: str, show_credential_fields: bool = True) -
                 meta={"type": "live_test"},
             )
             if result.get("ok") and str(result.get("mode", "")).startswith("live"):
+                mb_note = ""
+                if result.get("mailbox_email"):
+                    mb_note = f" via **{result.get('mailbox_email')}**"
                 st.success(
-                    f"Sent ({result.get('mode')}) to {test_to}. Check Inbox + Spam."
+                    f"Sent ({result.get('mode')}){mb_note} to {test_to}. Check Inbox + Spam."
                 )
             else:
                 st.error(
@@ -656,6 +666,105 @@ def _email_setup_card(*, key_prefix: str, show_credential_fields: bool = True) -
                     st.link_button("Sign in with Google", auth_url)
                 except Exception as exc:
                     st.error(f"Could not start Google sign-in: {exc}")
+
+
+def _gmail_pool_section(*, key_prefix: str) -> None:
+    """Multi-Gmail send pool: add/enable/delete mailboxes + today's usage."""
+    from src.mailboxes import (
+        DEFAULT_DAILY_CAP,
+        add_mailbox,
+        delete_mailbox,
+        set_mailbox_enabled,
+        today_usage,
+        total_remaining_capacity,
+        update_mailbox,
+    )
+
+    st.markdown("### Gmail send pool")
+    st.caption(
+        "Autopilot rotates across these accounts silently. Soft cap ~200/day per Gmail "
+        "(3 accounts ≈ 600/day). Counters reset on the America/Chicago calendar day. "
+        "Dry-runs do not count against the cap."
+    )
+
+    usage = today_usage()
+    remaining = total_remaining_capacity()
+    total_cap = sum(
+        r["cap"] for r in usage if r.get("enabled") and r.get("has_password")
+    )
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Pool accounts", len(usage))
+    m2.metric("Sent today (pool)", sum(r["sent"] for r in usage if r.get("has_password")))
+    m3.metric("Remaining today", f"{remaining}/{total_cap or 0}")
+
+    if usage:
+        for row in usage:
+            cols = st.columns([3, 2, 1, 1, 1])
+            status = "ON" if row.get("enabled") else "OFF"
+            pw = "pw✓" if row.get("has_password") else "no pw"
+            cols[0].write(f"**{row.get('email') or row.get('id')}** · {status} · {pw}")
+            cols[1].caption(f"{row.get('sent', 0)}/{row.get('cap', DEFAULT_DAILY_CAP)} today")
+            mid = row.get("id") or ""
+            if cols[2].button(
+                "Disable" if row.get("enabled") else "Enable",
+                key=f"{key_prefix}_mb_tog_{mid}",
+            ):
+                set_mailbox_enabled(mid, not bool(row.get("enabled")))
+                st.rerun()
+            new_cap = cols[3].number_input(
+                "Cap",
+                min_value=1,
+                max_value=500,
+                value=int(row.get("cap") or DEFAULT_DAILY_CAP),
+                key=f"{key_prefix}_mb_cap_{mid}",
+                label_visibility="collapsed",
+            )
+            if int(new_cap) != int(row.get("cap") or DEFAULT_DAILY_CAP):
+                update_mailbox(mid, daily_cap=int(new_cap))
+                st.rerun()
+            if cols[4].button("Delete", key=f"{key_prefix}_mb_del_{mid}"):
+                delete_mailbox(mid)
+                st.rerun()
+    else:
+        st.info(
+            "No pool mailboxes yet. Add Gmail addresses + App Passwords below "
+            "(e.g. heronmb3@gmail.com, rhtruck23@gmail.com)."
+        )
+
+    with st.form(f"{key_prefix}_mb_add"):
+        st.markdown("#### Add Gmail to pool")
+        a1, a2, a3 = st.columns([3, 3, 1])
+        new_email = a1.text_input(
+            "Gmail address",
+            value="",
+            placeholder="heronmb3@gmail.com",
+            key=f"{key_prefix}_mb_email",
+        )
+        new_pw = a2.text_input(
+            "App password",
+            value="",
+            type="password",
+            placeholder="xxxx xxxx xxxx xxxx",
+            key=f"{key_prefix}_mb_pw",
+        )
+        new_cap = a3.number_input(
+            "Daily cap",
+            min_value=1,
+            max_value=500,
+            value=DEFAULT_DAILY_CAP,
+            key=f"{key_prefix}_mb_new_cap",
+        )
+        if st.form_submit_button("Add mailbox", type="primary"):
+            email = (new_email or "").strip().lower()
+            pw = (new_pw or "").strip().replace(" ", "")
+            if not email or "@" not in email:
+                st.error("Enter a valid Gmail address.")
+            elif not pw:
+                st.error("Paste the 16-character Gmail App Password.")
+            else:
+                add_mailbox(email, pw, daily_cap=int(new_cap), enabled=True)
+                st.success(f"Added {email} (cap {int(new_cap)}/day).")
+                st.rerun()
 
 
 def _current_user() -> dict | None:
@@ -832,6 +941,8 @@ def page_dashboard():
     if is_super_admin(user) or can(user, "org_setup", "update"):
         st.divider()
         _email_setup_card(key_prefix="dash_email", show_credential_fields=True)
+        st.divider()
+        _gmail_pool_section(key_prefix="dash_pool")
 
     if can(user, "carrier_leads", "read") or is_super_admin(user):
         try:
@@ -914,8 +1025,13 @@ def page_dashboard():
             st.session_state.company = company
             st.rerun()
         ag3.caption(
-            f"Cap {company.get('autonomy_daily_email_cap') or 50}/day · "
-            f"max {company.get('autonomy_max_leads') or 10}/pass · "
+            f"Cap {company.get('autonomy_daily_email_cap') or 50}/day"
+            + (
+                f" · target {company.get('autopilot_daily_target')}"
+                if company.get("autopilot_daily_target")
+                else ""
+            )
+            + f" · max {company.get('autonomy_max_leads') or 10}/pass · "
             f"{'LIVE' if company.get('send_live_emails') else 'dry-run'} mail"
         )
         if company.get("autonomy_autopilot"):
@@ -1644,12 +1760,22 @@ def page_org_setup():
             autonomy_daily_email_cap = ac2.number_input(
                 "Daily email soft cap (agent)",
                 min_value=1,
-                max_value=500,
+                max_value=1000,
                 value=int(company.get("autonomy_daily_email_cap") or 50),
+            )
+            autopilot_daily_target = st.number_input(
+                "Autopilot daily target (optional)",
+                min_value=0,
+                max_value=1000,
+                value=int(company.get("autopilot_daily_target") or 0),
+                help="0 = use soft cap only. Example: 400 so the agent stops at ~400/day "
+                "even if the Gmail pool has ~600 capacity. "
+                "4000 leads @ 500/day ≈ 8 days; @ 600/day ≈ 7 days.",
             )
             st.caption(
                 "Outcome learning (not RL): convert/DNC/reply outcomes feed future email hints. "
-                "RAG v1 injects project scope + notes + recent conversation (no vector DB yet)."
+                "RAG v1 injects project scope + notes + recent conversation (no vector DB yet). "
+                "Gmail pool: autopilot rotates silently and stops when all mailboxes hit their cap."
             )
             cse_key = st.text_input(
                 "Google Custom Search API key",
@@ -1721,6 +1847,7 @@ def page_org_setup():
                     "autonomy_autopilot": bool(autonomy_autopilot),
                     "autonomy_max_leads": int(autonomy_max_leads),
                     "autonomy_daily_email_cap": int(autonomy_daily_email_cap),
+                    "autopilot_daily_target": int(autopilot_daily_target),
                     "google_cse_api_key": cse_key,
                     "google_cse_id": cse_id,
                     "bot_auto_reply": bot_auto,
@@ -1740,6 +1867,8 @@ def page_org_setup():
         # ---- SIMPLE LIVE EMAIL: Gmail App Password paste-and-go ----
         st.divider()
         _email_setup_card(key_prefix="org_email", show_credential_fields=True)
+        st.divider()
+        _gmail_pool_section(key_prefix="org_pool")
 
     with tab_team:
         _page_team_access()
@@ -2792,7 +2921,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.19d · simple Gmail live")
+        st.caption("v2026.09.26e · multi-gmail pool")
 
         # Top-level: Dashboard first
         if "Dashboard" in pages_available:
