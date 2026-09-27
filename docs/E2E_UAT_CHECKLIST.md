@@ -5,7 +5,7 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 | Field | Fill in |
 |--------|---------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Version to confirm** | **v2026.09.26f** — or check the caption under **LogixTrek Outreach** in the left sidebar |
+| **Version to confirm** | **v2026.09.26g** — or check the caption under **LogixTrek Outreach** in the left sidebar |
 | **Tester name** | _______________________________ |
 | **Date** | _______________ |
 
@@ -55,7 +55,7 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 **Steps:**
 1. Look under **LogixTrek Outreach** in the left sidebar.
 2. Read the small version / caption line.
-**Expected:** Caption is visible. Note the exact text (should be **v2026.09.26f** or the current build label). Write what you see in Comment.
+**Expected:** Caption is visible. Note the exact text (should be **v2026.09.26g** or the current build label). Write what you see in Comment.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:** (write exact caption here)  
 **Screenshot:** (filename)

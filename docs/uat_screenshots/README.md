@@ -13,7 +13,7 @@ Use the test case ID plus `fail` (or a short note):
 
 PNG or JPG is fine. One clear screenshot per Fail is enough; add a second only if needed to show the full problem.
 
-## Coverage reminders (v2026.09.26f)
+## Coverage reminders (v2026.09.26g · floating chrome)
 
 When filing fails, especially capture:
 
