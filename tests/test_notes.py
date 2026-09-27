@@ -146,3 +146,59 @@ def test_parse_reminder_date_variants():
     assert notes.parse_reminder_date("2026-09-26T14:30:00") == date(2026, 9, 26)
     assert notes.parse_reminder_date("") is None
     assert notes.parse_reminder_date("not-a-date") is None
+
+
+def test_section_and_page_color(tmp_path, monkeypatch):
+    monkeypatch.setattr(notes, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(notes, "NOTEBOOKS_JSON", tmp_path / "notebooks.json")
+    monkeypatch.setattr(notes, "SECTIONS_JSON", tmp_path / "note_sections.json")
+    monkeypatch.setattr(notes, "NOTES_JSON", tmp_path / "notes.json")
+    monkeypatch.setattr(notes, "NOTE_AUDIO_DIR", tmp_path / "note_audio")
+    monkeypatch.setattr(notes, "_using_cloud", lambda: False)
+
+    nb = notes.create_notebook("Ops")
+    sec = notes.create_section(notebook_id=nb["id"], name="Follow-ups")
+    page = notes.create_note(
+        notebook_id=nb["id"],
+        section_id=sec["id"],
+        title="Page A",
+        body=notes.wrap_highlight("rates", "yellow"),
+        color="pink",
+    )
+    assert page["color"] == "pink"
+    assert page["section_id"] == sec["id"]
+    assert "<mark" in page["body"]
+    assert notes.wrap_bold("x") == "**x**"
+    pages = notes.pages_for_notebook(nb["id"], section_id=sec["id"])
+    assert [p["id"] for p in pages] == [page["id"]]
+
+
+def test_migrate_legacy_note_without_color(tmp_path, monkeypatch):
+    monkeypatch.setattr(notes, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(notes, "NOTEBOOKS_JSON", tmp_path / "notebooks.json")
+    monkeypatch.setattr(notes, "NOTES_JSON", tmp_path / "notes.json")
+    monkeypatch.setattr(notes, "NOTE_AUDIO_DIR", tmp_path / "note_audio")
+    monkeypatch.setattr(notes, "_using_cloud", lambda: False)
+
+    # Write legacy-shaped note missing color/section_id
+    import json
+
+    nb = notes.ensure_default_notebook()
+    legacy = {
+        "id": "note_legacy01",
+        "notebook_id": nb["id"],
+        "title": "Old",
+        "body": "hello",
+        "reminder_at": "",
+        "reminder_done": False,
+        "audio_path": "",
+        "audio_mime": "",
+        "created_at": "2026-09-01T00:00:00",
+        "updated_at": "2026-09-01T00:00:00",
+        "created_by": "",
+    }
+    (tmp_path / "notes.json").write_text(json.dumps([legacy]), encoding="utf-8")
+    loaded = notes.load_notes()
+    assert len(loaded) == 1
+    assert loaded[0]["color"] == "default"
+    assert loaded[0]["section_id"] == ""

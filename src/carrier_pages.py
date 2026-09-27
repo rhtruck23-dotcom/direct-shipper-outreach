@@ -536,6 +536,8 @@ def page_carrier_pipeline():
             st.rerun()
 
     with st.expander("Email 1–4 preview (carrier)"):
+        from src.translate import render_preview_translate
+
         sample = {
             "contact_name": "Alex",
             "company_name": "Sample Carrier LLC",
@@ -545,8 +547,10 @@ def page_carrier_pipeline():
         }
         for step in range(1, 5):
             subj, body = render_carrier_email(step, sample, company)
-            st.markdown(f"**Email {step} — {subj}**")
-            st.code(body)
+            st.markdown(f"**Email {step}**")
+            render_preview_translate(
+                subj, body, key_prefix=f"car_pipe_prev_{step}", company=company
+            )
 
 
 def page_carrier_inbox():
@@ -570,6 +574,15 @@ def page_carrier_inbox():
     choice = st.selectbox("Which carrier replied?", list(labels.keys()), key="cib_pick")
     lead = labels[choice]
     inbound = st.text_area("Paste their reply", height=160, key="cib_in")
+    from src.translate import render_email_lang_toolbar, render_inbound_translate
+
+    render_inbound_translate(
+        key_prefix="cib",
+        inbound_key="cib_in",
+        company=company,
+        inbound_value=inbound,
+    )
+    inbound = str(st.session_state.get("cib_in") or inbound or "")
 
     if st.button("Process with Carrier Bot", type="primary", key="cib_go") and inbound.strip():
         decision = handle_reply(lead, inbound, company)
@@ -589,28 +602,12 @@ def page_carrier_inbox():
             }
         )
 
-        if decision.auto_send and company.get("bot_auto_reply", True) and decision.reply_body:
-            from src.emailer import send_email
-
-            result = send_email(
-                lead["email"],
-                decision.reply_subject,
-                decision.reply_body,
-                company,
-                meta={"type": "carrier_bot_reply", "intent": decision.intent},
-            )
-            conv.append(
-                {
-                    "at": result["at"],
-                    "direction": "outbound_bot",
-                    "subject": decision.reply_subject,
-                    "body": decision.reply_body,
-                    "mode": result.get("mode"),
-                }
-            )
-            st.success(f"Bot reply {'sent' if result.get('live') else 'drafted (dry run)'}.")
-            with st.expander("Bot reply"):
-                st.code(decision.reply_body)
+        if decision.reply_body:
+            st.session_state["cib_draft_subj"] = decision.reply_subject or ""
+            st.session_state["cib_draft_body"] = decision.reply_body or ""
+            st.session_state["cib_draft_intent"] = decision.intent
+            st.session_state["cib_draft_lead"] = carrier_key(lead)
+            st.info("Reply draft ready below — convert language, edit, then Send.")
         elif decision.intent == "escalate":
             st.warning("Escalated — you close lease-on / pay terms yourself.")
 
@@ -629,3 +626,51 @@ def page_carrier_inbox():
         lead["conversation"] = conv
         _persist_one(lead)
         _refresh_carriers()
+
+    if (
+        st.session_state.get("cib_draft_body")
+        and st.session_state.get("cib_draft_lead") == carrier_key(lead)
+    ):
+        st.markdown("#### Outbound reply draft")
+        st.text_input("Reply subject", key="cib_draft_subj")
+        st.text_area("Reply body", height=160, key="cib_draft_body")
+        render_email_lang_toolbar(
+            key_prefix="cib_draft_lang",
+            company=company,
+            subject_key="cib_draft_subj",
+            body_key="cib_draft_body",
+            show_to_spanish=True,
+            show_to_english=True,
+            side_by_side=True,
+        )
+        if st.button("Send reply", type="primary", key="cib_send_draft"):
+            from src.emailer import send_email
+
+            subj = str(st.session_state.get("cib_draft_subj") or "")
+            body = str(st.session_state.get("cib_draft_body") or "")
+            result = send_email(
+                lead["email"],
+                subj,
+                body,
+                company,
+                meta={
+                    "type": "carrier_bot_reply",
+                    "intent": st.session_state.get("cib_draft_intent"),
+                },
+            )
+            conv = lead.get("conversation") or []
+            conv.append(
+                {
+                    "at": result["at"],
+                    "direction": "outbound_bot",
+                    "subject": subj,
+                    "body": body,
+                    "mode": result.get("mode"),
+                }
+            )
+            lead["conversation"] = conv
+            _persist_one(lead)
+            for k in ("cib_draft_subj", "cib_draft_body", "cib_draft_intent", "cib_draft_lead"):
+                st.session_state.pop(k, None)
+            st.success(f"Bot reply {'sent' if result.get('live') else 'drafted (dry run)'}.")
+            st.rerun()

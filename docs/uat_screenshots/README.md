@@ -13,15 +13,18 @@ Use the test case ID plus `fail` (or a short note):
 
 PNG or JPG is fine. One clear screenshot per Fail is enough; add a second only if needed to show the full problem.
 
-## Coverage reminders (v2026.09.26g · floating chrome)
+## Coverage reminders (v2026.09.26h · Spanish + OneNote)
 
 When filing fails, especially capture:
 
 | Area | Example IDs |
 |------|-------------|
+| Spanish convert (CRM / pipeline / inbox) | T-130, T-131, T-132 |
+| OneNote pages / voice / highlights | T-120–T-124 |
+| Floating FAB + jump-top | T-120 |
+| Inbox draft-then-send | T-053 |
 | Clean Dashboard (ops only) | T-020, T-021, T-029 |
 | Clickable tiles → lead/note | T-024, T-025, T-028, T-123 |
-| Floating Add Note / voice | T-120, T-121, T-122 |
 | Multi-Gmail pool (Org Setup) | T-023, T-082 |
 | Agent / Autopilot | T-026, T-027, T-100 |
 | Shipper / Carrier / Lead for X | T-030+, Carrier & Lead for X sections |

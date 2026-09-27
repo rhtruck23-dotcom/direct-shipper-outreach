@@ -2864,6 +2864,23 @@ def page_pipeline():
             st.success("Marked Converted. Open Leads List to see the green stage.")
             st.rerun()
 
+    with st.expander("Email 1–4 preview (shipper)"):
+        from src.translate import render_preview_translate
+
+        sample = {
+            "contact_name": "Alex",
+            "company_name": "Sample Shipper",
+            "freight_type": "Reefer",
+            "lane_or_region": "VA / Mid-Atlantic",
+            "state": "VA",
+        }
+        for step in range(1, 5):
+            subj, body = render_email(step, sample, company)
+            st.markdown(f"**Email {step}**")
+            render_preview_translate(
+                subj, body, key_prefix=f"ship_pipe_prev_{step}", company=company
+            )
+
 
 def page_inbox():
     st.title("Inbox Bot")
@@ -2887,7 +2904,16 @@ def page_inbox():
     }
     choice = st.selectbox("Which lead replied?", list(labels.keys()))
     lead = labels[choice]
-    inbound = st.text_area("Paste their reply", height=160)
+    inbound = st.text_area("Paste their reply", height=160, key="ship_inbox_in")
+    from src.translate import render_email_lang_toolbar, render_inbound_translate
+
+    render_inbound_translate(
+        key_prefix="ship_inbox",
+        inbound_key="ship_inbox_in",
+        company=company,
+        inbound_value=inbound,
+    )
+    inbound = str(st.session_state.get("ship_inbox_in") or inbound or "")
 
     if st.button("Process with Logistics Bot", type="primary") and inbound.strip():
         from src.agent_tools import is_dnc, tool_append_note, tool_escalate_to_owner
@@ -2916,33 +2942,16 @@ def page_inbox():
                 funnel="shipper",
             )
             st.warning("Escalated — you close rates / loads yourself.")
-        elif (
-            decision.auto_send
-            and company.get("bot_auto_reply", True)
-            and decision.reply_body
-            and not is_dnc(lead)
-        ):
-            from src.emailer import send_email
-
-            result = send_email(
-                lead["email"],
-                decision.reply_subject,
-                decision.reply_body,
-                company,
-                meta={"type": "bot_reply", "intent": decision.intent},
+        elif decision.reply_body and not is_dnc(lead):
+            # Draft for edit + Spanish convert before optional send
+            st.session_state["ship_inbox_draft_subj"] = decision.reply_subject or ""
+            st.session_state["ship_inbox_draft_body"] = decision.reply_body or ""
+            st.session_state["ship_inbox_draft_intent"] = decision.intent
+            st.session_state["ship_inbox_draft_lead_key"] = lead_key(lead)
+            st.session_state["ship_inbox_draft_auto"] = bool(
+                decision.auto_send and company.get("bot_auto_reply", True)
             )
-            conv.append(
-                {
-                    "at": result["at"],
-                    "direction": "outbound_bot",
-                    "subject": decision.reply_subject,
-                    "body": decision.reply_body,
-                    "mode": result.get("mode"),
-                }
-            )
-            st.success(f"Bot reply {'sent' if result.get('live') else 'drafted (dry run)'}.")
-            with st.expander("Bot reply"):
-                st.code(decision.reply_body)
+            st.info("Reply draft ready below — convert language, edit, then Send.")
         elif is_dnc(lead):
             st.warning("Do Not Contact — bot will not email this lead.")
 
@@ -2967,6 +2976,67 @@ def page_inbox():
         lead["conversation"] = conv
         _persist_one(lead)
         _refresh_leads()
+
+    # Editable outbound draft (after Process)
+    if (
+        st.session_state.get("ship_inbox_draft_body")
+        and st.session_state.get("ship_inbox_draft_lead_key") == lead_key(lead)
+    ):
+        st.markdown("#### Outbound reply draft")
+        st.text_input("Reply subject", key="ship_inbox_draft_subj")
+        st.text_area("Reply body", height=160, key="ship_inbox_draft_body")
+        render_email_lang_toolbar(
+            key_prefix="ship_inbox_draft_lang",
+            company=company,
+            subject_key="ship_inbox_draft_subj",
+            body_key="ship_inbox_draft_body",
+            show_to_spanish=True,
+            show_to_english=True,
+            side_by_side=True,
+        )
+        from src.agent_tools import is_dnc
+        from src.emailer import send_email
+
+        if st.button("Send reply", type="primary", key="ship_inbox_send_draft"):
+            if is_dnc(lead):
+                st.warning("Do Not Contact — blocked.")
+            else:
+                subj = str(st.session_state.get("ship_inbox_draft_subj") or "")
+                body = str(st.session_state.get("ship_inbox_draft_body") or "")
+                result = send_email(
+                    lead["email"],
+                    subj,
+                    body,
+                    company,
+                    meta={
+                        "type": "bot_reply",
+                        "intent": st.session_state.get("ship_inbox_draft_intent"),
+                    },
+                )
+                conv = lead.get("conversation") or []
+                conv.append(
+                    {
+                        "at": result["at"],
+                        "direction": "outbound_bot",
+                        "subject": subj,
+                        "body": body,
+                        "mode": result.get("mode"),
+                    }
+                )
+                lead["conversation"] = conv
+                _persist_one(lead)
+                for k in (
+                    "ship_inbox_draft_subj",
+                    "ship_inbox_draft_body",
+                    "ship_inbox_draft_intent",
+                    "ship_inbox_draft_lead_key",
+                    "ship_inbox_draft_auto",
+                ):
+                    st.session_state.pop(k, None)
+                st.success(
+                    f"Bot reply {'sent' if result.get('live') else 'drafted (dry run)'}."
+                )
+                st.rerun()
 
 
 def page_cloud():
@@ -3171,7 +3241,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.26g · floating chrome")
+        st.caption("v2026.09.26h · Spanish + OneNote")
 
         from src.notes_ui import render_sidebar_add_note_button
 

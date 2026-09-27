@@ -631,9 +631,13 @@ def page_x_pipeline():
             st.rerun()
 
     with st.expander("Email 1–4 preview (this project)"):
+        from src.translate import render_preview_translate
+
         for step, subj, body in preview_templates(project, company):
-            st.markdown(f"**Email {step} — {subj}**")
-            st.code(body)
+            st.markdown(f"**Email {step}**")
+            render_preview_translate(
+                subj, body, key_prefix=f"x_pipe_prev_{step}", company=company
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -670,28 +674,89 @@ def page_x_inbox():
     choice = st.selectbox("Which lead replied?", list(labels.keys()), key="xib_pick")
     lead = labels[choice]
     inbound = st.text_area("Paste their reply", height=160, key="xib_in")
+    from src.translate import render_email_lang_toolbar, render_inbound_translate
+
+    render_inbound_translate(
+        key_prefix="xib",
+        inbound_key="xib_in",
+        company=company,
+        inbound_value=inbound,
+    )
+    inbound = str(st.session_state.get("xib_in") or inbound or "")
 
     if st.button("Process with Lead-for-X Bot", type="primary", key="xib_go") and inbound.strip():
         if not can(user, "x_inbox", "update"):
             st.error("No update permission.")
             return
-        summary = process_inbox_reply(lead, inbound, company, project)
+        # Disable auto-send so user can translate/edit draft before Send
+        company_off = {**company, "bot_auto_reply": False}
+        summary = process_inbox_reply(lead, inbound, company_off, project)
         decision = summary["decision"]
         st.markdown(f"**Intent:** `{decision.intent}`")
         st.caption(summary.get("reasoning") or "")
         if decision.stop_sequence:
             st.info("Sequence stopped.")
-        if summary.get("sent"):
-            st.success(
-                f"Bot reply {'sent' if summary.get('mode') == 'live' else 'drafted (dry run)'}."
-            )
-            with st.expander("Bot reply"):
-                st.code(decision.reply_body)
+        if decision.reply_body:
+            st.session_state["xib_draft_subj"] = decision.reply_subject or ""
+            st.session_state["xib_draft_body"] = decision.reply_body or ""
+            st.session_state["xib_draft_intent"] = decision.intent
+            st.session_state["xib_draft_lead"] = lead_key(lead)
+            st.info("Reply draft ready below — convert language, edit, then Send.")
         elif decision.intent == "escalate":
             st.warning("Escalated — you close this deal yourself.")
         if decision.escalate_to_owner:
             st.info("Owner alert logged.")
         _refresh_leads(project["id"])
+
+    if (
+        st.session_state.get("xib_draft_body")
+        and st.session_state.get("xib_draft_lead") == lead_key(lead)
+    ):
+        st.markdown("#### Outbound reply draft")
+        st.text_input("Reply subject", key="xib_draft_subj")
+        st.text_area("Reply body", height=160, key="xib_draft_body")
+        render_email_lang_toolbar(
+            key_prefix="xib_draft_lang",
+            company=company,
+            subject_key="xib_draft_subj",
+            body_key="xib_draft_body",
+            show_to_spanish=True,
+            show_to_english=True,
+            side_by_side=True,
+        )
+        if st.button("Send reply", type="primary", key="xib_send_draft"):
+            from src.emailer import send_email
+
+            subj = str(st.session_state.get("xib_draft_subj") or "")
+            body = str(st.session_state.get("xib_draft_body") or "")
+            result = send_email(
+                lead["email"],
+                subj,
+                body,
+                company,
+                meta={
+                    "type": "x_bot_reply",
+                    "intent": st.session_state.get("xib_draft_intent"),
+                },
+            )
+            conv = lead.get("conversation") or []
+            conv.append(
+                {
+                    "at": result["at"],
+                    "direction": "outbound_bot",
+                    "subject": subj,
+                    "body": body,
+                    "mode": result.get("mode"),
+                }
+            )
+            lead["conversation"] = conv
+            update_x_lead(lead)
+            for k in ("xib_draft_subj", "xib_draft_body", "xib_draft_intent", "xib_draft_lead"):
+                st.session_state.pop(k, None)
+            st.success(
+                f"Bot reply {'sent' if result.get('live') else 'drafted (dry run)'}."
+            )
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------

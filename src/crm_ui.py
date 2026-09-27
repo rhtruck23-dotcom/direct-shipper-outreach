@@ -148,6 +148,22 @@ def render_lead_crm_panel(
     e1, e2 = st.columns(2)
     oo_subj = e1.text_input("Subject", key=f"{kp}_oo_subj")
     oo_body = e2.text_area("Body", height=100, key=f"{kp}_oo_body")
+    from src.translate import render_email_lang_toolbar
+
+    render_email_lang_toolbar(
+        key_prefix=f"{kp}_oo_lang",
+        company=company,
+        subject_key=f"{kp}_oo_subj",
+        body_key=f"{kp}_oo_body",
+        show_to_spanish=True,
+        show_to_english=True,
+        side_by_side=True,
+        subject_value=oo_subj,
+        body_value=oo_body,
+    )
+    # Re-read after possible translate rewrite into session_state
+    oo_subj = str(st.session_state.get(f"{kp}_oo_subj") or oo_subj or "")
+    oo_body = str(st.session_state.get(f"{kp}_oo_body") or oo_body or "")
     if st.button("Send one-off", key=f"{kp}_oo_send"):
         if not (lead.get("email") or "").strip():
             st.error("Lead has no email.")

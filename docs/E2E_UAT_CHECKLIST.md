@@ -5,7 +5,7 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 | Field | Fill in |
 |--------|---------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Version to confirm** | **v2026.09.26g** — or check the caption under **LogixTrek Outreach** in the left sidebar |
+| **Version to confirm** | **v2026.09.26h** — or check the caption under **LogixTrek Outreach** in the left sidebar |
 | **Tester name** | _______________________________ |
 | **Date** | _______________ |
 
@@ -55,7 +55,7 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 **Steps:**
 1. Look under **LogixTrek Outreach** in the left sidebar.
 2. Read the small version / caption line.
-**Expected:** Caption is visible. Note the exact text (should be **v2026.09.26g** or the current build label). Write what you see in Comment.
+**Expected:** Caption is visible. Note the exact text (should be **v2026.09.26h** or the current build label). Write what you see in Comment.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:** (write exact caption here)  
 **Screenshot:** (filename)
@@ -382,7 +382,9 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 2. Select the lead.
 3. Paste a friendly reply (e.g. “Thanks, interested — call me next week.”).
 4. Click **Process with Logistics Bot**.
-**Expected:** Intent shown. Safe reply drafted or sent per settings. Sequence may stop on positive intent. No crash.
+5. Confirm an **Outbound reply draft** appears (edit + **Convert to Spanish** available).
+6. Click **Send reply** (dry-run OK).
+**Expected:** Intent shown. Safe reply drafted for edit/translate, then sent/logged per settings. Sequence may stop on positive intent. No crash.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
 **Screenshot:** (filename)
@@ -691,7 +693,7 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 1. From Dashboard, click **📝 Add Note** in the sidebar (and/or the bottom-right Add Note button).
 2. Navigate to Shipper → Leads List and confirm Add Note is still available.
 3. Navigate to Carrier and Lead for X pages — same.
-**Expected:** Add Note is reachable on every authenticated page. Opens **Notebooks & Notes** expander/panel.
+**Expected:** Add Note is reachable on every authenticated page. Opens **OneNote — Notebooks & Pages** dialog/panel (left rail notebooks/pages).
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
 **Screenshot:** (filename)
@@ -728,6 +730,59 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 3. Mark reminder **Done**.
 4. Confirm it leaves the open reminder tiles.
 **Expected:** Click opens note; Done clears from past/due/upcoming buckets.
+**Result:** [ ] Pass  [ ] Fail  [ ] Skip  
+**Comment:**  
+**Screenshot:** (filename)
+
+### T-124 OneNote pages — notebook / page / highlight / voice
+**Precondition:** Add Note / OneNote dialog open.
+**Steps:**
+1. Create or select a **notebook** in the left rail.
+2. Click **＋ New page**, set title + body.
+3. Use a highlight chip (🟡/🟢/🩷/🔵) and/or **B** — confirm markers appear in the body.
+4. Optional: add a **section**, assign the page to it.
+5. Record with the compact **mic** and/or click **🗣️ voice-to-text** (Skip if no Gemini key).
+6. Save page; re-open from the left pages list.
+**Expected:** Left rail shows notebooks + pages; page body persists (markdown/HTML). FAB + jump-top still present.
+**Result:** [ ] Pass  [ ] Fail  [ ] Skip  
+**Comment:**  
+**Screenshot:** (filename)
+
+---
+
+## N. Spanish / English email convert
+
+### T-130 Convert to Spanish — CRM one-off
+**Precondition:** Open a lead CRM panel (Shipper or Lead for X Leads List) with email.
+**Steps:**
+1. Enter English subject + body under **Send one-off email**.
+2. Click **Convert to Spanish**.
+3. Confirm draft updates (editable); original visible in expander.
+4. Optionally edit, then Send (dry-run OK) or discard.
+**Expected:** Natural Spanish draft via LLM failover (or rules fallback). Merge fields / MC numbers preserved when present. No crash.
+**Result:** [ ] Pass  [ ] Fail  [ ] Skip  
+**Comment:**  
+**Screenshot:** (filename)
+
+### T-131 Convert to Spanish — Pipeline preview
+**Precondition:** Shipper, Carrier, or Lead-for-X **Pipeline** page.
+**Steps:**
+1. Open **Email 1–4 preview** expander.
+2. On any step, click **Convert to Spanish**.
+3. Confirm side-by-side original + editable translation appears.
+**Expected:** Translation shows; MC/names preserved when in template. Works on all three funnels.
+**Result:** [ ] Pass  [ ] Fail  [ ] Skip  
+**Comment:**  
+**Screenshot:** (filename)
+
+### T-132 Convert to English — Inbox inbound
+**Precondition:** Inbox Bot (Shipper, Carrier, or X).
+**Steps:**
+1. Paste a short Spanish reply (e.g. “Gracias, me interesa — llámeme la próxima semana.”).
+2. Click **Convert to English**.
+3. Confirm inbound text becomes English (original in expander).
+4. Process → edit outbound draft → optional **Convert to Spanish** → Send reply.
+**Expected:** Inbound English conversion + outbound Spanish convert both work; user can edit before send.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
 **Screenshot:** (filename)

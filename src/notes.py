@@ -1,9 +1,13 @@
 """
-Global notebooks + notes (with optional reminders).
+Global notebooks + optional sections + pages/notes (OneNote-like).
 
-Local  -> data/notebooks.json + data/notes.json
-Cloud  -> Google Sheet worksheets "notebooks" and "notes"
+Hierarchy: Notebook → Section (optional) → Page
+
+Local  -> data/notebooks.json + data/note_sections.json + data/notes.json
+Cloud  -> Google Sheet worksheets "notebooks", "note_sections", "notes"
 Audio blobs (voice) stay local under data/note_audio/ (Sheet stores path/meta only).
+
+Pages store body as markdown/HTML string (highlights via <mark> / ==text==).
 """
 from __future__ import annotations
 
@@ -17,15 +21,19 @@ from typing import Any, Optional
 from .paths import DATA_DIR
 
 NOTEBOOKS_JSON = DATA_DIR / "notebooks.json"
+SECTIONS_JSON = DATA_DIR / "note_sections.json"
 NOTES_JSON = DATA_DIR / "notes.json"
 NOTE_AUDIO_DIR = DATA_DIR / "note_audio"
 
 NOTEBOOK_COLUMNS = ["id", "name", "created_at", "updated_at"]
+SECTION_COLUMNS = ["id", "notebook_id", "name", "created_at", "updated_at"]
 NOTE_COLUMNS = [
     "id",
     "notebook_id",
+    "section_id",
     "title",
     "body",
+    "color",
     "reminder_at",
     "reminder_done",
     "audio_path",
@@ -34,6 +42,14 @@ NOTE_COLUMNS = [
     "updated_at",
     "created_by",
 ]
+
+PAGE_COLORS = ("default", "yellow", "green", "pink", "blue")
+HIGHLIGHT_STYLES = {
+    "yellow": "#fff59d",
+    "green": "#c8e6c9",
+    "pink": "#f8bbd0",
+    "blue": "#bbdefb",
+}
 
 
 def _utc_now() -> str:
@@ -73,12 +89,24 @@ def _blank_notebook() -> dict[str, Any]:
     return {"id": "", "name": "", "created_at": "", "updated_at": ""}
 
 
+def _blank_section() -> dict[str, Any]:
+    return {
+        "id": "",
+        "notebook_id": "",
+        "name": "",
+        "created_at": "",
+        "updated_at": "",
+    }
+
+
 def _blank_note() -> dict[str, Any]:
     return {
         "id": "",
         "notebook_id": "",
+        "section_id": "",
         "title": "",
         "body": "",
+        "color": "default",
         "reminder_at": "",
         "reminder_done": False,
         "audio_path": "",
@@ -103,6 +131,21 @@ def _normalize_notebook(raw: dict) -> dict[str, Any]:
     return nb
 
 
+def _normalize_section(raw: dict) -> dict[str, Any]:
+    s = _blank_section()
+    for k in s:
+        if k in raw and raw[k] not in (None,):
+            s[k] = raw[k]
+    s["id"] = str(s.get("id") or "").strip()
+    s["notebook_id"] = str(s.get("notebook_id") or "").strip()
+    s["name"] = str(s.get("name") or "").strip() or "Untitled section"
+    s["created_at"] = str(s.get("created_at") or "")
+    s["updated_at"] = str(s.get("updated_at") or "")
+    if not s["id"]:
+        s["id"] = f"sec_{uuid.uuid4().hex[:10]}"
+    return s
+
+
 def _normalize_note(raw: dict) -> dict[str, Any]:
     n = _blank_note()
     for k in n:
@@ -110,8 +153,11 @@ def _normalize_note(raw: dict) -> dict[str, Any]:
             n[k] = raw[k]
     n["id"] = str(n.get("id") or "").strip()
     n["notebook_id"] = str(n.get("notebook_id") or "").strip()
+    n["section_id"] = str(n.get("section_id") or "").strip()
     n["title"] = str(n.get("title") or "").strip()
     n["body"] = str(n.get("body") or "")
+    color = str(n.get("color") or "default").strip().lower() or "default"
+    n["color"] = color if color in PAGE_COLORS else "default"
     n["reminder_at"] = str(n.get("reminder_at") or "").strip()
     n["reminder_done"] = str(n.get("reminder_done")).lower() in (
         "1",
@@ -127,6 +173,30 @@ def _normalize_note(raw: dict) -> dict[str, Any]:
     if not n["id"]:
         n["id"] = f"note_{uuid.uuid4().hex[:10]}"
     return n
+
+
+def wrap_highlight(text: str, color: str = "yellow") -> str:
+    """Wrap text in a colored <mark> span (stored in page body HTML/markdown)."""
+    hex_color = HIGHLIGHT_STYLES.get((color or "yellow").lower(), HIGHLIGHT_STYLES["yellow"])
+    inner = (text or "").strip() or "highlighted"
+    return f'<mark style="background:{hex_color}">{inner}</mark>'
+
+
+def wrap_bold(text: str) -> str:
+    inner = (text or "").strip() or "bold"
+    return f"**{inner}**"
+
+
+def wrap_color_span(text: str, color: str = "blue") -> str:
+    text_colors = {
+        "yellow": "#f9a825",
+        "green": "#2e7d32",
+        "pink": "#c2185b",
+        "blue": "#1565c0",
+    }
+    tc = text_colors.get((color or "blue").lower(), "#1565c0")
+    inner = (text or "").strip() or "colored"
+    return f'<span style="color:{tc}">{inner}</span>'
 
 
 def _load_json_list(path: Path) -> list[dict]:
@@ -229,19 +299,54 @@ def save_notebooks(notebooks: list[dict]) -> None:
     _save_json_list(NOTEBOOKS_JSON, normalized)
 
 
+def load_sections() -> list[dict]:
+    if _using_cloud():
+        try:
+            rows = _load_sheet_rows("note_sections", SECTION_COLUMNS, _normalize_section)
+            if rows:
+                return rows
+        except Exception:
+            pass
+    return [_normalize_section(x) for x in _load_json_list(SECTIONS_JSON)]
+
+
+def save_sections(sections: list[dict]) -> None:
+    normalized = [_normalize_section(s) for s in sections]
+    if _using_cloud():
+        try:
+            _save_sheet_rows(
+                "note_sections", SECTION_COLUMNS, normalized, _normalize_section
+            )
+            _save_json_list(SECTIONS_JSON, normalized)
+            return
+        except Exception:
+            pass
+    _save_json_list(SECTIONS_JSON, normalized)
+
+
 def load_notes() -> list[dict]:
     if _using_cloud():
         try:
             rows = _load_sheet_rows("notes", NOTE_COLUMNS, _normalize_note)
             if rows:
-                return rows
+                return [_migrate_note_row(r) for r in rows]
         except Exception:
             pass
-    return [_normalize_note(x) for x in _load_json_list(NOTES_JSON)]
+    return [_migrate_note_row(_normalize_note(x)) for x in _load_json_list(NOTES_JSON)]
+
+
+def _migrate_note_row(note: dict) -> dict:
+    """Ensure color / section_id exist on legacy notes (pre-OneNote schema)."""
+    n = _normalize_note(note)
+    if not n.get("color"):
+        n["color"] = "default"
+    if n.get("section_id") is None:
+        n["section_id"] = ""
+    return n
 
 
 def save_notes(notes: list[dict]) -> None:
-    normalized = [_normalize_note(n) for n in notes]
+    normalized = [_migrate_note_row(n) for n in notes]
     if _using_cloud():
         try:
             _save_sheet_rows("notes", NOTE_COLUMNS, normalized, _normalize_note)
@@ -280,6 +385,43 @@ def create_notebook(name: str) -> dict:
     return nb
 
 
+def create_section(*, notebook_id: str, name: str = "") -> dict:
+    sections = load_sections()
+    now = _utc_now()
+    sec = _normalize_section(
+        {
+            "id": f"sec_{uuid.uuid4().hex[:10]}",
+            "notebook_id": notebook_id or ensure_default_notebook()["id"],
+            "name": (name or "").strip() or "New section",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    sections.append(sec)
+    save_sections(sections)
+    return sec
+
+
+def pages_for_notebook(notebook_id: str, *, section_id: Optional[str] = None) -> list[dict]:
+    nid = (notebook_id or "").strip()
+    pages = [n for n in load_notes() if n.get("notebook_id") == nid]
+    if section_id is not None:
+        sid = (section_id or "").strip()
+        if sid == "":
+            pages = [p for p in pages if not (p.get("section_id") or "").strip()]
+        else:
+            pages = [p for p in pages if (p.get("section_id") or "") == sid]
+    pages.sort(key=lambda n: n.get("updated_at") or "", reverse=True)
+    return pages
+
+
+def sections_for_notebook(notebook_id: str) -> list[dict]:
+    nid = (notebook_id or "").strip()
+    secs = [s for s in load_sections() if s.get("notebook_id") == nid]
+    secs.sort(key=lambda s: s.get("name") or "")
+    return secs
+
+
 def create_note(
     *,
     notebook_id: str,
@@ -289,6 +431,8 @@ def create_note(
     created_by: str = "",
     audio_bytes: Optional[bytes] = None,
     audio_mime: str = "",
+    color: str = "default",
+    section_id: str = "",
 ) -> dict:
     ensure_default_notebook()
     notes = load_notes()
@@ -314,8 +458,10 @@ def create_note(
         {
             "id": note_id,
             "notebook_id": notebook_id or ensure_default_notebook()["id"],
-            "title": (title or "").strip() or "Untitled note",
+            "section_id": (section_id or "").strip(),
+            "title": (title or "").strip() or "Untitled page",
             "body": body or "",
+            "color": color or "default",
             "reminder_at": (reminder_at or "").strip(),
             "reminder_done": False,
             "audio_path": audio_path,
@@ -355,6 +501,35 @@ def get_note(note_id: str) -> Optional[dict]:
 
 def mark_reminder_done(note_id: str) -> Optional[dict]:
     return update_note(note_id, reminder_done=True)
+
+
+def attach_audio_to_note(
+    note_id: str,
+    audio_bytes: bytes,
+    *,
+    audio_mime: str = "audio/webm",
+) -> Optional[dict]:
+    """Save/replace voice blob on an existing page."""
+    if not audio_bytes:
+        return get_note(note_id)
+    note = get_note(note_id)
+    if not note:
+        return None
+    NOTE_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    mime = (audio_mime or "").strip() or "audio/webm"
+    ext = ".webm"
+    if "wav" in mime:
+        ext = ".wav"
+    elif "mpeg" in mime or "mp3" in mime:
+        ext = ".mp3"
+    elif "ogg" in mime:
+        ext = ".ogg"
+    elif "mp4" in mime or "m4a" in mime:
+        ext = ".m4a"
+    path = NOTE_AUDIO_DIR / f"{note_id}{ext}"
+    path.write_bytes(audio_bytes)
+    rel = str(path.relative_to(DATA_DIR)).replace("\\", "/")
+    return update_note(note_id, audio_path=rel, audio_mime=mime)
 
 
 def classify_reminder_bucket(
