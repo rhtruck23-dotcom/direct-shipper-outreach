@@ -333,9 +333,34 @@ def page_carrier_leads():
     labels = {
         f"{r['Company']} <{r['Email'] or r['MC']}> — {r['Stage']}": r["_key"] for r in rows
     }
-    pick = st.selectbox("Select carrier", list(labels.keys()), key="cl_pick")
+    label_list = list(labels.keys())
+    pref_key = (st.session_state.get("selected_lead_key") or "").strip()
+    pref_id = (st.session_state.get("selected_lead_id") or "").strip()
+    default_idx = 0
+    if pref_key or pref_id:
+        for i, lab in enumerate(label_list):
+            k = labels[lab]
+            lead_match = next((l for l in leads if carrier_key(l) == k), None)
+            if not lead_match:
+                continue
+            if pref_key and carrier_key(lead_match) == pref_key:
+                default_idx = i
+                break
+            if pref_id and (
+                (lead_match.get("id") or "") == pref_id
+                or carrier_key(lead_match) == pref_id
+            ):
+                default_idx = i
+                break
+    pick = st.selectbox(
+        "Select carrier",
+        label_list,
+        index=default_idx if label_list else 0,
+        key="cl_pick",
+    )
     key = labels[pick]
     lead = next(l for l in leads if carrier_key(l) == key)
+    st.session_state["selected_lead_key"] = key
 
     r1, r2 = st.columns(2)
     with r1:

@@ -427,9 +427,31 @@ def page_x_leads_list():
     labels = {
         f"{r['Company']} <{r['Email']}> — {r['Stage']}": r["_key"] for r in rows
     }
-    pick = st.selectbox("Select lead", list(labels.keys()), key="xl_pick")
+    label_list = list(labels.keys())
+    pref_key = (st.session_state.get("selected_lead_key") or "").strip()
+    pref_id = (st.session_state.get("selected_lead_id") or "").strip()
+    default_idx = 0
+    if pref_key or pref_id:
+        for i, lab in enumerate(label_list):
+            k = labels[lab]
+            lead_match = next((l for l in leads if lead_key(l) == k), None)
+            if not lead_match:
+                continue
+            if pref_key and lead_key(lead_match) == pref_key:
+                default_idx = i
+                break
+            if pref_id and (
+                (lead_match.get("id") or "") == pref_id
+                or lead_key(lead_match) == pref_id
+            ):
+                default_idx = i
+                break
+    pick = st.selectbox(
+        "Select lead", label_list, index=default_idx if label_list else 0, key="xl_pick"
+    )
     key = labels[pick]
     lead = next(l for l in leads if lead_key(l) == key)
+    st.session_state["selected_lead_key"] = key
 
     if not can_access_lead(user, lead) and not is_super_admin(user):
         st.error("No access to that lead.")

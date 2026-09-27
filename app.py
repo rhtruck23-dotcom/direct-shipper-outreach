@@ -516,7 +516,7 @@ def _email_setup_card(*, key_prefix: str, show_credential_fields: bool = True) -
         or "accounts@logixtrek.com"
     )
     email_val = st.text_input(
-        "From email",
+        "From email (smtp_user / my_email)",
         value=default_email,
         key=f"{key_prefix}_smtp_email",
         help="Gmail address that will send (e.g. accounts@logixtrek.com).",
@@ -895,114 +895,224 @@ def _style_status_column(df: pd.DataFrame):
     return df.style.map(paint, subset=["Stage"])
 
 
+def _goto_page(page: str, *, group: str | None = None) -> None:
+    st.session_state.nav_page = page
+    if group is not None:
+        st.session_state.nav_group = group
+    st.rerun()
+
+
+def _open_lead_from_task(task: dict) -> None:
+    """Navigate to the related lead list and pre-select the lead when possible."""
+    funnel = (task.get("funnel") or "shipper").strip().lower()
+    lead_id = (task.get("lead_id") or "").strip()
+    st.session_state["selected_lead_id"] = lead_id
+    st.session_state["selected_lead_key"] = lead_id
+    st.session_state["dash_open_task_id"] = task.get("id")
+    if funnel in ("carrier", "carriers"):
+        _goto_page("Carrier Leads", group="carrier")
+    elif funnel in ("x", "lead_x", "project_x", "lead for x"):
+        _goto_page("X Leads List", group="lead_x")
+    else:
+        _goto_page("Leads List", group="shipper")
+
+
+def _open_due_lead(lead: dict, *, funnel: str = "shipper") -> None:
+    key = lead_key(lead)
+    st.session_state["selected_lead_key"] = key
+    st.session_state["selected_lead_id"] = (lead.get("id") or "").strip() or key
+    if funnel == "carrier":
+        _goto_page("Carrier Leads", group="carrier")
+    elif funnel == "x":
+        _goto_page("X Leads List", group="lead_x")
+    else:
+        _goto_page("Leads List", group="shipper")
+
+
+def _email_ops_today() -> tuple[int, int]:
+    """Return (sent_today, failures_today) from outbound log."""
+    from datetime import date as _date
+
+    from src.paths import OUTBOUND_LOG
+
+    day = _date.today().isoformat()
+    sent = 0
+    fail = 0
+    if not OUTBOUND_LOG.exists():
+        return 0, 0
+    try:
+        import json as _json
+
+        with open(OUTBOUND_LOG, "r", encoding="utf-8") as f:
+            log = _json.load(f)
+    except Exception:
+        return 0, 0
+    for entry in log or []:
+        at = str(entry.get("at") or "")
+        if not at.startswith(day):
+            continue
+        sent += 1
+        if entry.get("ok") is False or str(entry.get("mode") or "").endswith("failed"):
+            fail += 1
+    return sent, fail
+
+
+def _clickable_metric_tile(
+    label: str,
+    value,
+    *,
+    key: str,
+    help_text: str = "",
+) -> bool:
+    """Compact clickable tile — returns True when clicked."""
+    clicked = st.button(
+        f"{label}: {value}",
+        key=key,
+        use_container_width=True,
+        help=help_text or None,
+    )
+    return bool(clicked)
+
+
 def page_dashboard():
+    """Ops-only live dashboard — settings live under Settings → Org Setup."""
     company = _company()
     user = _current_user()
     leads = _refresh_leads() if can(user, "leads", "read") or is_super_admin(user) else []
-    _storage_banner()
-
-    from src.involvement import involvement_report
-
-    inv = involvement_report(include_optional_paca=False)
-    st.metric(
-        "Your involvement (target ≤5%)",
-        f"{inv['involvement_pct']}%",
-        delta="under target" if inv["under_target"] else "over target",
-    )
-    st.caption(inv["summary"])
 
     active = [l for l in leads if l.get("active_sequence")]
     due = [l for l in active if next_action_for_lead(l) is not None]
-    responded = [l for l in leads if l.get("status") == "responded"]
-    converted = [l for l in leads if l.get("status") == "converted"]
     dnc = [l for l in leads if l.get("status") == "do_not_contact"]
-    contacted = [
-        l
-        for l in leads
-        if (l.get("status") or "not_started") != "not_started"
-        or int(l.get("contact_count") or 0) > 0
-    ]
 
-    st.title("Direct Shipper Outreach")
+    st.title("Dashboard")
     st.caption(
         f"{company.get('my_company')} · {company.get('my_mc')} · "
-        f"{'🟢 LIVE EMAIL' if company.get('send_live_emails') else '🟡 DRY RUN (safe)'}"
+        f"{'LIVE' if company.get('send_live_emails') else 'Dry run'} · ops view"
     )
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Shipper leads", len(leads))
-    c2.metric("Contacted", len(contacted))
-    c3.metric("Active", len(active))
-    c4.metric("Due today", len(due))
-    c5.metric("Responded", len(responded))
-    c6.metric("Converted", len(converted))
+    # ---- Compact status strip → Settings ----
+    live_on = bool(company.get("send_live_emails"))
+    pool_remaining = 0
+    pool_cap = 0
+    try:
+        from src.mailboxes import today_usage, total_remaining_capacity
 
-    # Email setup first after metrics — paste App Password, enable LIVE, send test
-    if is_super_admin(user) or can(user, "org_setup", "update"):
-        st.divider()
-        _email_setup_card(key_prefix="dash_email", show_credential_fields=True)
-        st.divider()
-        _gmail_pool_section(key_prefix="dash_pool")
+        usage = today_usage()
+        pool_remaining = total_remaining_capacity()
+        pool_cap = sum(
+            r["cap"] for r in usage if r.get("enabled") and r.get("has_password")
+        )
+    except Exception:
+        pass
 
+    s1, s2, s3 = st.columns([2, 2, 3])
+    live_label = "Live ON" if live_on else "Live OFF"
+    if s1.button(
+        f"📧 {live_label}",
+        key="dash_status_live",
+        use_container_width=True,
+        help="Email setup lives in Settings → Org Setup",
+    ):
+        _goto_page("Org Setup", group="settings")
+    if s2.button(
+        f"Pool remaining today: {pool_remaining}/{pool_cap or 0}",
+        key="dash_status_pool",
+        use_container_width=True,
+        help="Gmail pool management is in Settings → Org Setup",
+    ):
+        _goto_page("Org Setup", group="settings")
+    s3.caption("Email / LIVE / Gmail pool → **Settings → Org Setup**")
+
+    # ---- Emails today ----
+    sent_today, fail_today = _email_ops_today()
+    st.subheader("Emails")
+    e1, e2, e3 = st.columns(3)
+    with e1:
+        st.metric("Sent today", sent_today)
+    with e2:
+        st.metric("Due sequences", len(due))
+    with e3:
+        st.metric("Failures today", fail_today)
+    if fail_today:
+        st.warning(f"{fail_today} send failure(s) logged today — check outbound log / SMTP.")
+
+    # ---- Campaigns (active counts) ----
+    st.subheader("Campaigns")
+    ship_active = len(active)
+    car_active = 0
+    x_active_n = 0
     if can(user, "carrier_leads", "read") or is_super_admin(user):
         try:
             carriers = scope_leads(load_carriers(), user)
+            car_active = len([l for l in carriers if l.get("active_sequence")])
         except Exception:
             carriers = []
-        ca = [l for l in carriers if l.get("active_sequence")]
-        ch = [l for l in carriers if l.get("status") == "converted"]
-        st.subheader("Carrier onboarding (lease-on under our MC)")
-        x1, x2, x3, x4 = st.columns(4)
-        x1.metric("Carrier leads", len(carriers))
-        x2.metric("Carrier active", len(ca))
-        x3.metric("Hired under MC", len(ch))
-        x4.metric(
-            "Carrier due",
-            len([l for l in ca if next_action_for_lead(l) is not None]),
-        )
+    else:
+        carriers = []
 
+    x_due: list[dict] = []
     if can(user, "x_projects", "read") or is_super_admin(user):
         try:
-            from src.project_x.store import get_active_project, list_projects, load_leads_for_project
+            from src.project_x.store import get_active_project, load_leads_for_project
 
-            x_projects = list_projects()
-            x_active = get_active_project()
-            x_leads = load_leads_for_project(x_active["id"]) if x_active else []
+            x_proj = get_active_project()
+            x_leads = load_leads_for_project(x_proj["id"]) if x_proj else []
             x_leads = scope_leads(x_leads, user)
             xa = [l for l in x_leads if l.get("active_sequence")]
-            xc = [l for l in x_leads if l.get("status") == "converted"]
-            st.subheader("Lead for X")
-            y1, y2, y3, y4 = st.columns(4)
-            y1.metric("Projects", len(x_projects))
-            y2.metric(
-                "Active project leads",
-                len(x_leads),
-                help=x_active.get("name") if x_active else "None selected",
-            )
-            y3.metric("X active sequence", len(xa))
-            y4.metric("X converted", len(xc))
-            if not x_projects:
-                st.caption("Create your first project under **Lead for X → Project Setup**.")
+            x_active_n = len(xa)
+            x_due = [l for l in xa if next_action_for_lead(l) is not None]
         except Exception:
             pass
 
-    st.markdown(_legend_html(), unsafe_allow_html=True)
-    st.caption(f"🚫 Do Not Contact locked: {len(dnc)} — these people will never be emailed again.")
+    ca1, ca2, ca3 = st.columns(3)
+    with ca1:
+        if _clickable_metric_tile(
+            "Shipper active", ship_active, key="dash_camp_ship", help_text="Open shipper Pipeline"
+        ):
+            _goto_page("Pipeline & Outreach", group="shipper")
+    with ca2:
+        if _clickable_metric_tile(
+            "Carrier active", car_active, key="dash_camp_car", help_text="Open carrier Pipeline"
+        ):
+            _goto_page("Carrier Pipeline", group="carrier")
+    with ca3:
+        if _clickable_metric_tile(
+            "Lead for X active", x_active_n, key="dash_camp_x", help_text="Open Lead for X Pipeline"
+        ):
+            _goto_page("X Pipeline", group="lead_x")
 
-    # Agent autonomy — Run now + autopilot toggle
+    st.caption(f"Do Not Contact locked: {len(dnc)}")
+
+    # ---- Agent run status (compact) ----
     try:
         from src.autonomy import format_pass_summary, run_autonomy_pass
         from src.company import save_company
-        from src.llm import llm_priority
+        from src.paths import ALERTS_JSON
 
-        st.subheader("Agent autonomy")
-        prio = " → ".join(llm_priority(company) + ["rules"])
-        st.caption(
-            f"LLM failover: **{prio}**. Agent can update CRM fields, notes, tasks, "
-            f"schedule follow-ups, and send emails (dry-run or LIVE). "
-            f"Escalates rate/contract/legal to you. Autopilot defaults **off**."
-        )
-        ag1, ag2, ag3 = st.columns([2, 2, 3])
+        last = st.session_state.get("last_autonomy_result") or {}
+        escalate_n = int(last.get("escalated") or 0)
+        try:
+            import json as _json
+            from datetime import date as _date
+
+            if ALERTS_JSON.exists():
+                with open(ALERTS_JSON, "r", encoding="utf-8") as f:
+                    alerts = _json.load(f) or []
+                day = _date.today().isoformat()
+                escalate_n = max(
+                    escalate_n,
+                    sum(
+                        1
+                        for a in alerts
+                        if str(a.get("at") or "").startswith(day)
+                        and "escalat" in str(a.get("subject") or "").lower()
+                    ),
+                )
+        except Exception:
+            pass
+
+        st.subheader("Agent")
+        ag1, ag2, ag3 = st.columns([2, 2, 2])
         if ag1.button("Run agent now", type="primary", key="dash_run_agent"):
             with st.spinner("Agent working due leads…"):
                 result = run_autonomy_pass(company, force=True)
@@ -1010,11 +1120,10 @@ def page_dashboard():
             st.success(format_pass_summary(result))
             st.rerun()
         auto_on = ag2.toggle(
-            "Auto-pilot (due leads)",
+            "Autopilot",
             value=bool(company.get("autonomy_autopilot")),
             key="dash_autopilot",
-            help="When on, due/past-due leads are processed without clicking Run. "
-            "Still respects DNC, daily email cap, and Send LIVE emails.",
+            help="When on, due/past-due leads are processed without clicking Run.",
         )
         if auto_on != bool(company.get("autonomy_autopilot")):
             company = {**company, "autonomy_autopilot": bool(auto_on)}
@@ -1024,87 +1133,185 @@ def page_dashboard():
                 pass
             st.session_state.company = company
             st.rerun()
-        ag3.caption(
-            f"Cap {company.get('autonomy_daily_email_cap') or 50}/day"
-            + (
-                f" · target {company.get('autopilot_daily_target')}"
-                if company.get("autopilot_daily_target")
-                else ""
-            )
-            + f" · max {company.get('autonomy_max_leads') or 10}/pass · "
-            f"{'LIVE' if company.get('send_live_emails') else 'dry-run'} mail"
-        )
-        if company.get("autonomy_autopilot"):
-            # Soft auto-run once per session load when toggle is on
-            if not st.session_state.get("_autopilot_ran_session"):
-                result = run_autonomy_pass(company, force=False)
-                st.session_state["_autopilot_ran_session"] = True
-                if result.get("ran") and result.get("processed"):
-                    st.info(format_pass_summary(result))
-        last = st.session_state.get("last_autonomy_result")
+        ag3.metric("Escalations (today)", escalate_n)
+        if company.get("autonomy_autopilot") and not st.session_state.get("_autopilot_ran_session"):
+            result = run_autonomy_pass(company, force=False)
+            st.session_state["_autopilot_ran_session"] = True
+            if result.get("ran") and result.get("processed"):
+                st.info(format_pass_summary(result))
         if last and last.get("summaries"):
             with st.expander("Last agent pass", expanded=False):
                 st.code(format_pass_summary(last))
     except Exception:
         pass
 
-    # CRM task notifications
+    # ---- Tasks & events (clickable tiles + rows) ----
     try:
-        from src.crm_picklists import sales_stage_label
         from src.lead_crm import group_open_tasks, mark_task_done
 
         buckets = group_open_tasks()
-        st.subheader("CRM tasks")
+        st.subheader("Tasks & events")
         t1, t2, t3 = st.columns(3)
-        t1.metric("Past due", len(buckets["past_due"]))
-        t2.metric("Due today", len(buckets["due_today"]))
-        t3.metric("Upcoming (7d)", len(buckets["upcoming"]))
+        with t1:
+            if _clickable_metric_tile(
+                "Past due",
+                len(buckets["past_due"]),
+                key="dash_tile_pd",
+                help_text="Scroll to past-due list",
+            ):
+                st.session_state["dash_task_focus"] = "past_due"
+        with t2:
+            if _clickable_metric_tile(
+                "Due today",
+                len(buckets["due_today"]),
+                key="dash_tile_td",
+                help_text="Scroll to due-today list",
+            ):
+                st.session_state["dash_task_focus"] = "due_today"
+        with t3:
+            if _clickable_metric_tile(
+                "Upcoming",
+                len(buckets["upcoming"]),
+                key="dash_tile_up",
+                help_text="Scroll to upcoming list",
+            ):
+                st.session_state["dash_task_focus"] = "upcoming"
 
-        def _task_table(title: str, items: list, *, mark_key: str):
-            if not items:
+        focus = st.session_state.get("dash_task_focus") or ""
+
+        def _task_rows(title: str, items: list, *, mark_key: str, expanded: bool):
+            if not items and not expanded:
                 return
-            st.markdown(f"**{title}**")
-            for t in items[:15]:
-                cols = st.columns([4, 2, 1, 1])
-                cols[0].write(
-                    f"**{t.get('title') or 'Task'}** · {t.get('company_name') or t.get('lead_id') or ''}"
-                )
-                cols[1].caption(f"{t.get('funnel') or ''} · due {(t.get('due_at') or '')[:16]}")
-                cols[2].caption(t.get("status") or "open")
-                if cols[3].button("Done", key=f"{mark_key}_{t.get('id')}"):
-                    mark_task_done(t["id"])
-                    st.rerun()
+            with st.expander(f"{title} ({len(items)})", expanded=expanded or bool(items[:1])):
+                if not items:
+                    st.caption("None.")
+                    return
+                for t in items[:20]:
+                    cols = st.columns([4, 2, 1, 1])
+                    label = (
+                        f"{t.get('title') or 'Task'} · "
+                        f"{t.get('company_name') or t.get('lead_id') or ''}"
+                    )
+                    if cols[0].button(label, key=f"{mark_key}_open_{t.get('id')}"):
+                        _open_lead_from_task(t)
+                    cols[1].caption(f"{t.get('funnel') or ''} · {(t.get('due_at') or '')[:16]}")
+                    cols[2].caption(t.get("status") or "open")
+                    if cols[3].button("Done", key=f"{mark_key}_done_{t.get('id')}"):
+                        mark_task_done(t["id"])
+                        st.rerun()
 
-        _task_table("Past due", buckets["past_due"], mark_key="dash_pd")
-        _task_table("Due today", buckets["due_today"], mark_key="dash_td")
-        _task_table("Upcoming", buckets["upcoming"], mark_key="dash_up")
-
-        # Funnel counts by sales_stage when present
-        stage_counts: dict[str, int] = {}
-        for l in leads:
-            ss = l.get("sales_stage") or "new"
-            stage_counts[ss] = stage_counts.get(ss, 0) + 1
-        if any(v for v in stage_counts.values()):
-            with st.expander("Shipper funnel (sales stage)", expanded=False):
-                for ss, n in sorted(stage_counts.items(), key=lambda x: -x[1]):
-                    st.write(f"{sales_stage_label(ss)}: **{n}**")
+        _task_rows(
+            "Past due",
+            buckets["past_due"],
+            mark_key="dash_pd",
+            expanded=focus == "past_due",
+        )
+        _task_rows(
+            "Due today",
+            buckets["due_today"],
+            mark_key="dash_td",
+            expanded=focus == "due_today" or focus == "",
+        )
+        _task_rows(
+            "Upcoming",
+            buckets["upcoming"],
+            mark_key="dash_up",
+            expanded=focus == "upcoming",
+        )
     except Exception:
         pass
 
-    st.subheader("What to do next")
+    # ---- Due sequence leads (clickable) ----
     if due:
-        st.success(f"{len(due)} shipper lead(s) due — open **Pipeline** and click Start.")
-    elif can(user, "x_pipeline", "read"):
-        st.info(
-            "Use **Lead for X → Project Setup** for any buyer/seller campaign, "
-            "or **Find Carriers** / shipper **Find Leads**."
+        with st.expander(f"Shipper sequences due ({len(due)})", expanded=False):
+            for lead in due[:15]:
+                label = (
+                    f"{lead.get('company_name') or lead_key(lead)} · "
+                    f"step {int(lead.get('last_step_sent') or 0) + 1}"
+                )
+                if st.button(label, key=f"dash_due_ship_{lead_key(lead)}"):
+                    _open_due_lead(lead, funnel="shipper")
+
+    if carriers:
+        car_due = [l for l in carriers if l.get("active_sequence") and next_action_for_lead(l)]
+        if car_due:
+            with st.expander(f"Carrier sequences due ({len(car_due)})", expanded=False):
+                for lead in car_due[:15]:
+                    label = f"{lead.get('company_name') or lead_key(lead)}"
+                    if st.button(label, key=f"dash_due_car_{lead_key(lead)}"):
+                        _open_due_lead(lead, funnel="carrier")
+
+    if x_due:
+        with st.expander(f"Lead for X sequences due ({len(x_due)})", expanded=False):
+            for lead in x_due[:15]:
+                label = f"{lead.get('company_name') or lead_key(lead)}"
+                if st.button(label, key=f"dash_due_x_{lead_key(lead)}"):
+                    _open_due_lead(lead, funnel="x")
+
+    # ---- Note reminders ----
+    try:
+        from src.notes import group_open_reminders, mark_reminder_done
+        from src.notes_ui import open_note_panel
+
+        rem = group_open_reminders()
+        st.subheader("Note reminders")
+        r1, r2, r3 = st.columns(3)
+        with r1:
+            if _clickable_metric_tile(
+                "Past due", len(rem["past_due"]), key="dash_note_pd"
+            ):
+                st.session_state["dash_note_focus"] = "past_due"
+        with r2:
+            if _clickable_metric_tile(
+                "Due today", len(rem["due_today"]), key="dash_note_td"
+            ):
+                st.session_state["dash_note_focus"] = "due_today"
+        with r3:
+            if _clickable_metric_tile(
+                "Upcoming", len(rem["upcoming"]), key="dash_note_up"
+            ):
+                st.session_state["dash_note_focus"] = "upcoming"
+
+        nfocus = st.session_state.get("dash_note_focus") or "due_today"
+
+        def _note_rows(title: str, items: list, *, mark_key: str, expanded: bool):
+            if not items and not expanded:
+                return
+            with st.expander(f"{title} ({len(items)})", expanded=expanded):
+                if not items:
+                    st.caption("None.")
+                    return
+                for n in items[:20]:
+                    cols = st.columns([4, 2, 1])
+                    label = f"{n.get('title') or 'Note'} · {(n.get('reminder_at') or '')[:16]}"
+                    if cols[0].button(label, key=f"{mark_key}_open_{n.get('id')}"):
+                        open_note_panel(n.get("id"))
+                        st.rerun()
+                    cols[1].caption((n.get("body") or "")[:80])
+                    if cols[2].button("Done", key=f"{mark_key}_done_{n.get('id')}"):
+                        mark_reminder_done(n["id"])
+                        st.rerun()
+
+        _note_rows(
+            "Notes past due",
+            rem["past_due"],
+            mark_key="dash_npd",
+            expanded=nfocus == "past_due",
         )
-    elif can(user, "carrier_pipeline", "read"):
-        st.info("Check **Find Carriers** / **Carrier Pipeline**, or shipper **Find Leads**.")
-    elif not leads:
-        st.info("Open **Find Leads**, search by state/zip, add emails, then activate.")
-    else:
-        st.info("Check **Leads List** for color-coded status, or find more leads.")
+        _note_rows(
+            "Notes due today",
+            rem["due_today"],
+            mark_key="dash_ntd",
+            expanded=nfocus == "due_today",
+        )
+        _note_rows(
+            "Notes upcoming",
+            rem["upcoming"],
+            mark_key="dash_nup",
+            expanded=nfocus == "upcoming",
+        )
+    except Exception:
+        pass
 
 
 def page_leads_list():
@@ -1299,9 +1506,31 @@ def page_leads_list():
     labels = {
         f"{r['Company']} <{r['Email']}> — {r['Stage']}": r["_key"] for r in rows
     }
-    pick = st.selectbox("Select lead", list(labels.keys()))
+    label_list = list(labels.keys())
+    # Honor Dashboard / tile navigation (selected_lead_key or selected_lead_id)
+    pref_key = (st.session_state.get("selected_lead_key") or "").strip()
+    pref_id = (st.session_state.get("selected_lead_id") or "").strip()
+    default_idx = 0
+    if pref_key or pref_id:
+        for i, lab in enumerate(label_list):
+            k = labels[lab]
+            lead_match = next((l for l in leads if lead_key(l) == k), None)
+            if not lead_match:
+                continue
+            if pref_key and lead_key(lead_match) == pref_key:
+                default_idx = i
+                break
+            if pref_id and (
+                (lead_match.get("id") or "") == pref_id
+                or lead_key(lead_match) == pref_id
+                or (lead_match.get("email") or "").lower() == pref_id.lower()
+            ):
+                default_idx = i
+                break
+    pick = st.selectbox("Select lead", label_list, index=default_idx)
     key = labels[pick]
     lead = next(l for l in leads if lead_key(l) == key)
+    st.session_state["selected_lead_key"] = key
 
     r1, r2 = st.columns(2)
     with r1:
@@ -1609,6 +1838,27 @@ def page_org_setup():
     if not can(user, "org_setup", "read"):
         st.error("Only Super Admin can open Org Setup.")
         return
+
+    # Involvement target (moved off Dashboard)
+    try:
+        from src.involvement import involvement_report
+
+        inv = involvement_report(include_optional_paca=False)
+        with st.expander("Your involvement target (≤5%)", expanded=False):
+            st.metric(
+                "Your involvement (target ≤5%)",
+                f"{inv['involvement_pct']}%",
+                delta="under target" if inv["under_target"] else "over target",
+            )
+            st.caption(inv["summary"])
+            st.markdown("**Human steps**")
+            for step in inv.get("human_steps") or []:
+                st.write(f"- {step.get('label')} ({step.get('units')} units)")
+            st.markdown("**App / agent steps**")
+            for step in inv.get("app_steps") or []:
+                st.write(f"- {step.get('label')} ({step.get('units')} units)")
+    except Exception:
+        pass
 
     tab_co, tab_team, tab_mail = st.tabs(
         ["Company & SMTP", "Team & Access (RBAC)", "Email templates (Shipper + Carrier)"]
@@ -2921,7 +3171,11 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.26e · multi-gmail pool")
+        st.caption("v2026.09.26f · live dashboard + notes")
+
+        from src.notes_ui import render_sidebar_add_note_button
+
+        render_sidebar_add_note_button()
 
         # Top-level: Dashboard first
         if "Dashboard" in pages_available:
@@ -3020,6 +3274,11 @@ def main():
         "Help": page_help,
     }
     pages[page]()
+
+    # Global floating Add Note (every authenticated page)
+    from src.notes_ui import render_floating_add_note
+
+    render_floating_add_note(company=_company(), user=user)
 
 
 if __name__ == "__main__":
