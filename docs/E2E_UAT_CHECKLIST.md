@@ -5,9 +5,43 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 | Field | Fill in |
 |--------|---------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Version to confirm** | **v2026.09.26h** — or check the caption under **LogixTrek Outreach** in the left sidebar |
+| **Version to confirm** | **v2026.09.26j** — or check the caption under **LogixTrek Outreach** in the left sidebar |
 | **Tester name** | _______________________________ |
 | **Date** | _______________ |
+
+---
+
+## Automation status (v2026.09.26j)
+
+Many cases below are **covered by automated pytest** (mocked SMTP / Places / LLM / IMAP). Mark them **Skip** for human UAT unless you want a live click-through. Keep the **Human-only** list short.
+
+### Automated in CI / `pytest` (do not need live click for regression)
+| Area | Covered by tests |
+|------|------------------|
+| Bot intents (opt-out, escalate, positive, referral, unclear, ooo, thanks, timing, covered, info) | `test_core`, `test_purpose_95`, `test_coverage_boost` |
+| Agent tools + escalate→notify + high-priority task | `test_agent_autonomy`, `test_purpose_95` |
+| Autonomy pass / DNC skip / rules fallback | `test_agent_autonomy` |
+| Shared capacity + week-plan estimate | `test_purpose_95` |
+| Campaign shared-cap soft-stop (autopilot+LIVE) | `test_purpose_95` |
+| Multi-Gmail pool pick / caps / dry-run | `test_mailboxes` |
+| IMAP poll (mocked, flag default OFF) | `test_purpose_95` |
+| Translate ES/EN helpers | `test_translate` |
+| Notes / floating chrome helpers | `test_notes`, `test_floating_chrome` |
+| Lead-for-X store/campaign/templates | `test_project_x` |
+| LLM priority failover | `test_agent_autonomy` |
+| CRM picklists / stages / schedule | various `test_*` |
+
+### Human-only (short list — secrets / live mail / UI click)
+1. **T-002** Sign-in with real Super Admin PIN
+2. **T-082 / T-090 / T-091** Confirm 2–3 real Gmail App Passwords in pool + live test send to yourself
+3. **T-027** Flip Autopilot ON for a production week (keep LIVE intentional)
+4. **T-031** Live Google Places / Gemini Find & Vet (needs API keys)
+5. **T-071** Live LLM template generate for Lead-for-X (needs key)
+6. **T-122** Voice note transcription (needs Gemini key + mic)
+7. **T-083** Cloud Sheet connection if deploying Streamlit Cloud
+8. Optional: enable `imap_poll_enabled` only after App Passwords verified, then smoke-poll once
+
+Everything else in this checklist is optional UI confirmation; failures should be rare if pytest is green.
 
 ---
 
@@ -55,7 +89,7 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 **Steps:**
 1. Look under **LogixTrek Outreach** in the left sidebar.
 2. Read the small version / caption line.
-**Expected:** Caption is visible. Note the exact text (should be **v2026.09.26h** or the current build label). Write what you see in Comment.
+**Expected:** Caption is visible. Note the exact text (should be **v2026.09.26j** or the current build label). Write what you see in Comment.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:** (write exact caption here)  
 **Screenshot:** (filename)
@@ -117,13 +151,15 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 
 ## C. Dashboard (live / ops only)
 
-### T-020 Live ops metrics (emails + campaigns)
+### T-020 Live ops metrics (emails + campaigns) · *partial auto*
 **Precondition:** Signed in.
 **Steps:**
 1. Open **Dashboard**.
-2. Confirm you see **Emails** (Sent today / Due sequences / Failures today).
-3. Confirm **Campaigns** tiles: Shipper active / Carrier active / Lead for X active.
-**Expected:** Ops numbers show (even if zero). No Email Setup form, no Gmail pool management form, and no “Your involvement target” panel on Dashboard.
+2. Confirm **Today capacity** (Capacity / Sent / Remaining) and resume messaging if exhausted.
+3. Confirm **Emails** (Sent today / Due sequences / Failures today).
+4. Confirm **Campaigns** tiles: Shipper active / Carrier active / Lead for X active.
+5. Optional: click **Prepare 4000-lead week plan** and confirm an estimate appears.
+**Expected:** Ops numbers show (even if zero). Capacity strip clear. No Email Setup form on Dashboard.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
 **Screenshot:** (filename)
@@ -375,26 +411,27 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 **Comment:**  
 **Screenshot:** (filename)
 
-### T-053 Inbox Bot — safe reply
+### T-053 Inbox Bot — safe reply · *logic auto*
 **Precondition:** A shipper lead with email.
 **Steps:**
 1. Open **Inbox Bot**.
-2. Select the lead.
-3. Paste a friendly reply (e.g. “Thanks, interested — call me next week.”).
-4. Click **Process with Logistics Bot**.
-5. Confirm an **Outbound reply draft** appears (edit + **Convert to Spanish** available).
-6. Click **Send reply** (dry-run OK).
-**Expected:** Intent shown. Safe reply drafted for edit/translate, then sent/logged per settings. Sequence may stop on positive intent. No crash.
+2. Confirm **Paste from Gmail** expander + Open Gmail / mailto helpers.
+3. Select the lead.
+4. Paste a friendly reply (e.g. “Thanks, interested — call me next week.”).
+5. Click **Process with Logistics Bot**.
+6. Confirm an **Outbound reply draft** appears (edit + **Convert to Spanish** available).
+7. Click **Send reply** (dry-run OK).
+**Expected:** Intent shown (positive). Safe reply drafted — **no owner escalate** for routine positive. Sequence may stop. No crash.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
 **Screenshot:** (filename)
 
-### T-054 Inbox Bot — escalate (rate/contract)
+### T-054 Inbox Bot — escalate (rate/contract) · *logic auto*
 **Precondition:** Same as T-053.
 **Steps:**
 1. Paste a reply that asks for rates / contract / load details.
 2. Process with bot.
-**Expected:** Escalates to you / owner alert — bot does not invent rates. Warning/info is clear.
+**Expected:** Escalates — owner notified **and** high-priority Dashboard task created. Bot does not invent rates.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
 **Screenshot:** (filename)
@@ -693,7 +730,7 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 1. From Dashboard, click **📝 Add Note** in the sidebar (and/or the bottom-right Add Note button).
 2. Navigate to Shipper → Leads List and confirm Add Note is still available.
 3. Navigate to Carrier and Lead for X pages — same.
-**Expected:** Add Note is reachable on every authenticated page. Opens **OneNote — Notebooks & Pages** dialog/panel (left rail notebooks/pages).
+**Expected:** Add Note is reachable on every authenticated page. Floating **📝** opens the client OneNote panel instantly (no full-app wait). Left rail: notebooks → sections → pages.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
 **Screenshot:** (filename)
@@ -705,7 +742,7 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 2. Add a note with title + body.
 3. Check **Set reminder**, pick today (or tomorrow), Save note.
 4. Open Dashboard → **Note reminders** and confirm it appears in Due today / Upcoming.
-**Expected:** Note persists (local `data/notes.json` / notebooks; cloud sheet tabs when configured). Reminder shows on Dashboard.
+**Expected:** Note persists (`data/onenote_*.json`; cloud sheet tabs when configured). Reminder shows on Dashboard.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
 **Screenshot:** (filename)
@@ -734,19 +771,16 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 **Comment:**  
 **Screenshot:** (filename)
 
-### T-124 OneNote pages — notebook / page / highlight / voice
-**Precondition:** Add Note / OneNote dialog open.
+### T-124 OneNote pages — notebook / section / page / highlight / voice
+**Precondition:** Floating 📝 OneNote panel open (instant client panel).
 **Steps:**
-1. Create or select a **notebook** in the left rail.
-2. Click **＋ New page**, set title + body.
-3. Use a highlight chip (🟡/🟢/🩷/🔵) and/or **B** — confirm markers appear in the body.
-4. Optional: add a **section**, assign the page to it.
-5. Record with the compact **mic** and/or click **🗣️ voice-to-text** (Skip if no Gemini key).
-6. Save page; re-open from the left pages list.
-**Expected:** Left rail shows notebooks + pages; page body persists (markdown/HTML). FAB + jump-top still present.
-**Result:** [ ] Pass  [ ] Fail  [ ] Skip  
-**Comment:**  
-**Screenshot:** (filename)
+1. Click **+** on Notebooks to create a notebook (or expand existing).
+2. Click **+** on a notebook row to add a **section**; click **+** on a section to add a **page**.
+3. Set title + body; use Bold / Italic / highlight / text color / bullets.
+4. Optional: mic record or attach audio; 🗣️ marks transcribe-on-Save (Gemini).
+5. Set reminder datetime; click **Save** (or Save & close).
+6. Re-open and confirm left rail still shows notebook → section → page.
+**Expected:** Left rail hierarchy works without waiting for Streamlit reruns while editing. Save persists to `data/onenote_*.json`. FAB + jump-top still present.
 
 ---
 

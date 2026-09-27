@@ -994,9 +994,12 @@ def page_dashboard():
     live_on = bool(company.get("send_live_emails"))
     pool_remaining = 0
     pool_cap = 0
+    cap_snap: dict = {}
     try:
+        from src.capacity import today_capacity
         from src.mailboxes import today_usage, total_remaining_capacity
 
+        cap_snap = today_capacity(company)
         usage = today_usage()
         pool_remaining = total_remaining_capacity()
         pool_cap = sum(
@@ -1022,6 +1025,56 @@ def page_dashboard():
     ):
         _goto_page("Org Setup", group="settings")
     s3.caption("Email / LIVE / Gmail pool → **Settings → Org Setup**")
+
+    # ---- Today capacity (shared soft cap + pool) ----
+    st.subheader("Today capacity")
+    cap_val = int(cap_snap.get("capacity") or 0)
+    sent_cap = int(cap_snap.get("sent") or 0)
+    rem_cap = int(cap_snap.get("remaining") or 0)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Capacity today", cap_val)
+    c2.metric("Sent today", sent_cap)
+    c3.metric("Remaining", rem_cap)
+    share = bool(cap_snap.get("share_caps"))
+    c4.metric(
+        "Shared caps",
+        "ON" if share else "off",
+        help="When Autopilot + LIVE are on, campaign due-emails and the agent share this budget.",
+    )
+    if cap_snap.get("exhausted"):
+        st.warning(
+            cap_snap.get("resumes_msg")
+            or "Daily capacity exhausted — due leads stay queued and resume next day."
+        )
+    elif share:
+        st.caption(
+            "Autopilot + LIVE: campaign Start and agent sends share mailbox pool + soft cap."
+        )
+    else:
+        st.caption(
+            "Pool remaining is live Gmail App Password capacity. Soft cap is the agent/campaign budget."
+        )
+
+    # One-click 4000-lead week plan estimate
+    wp1, wp2 = st.columns([2, 3])
+    if wp1.button("Prepare 4000-lead week plan", key="dash_week_plan"):
+        from src.capacity import estimate_week_plan
+
+        plan = estimate_week_plan(lead_count=4000, company=company)
+        st.session_state["dash_week_plan"] = plan
+    plan = st.session_state.get("dash_week_plan")
+    if plan:
+        wp2.info(plan.get("message") or "")
+        with st.expander("Week plan details", expanded=False):
+            st.json(
+                {
+                    "daily_throughput": plan.get("daily_throughput"),
+                    "throughput_source": plan.get("throughput_source"),
+                    "days_needed": plan.get("days_needed"),
+                    "weeks_approx": plan.get("weeks_approx"),
+                    "est_finish_date": plan.get("est_finish_date"),
+                }
+            )
 
     # ---- Emails today ----
     sent_today, fail_today = _email_ops_today()
@@ -2025,7 +2078,14 @@ def page_org_setup():
             st.caption(
                 "Outcome learning (not RL): convert/DNC/reply outcomes feed future email hints. "
                 "RAG v1 injects project scope + notes + recent conversation (no vector DB yet). "
-                "Gmail pool: autopilot rotates silently and stops when all mailboxes hit their cap."
+                "Gmail pool: autopilot rotates silently and stops when all mailboxes hit their cap. "
+                "When Autopilot + LIVE are both ON, campaign due-emails and the agent share the same daily budget."
+            )
+            imap_poll_enabled = st.toggle(
+                "IMAP poll (read-only INBOX)",
+                value=bool(company.get("imap_poll_enabled")),
+                help="OFF by default. When ON, Inbox can poll recent mail using pool App Passwords "
+                "(read-only). Prefer Paste from Gmail until App Passwords are confirmed.",
             )
             cse_key = st.text_input(
                 "Google Custom Search API key",
@@ -2098,6 +2158,7 @@ def page_org_setup():
                     "autonomy_max_leads": int(autonomy_max_leads),
                     "autonomy_daily_email_cap": int(autonomy_daily_email_cap),
                     "autopilot_daily_target": int(autopilot_daily_target),
+                    "imap_poll_enabled": bool(imap_poll_enabled),
                     "google_cse_api_key": cse_key,
                     "google_cse_id": cse_id,
                     "bot_auto_reply": bot_auto,
@@ -2888,7 +2949,10 @@ def page_inbox():
     if not can(user, "inbox", "read"):
         st.error("No access to Inbox Bot.")
         return
-    st.caption("Paste a reply. Bot handles safe replies; escalates rates/contracts/loads to you.")
+    st.caption(
+        "Paste a reply from Gmail (or optional IMAP poll). "
+        "Bot auto-handles routine replies; escalates rates/contracts/loads to you."
+    )
     if not is_super_admin(user):
         st.info("You only process replies for leads assigned to you.")
     company = _company()
@@ -2898,13 +2962,56 @@ def page_inbox():
         st.warning("Add leads first.")
         return
 
+    # ---- Paste from Gmail / mailto helper (no IMAP required) ----
+    from src.imap_inbox import gmail_web_inbox_url, imap_poll_enabled, mailto_compose_link
+
+    with st.expander("Paste from Gmail (recommended when IMAP is off)", expanded=True):
+        st.markdown(
+            "1. Open Gmail → copy the shipper's reply text.\n"
+            "2. Select the matching lead below.\n"
+            "3. Paste into **Paste their reply** → **Process with Logistics Bot**.\n"
+            "4. Optional: use **Open in Gmail** / **mailto** to reply personally after an escalation."
+        )
+        g1, g2 = st.columns(2)
+        gmail_url = gmail_web_inbox_url(company.get("my_email") or "")
+        g1.link_button("Open Gmail inbox", gmail_url, use_container_width=True)
+        # mailto for selected lead appears after selectbox
+
+    if imap_poll_enabled(company):
+        st.info("IMAP poll is ON (read-only). Use **Poll recent inbox** below or keep pasting.")
+        if st.button("Poll recent inbox (read-only)", key="ship_imap_poll"):
+            from src.imap_inbox import poll_recent_inbox
+
+            with st.spinner("Polling IMAP…"):
+                pr = poll_recent_inbox(company)
+            if pr.errors:
+                for e in pr.errors:
+                    st.warning(e)
+            if pr.messages:
+                st.success(f"Fetched {len(pr.messages)} message(s) from {pr.mailboxes_polled} mailbox(es).")
+                for m in pr.messages[:8]:
+                    with st.expander(f"{m.from_addr} — {m.subject or '(no subject)'}"):
+                        st.code(m.body[:2000] or "(empty)")
+            else:
+                st.caption("No recent messages (or poll disabled / empty).")
+    else:
+        st.caption(
+            "IMAP poll is **off** (default). Paste from Gmail above. "
+            "Enable `imap_poll_enabled` in Org Setup only after App Passwords are confirmed."
+        )
+
     labels = {
         f"{l.get('company_name')} <{l.get('email')}> [{stage_label(l.get('status'))}]": l
         for l in with_email
     }
     choice = st.selectbox("Which lead replied?", list(labels.keys()))
     lead = labels[choice]
-    inbound = st.text_area("Paste their reply", height=160, key="ship_inbox_in")
+    ml = mailto_compose_link(
+        lead.get("email") or "",
+        subject=f"Re: {company.get('my_company') or 'LogixTrek'} — follow-up",
+    )
+    st.markdown(f"[mailto: reply to this lead]({ml})")
+    inbound = st.text_area("Paste their reply (from Gmail)", height=160, key="ship_inbox_in")
     from src.translate import render_email_lang_toolbar, render_inbound_translate
 
     render_inbound_translate(
@@ -2934,14 +3041,19 @@ def page_inbox():
             }
         )
 
-        if decision.intent == "escalate":
+        if decision.intent == "escalate" or (
+            decision.escalate_to_owner and decision.intent == "escalate"
+        ):
             tool_escalate_to_owner(
                 lead,
                 company,
                 reason=decision.owner_alert or "Rate/contract/load language in reply",
                 funnel="shipper",
             )
-            st.warning("Escalated — you close rates / loads yourself.")
+            st.warning(
+                "Escalated — owner notified + high-priority Dashboard task created. "
+                "You close rates / loads yourself."
+            )
         elif decision.reply_body and not is_dnc(lead):
             # Draft for edit + Spanish convert before optional send
             st.session_state["ship_inbox_draft_subj"] = decision.reply_subject or ""
@@ -2954,19 +3066,21 @@ def page_inbox():
             st.info("Reply draft ready below — convert language, edit, then Send.")
         elif is_dnc(lead):
             st.warning("Do Not Contact — bot will not email this lead.")
+        elif decision.intent == "ooo":
+            tool_append_note(lead, "[bot] OOO / auto-reply — sequence kept, no outbound.", author="agent")
+            st.info("Out-of-office detected — no reply sent; sequence kept for later.")
 
         if decision.escalate_to_owner and decision.owner_alert and decision.intent != "escalate":
-            # positive/referral/unclear already notify; escalate handled above
-            notify_owner(
+            tool_escalate_to_owner(
+                lead,
                 company,
-                f"{decision.intent.upper()}: {lead.get('company_name')}",
-                decision.owner_alert,
+                reason=decision.owner_alert,
+                funnel="shipper",
             )
-            tool_append_note(lead, f"[bot] {decision.intent}: owner alerted", author="agent")
-            st.info("Owner alert logged.")
+            st.info("Owner alert + high-priority task logged.")
             st.code(decision.owner_alert)
         elif decision.escalate_to_owner and decision.intent == "escalate":
-            st.info("Owner alert logged.")
+            st.info("Owner alert + high-priority task logged.")
             st.code(decision.owner_alert)
 
         rem = lead.get("remarks") or ""
@@ -3241,7 +3355,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.26h · Spanish + OneNote")
+        st.caption("v2026.09.26j · OneNote clone")
 
         from src.notes_ui import render_sidebar_add_note_button
 

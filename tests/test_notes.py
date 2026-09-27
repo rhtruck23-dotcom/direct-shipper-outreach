@@ -1,6 +1,7 @@
-"""Unit tests for notebooks / notes / reminder due buckets."""
+"""Unit tests for notebooks / sections / pages / reminder due buckets."""
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 
 import src.notes as notes
@@ -10,16 +11,26 @@ def _iso(d: date) -> str:
     return d.isoformat() + "T09:00:00"
 
 
-def test_create_notebook_and_note(tmp_path, monkeypatch):
+def _patch_notes_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(notes, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(notes, "NOTEBOOKS_JSON", tmp_path / "notebooks.json")
-    monkeypatch.setattr(notes, "NOTES_JSON", tmp_path / "notes.json")
+    monkeypatch.setattr(notes, "NOTEBOOKS_JSON", tmp_path / "onenote_notebooks.json")
+    monkeypatch.setattr(notes, "SECTIONS_JSON", tmp_path / "onenote_sections.json")
+    monkeypatch.setattr(notes, "NOTES_JSON", tmp_path / "onenote_pages.json")
+    monkeypatch.setattr(notes, "_LEGACY_NOTEBOOKS", tmp_path / "notebooks.json")
+    monkeypatch.setattr(notes, "_LEGACY_SECTIONS", tmp_path / "note_sections.json")
+    monkeypatch.setattr(notes, "_LEGACY_NOTES", tmp_path / "notes.json")
     monkeypatch.setattr(notes, "NOTE_AUDIO_DIR", tmp_path / "note_audio")
     monkeypatch.setattr(notes, "_using_cloud", lambda: False)
+
+
+def test_create_notebook_and_note(tmp_path, monkeypatch):
+    _patch_notes_paths(monkeypatch, tmp_path)
 
     nb = notes.create_notebook("Ops")
     assert nb["name"] == "Ops"
     assert nb["id"].startswith("nb_")
+    secs = notes.sections_for_notebook(nb["id"])
+    assert any(s["name"] == "General" for s in secs)
 
     note = notes.create_note(
         notebook_id=nb["id"],
@@ -31,17 +42,112 @@ def test_create_notebook_and_note(tmp_path, monkeypatch):
     assert note["id"].startswith("note_")
     assert note["title"] == "Call back"
     assert note["reminder_done"] is False
+    assert note["section_id"]
     loaded = notes.get_note(note["id"])
     assert loaded is not None
     assert loaded["body"] == "Discuss rates"
 
 
+def test_hierarchy_notebook_section_page(tmp_path, monkeypatch):
+    _patch_notes_paths(monkeypatch, tmp_path)
+
+    nb = notes.create_notebook("Sales")
+    sec = notes.create_section(notebook_id=nb["id"], name="Inbound")
+    page = notes.create_note(
+        notebook_id=nb["id"],
+        section_id=sec["id"],
+        title="Acme follow-up",
+        body="<b>Hi</b>",
+    )
+    assert page["notebook_id"] == nb["id"]
+    assert page["section_id"] == sec["id"]
+    tree = notes.export_tree_for_client()
+    assert any(n["id"] == nb["id"] for n in tree["notebooks"])
+    assert any(s["id"] == sec["id"] for s in tree["sections"])
+    assert any(p["id"] == page["id"] and p["body_html"] == "<b>Hi</b>" for p in tree["pages"])
+
+
+def test_migrate_flat_notes_to_quick_notes_general(tmp_path, monkeypatch):
+    _patch_notes_paths(monkeypatch, tmp_path)
+
+    # Legacy flat files: one notebook "General", notes with no section
+    legacy_nb = {
+        "id": "nb_old",
+        "name": "General",
+        "created_at": "2026-09-01T00:00:00",
+        "updated_at": "2026-09-01T00:00:00",
+    }
+    legacy_note = {
+        "id": "note_flat1",
+        "notebook_id": "nb_old",
+        "title": "Flat page",
+        "body": "hello",
+        "reminder_at": "",
+        "reminder_done": False,
+        "audio_path": "",
+        "audio_mime": "",
+        "created_at": "2026-09-01T00:00:00",
+        "updated_at": "2026-09-01T00:00:00",
+        "created_by": "",
+    }
+    (tmp_path / "notebooks.json").write_text(json.dumps([legacy_nb]), encoding="utf-8")
+    (tmp_path / "notes.json").write_text(json.dumps([legacy_note]), encoding="utf-8")
+
+    state = notes.migrate_flat_notes_to_hierarchy()
+    assert state["changed"] is True
+    notebooks = state["notebooks"]
+    assert any(n["name"] == "Quick Notes" for n in notebooks)
+    sections = state["sections"]
+    assert any(s["name"] == "General" for s in sections)
+    pages = state["pages"]
+    assert len(pages) == 1
+    assert pages[0]["section_id"]
+    assert pages[0]["title"] == "Flat page"
+
+    # Idempotent
+    state2 = notes.migrate_flat_notes_to_hierarchy()
+    assert state2["changed"] is False
+
+
+def test_apply_onenote_snapshot(tmp_path, monkeypatch):
+    _patch_notes_paths(monkeypatch, tmp_path)
+
+    snap = {
+        "notebooks": [
+            {"id": "nb_a", "name": "Work", "created_at": "2026-09-26T00:00:00", "updated_at": "2026-09-26T00:00:00"}
+        ],
+        "sections": [
+            {
+                "id": "sec_a",
+                "notebook_id": "nb_a",
+                "name": "General",
+                "order": 0,
+                "created_at": "2026-09-26T00:00:00",
+                "updated_at": "2026-09-26T00:00:00",
+            }
+        ],
+        "pages": [
+            {
+                "id": "note_a",
+                "notebook_id": "nb_a",
+                "section_id": "sec_a",
+                "title": "Hello",
+                "body_html": "<p>World</p>",
+                "reminder_at": "2026-09-27T09:00:00",
+                "reminder_done": False,
+            }
+        ],
+    }
+    out = notes.apply_onenote_snapshot(snap, created_by="tester")
+    assert any(p["title"] == "Hello" for p in out["pages"])
+    loaded = notes.get_note("note_a")
+    assert loaded is not None
+    assert loaded["body"] == "<p>World</p>"
+    assert loaded["created_by"] == "tester"
+
+
 def test_classify_reminder_buckets(tmp_path, monkeypatch):
-    monkeypatch.setattr(notes, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(notes, "NOTEBOOKS_JSON", tmp_path / "notebooks.json")
-    monkeypatch.setattr(notes, "NOTES_JSON", tmp_path / "notes.json")
-    monkeypatch.setattr(notes, "NOTE_AUDIO_DIR", tmp_path / "note_audio")
-    monkeypatch.setattr(notes, "_using_cloud", lambda: False)
+    _patch_notes_paths(monkeypatch, tmp_path)
 
     today = date(2026, 9, 26)
     nb = notes.ensure_default_notebook()
@@ -87,19 +193,13 @@ def test_classify_reminder_buckets(tmp_path, monkeypatch):
     assert [n["id"] for n in buckets["past_due"]] == [past["id"]]
     assert [n["id"] for n in buckets["due_today"]] == [due["id"]]
     assert [n["id"] for n in buckets["upcoming"]] == [soon["id"]]
-    # later has reminder but outside 7d window — still grouped under later
     assert later["id"] in [n["id"] for n in buckets["later"]]
-    # no reminder excluded from open reminder groups that require reminder_at
     assert none["id"] not in [n["id"] for n in buckets["past_due"]]
     assert none["id"] not in [n["id"] for n in buckets["due_today"]]
 
 
 def test_mark_reminder_done_removes_from_open(tmp_path, monkeypatch):
-    monkeypatch.setattr(notes, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(notes, "NOTEBOOKS_JSON", tmp_path / "notebooks.json")
-    monkeypatch.setattr(notes, "NOTES_JSON", tmp_path / "notes.json")
-    monkeypatch.setattr(notes, "NOTE_AUDIO_DIR", tmp_path / "note_audio")
-    monkeypatch.setattr(notes, "_using_cloud", lambda: False)
+    _patch_notes_paths(monkeypatch, tmp_path)
 
     today = date(2026, 9, 26)
     nb = notes.ensure_default_notebook()
@@ -122,11 +222,7 @@ def test_mark_reminder_done_removes_from_open(tmp_path, monkeypatch):
 
 
 def test_create_note_with_audio_blob(tmp_path, monkeypatch):
-    monkeypatch.setattr(notes, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(notes, "NOTEBOOKS_JSON", tmp_path / "notebooks.json")
-    monkeypatch.setattr(notes, "NOTES_JSON", tmp_path / "notes.json")
-    monkeypatch.setattr(notes, "NOTE_AUDIO_DIR", tmp_path / "note_audio")
-    monkeypatch.setattr(notes, "_using_cloud", lambda: False)
+    _patch_notes_paths(monkeypatch, tmp_path)
 
     nb = notes.ensure_default_notebook()
     note = notes.create_note(
@@ -149,12 +245,7 @@ def test_parse_reminder_date_variants():
 
 
 def test_section_and_page_color(tmp_path, monkeypatch):
-    monkeypatch.setattr(notes, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(notes, "NOTEBOOKS_JSON", tmp_path / "notebooks.json")
-    monkeypatch.setattr(notes, "SECTIONS_JSON", tmp_path / "note_sections.json")
-    monkeypatch.setattr(notes, "NOTES_JSON", tmp_path / "notes.json")
-    monkeypatch.setattr(notes, "NOTE_AUDIO_DIR", tmp_path / "note_audio")
-    monkeypatch.setattr(notes, "_using_cloud", lambda: False)
+    _patch_notes_paths(monkeypatch, tmp_path)
 
     nb = notes.create_notebook("Ops")
     sec = notes.create_section(notebook_id=nb["id"], name="Follow-ups")
@@ -174,14 +265,7 @@ def test_section_and_page_color(tmp_path, monkeypatch):
 
 
 def test_migrate_legacy_note_without_color(tmp_path, monkeypatch):
-    monkeypatch.setattr(notes, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(notes, "NOTEBOOKS_JSON", tmp_path / "notebooks.json")
-    monkeypatch.setattr(notes, "NOTES_JSON", tmp_path / "notes.json")
-    monkeypatch.setattr(notes, "NOTE_AUDIO_DIR", tmp_path / "note_audio")
-    monkeypatch.setattr(notes, "_using_cloud", lambda: False)
-
-    # Write legacy-shaped note missing color/section_id
-    import json
+    _patch_notes_paths(monkeypatch, tmp_path)
 
     nb = notes.ensure_default_notebook()
     legacy = {
@@ -197,8 +281,32 @@ def test_migrate_legacy_note_without_color(tmp_path, monkeypatch):
         "updated_at": "2026-09-01T00:00:00",
         "created_by": "",
     }
-    (tmp_path / "notes.json").write_text(json.dumps([legacy]), encoding="utf-8")
+    (tmp_path / "onenote_pages.json").write_text(json.dumps([legacy]), encoding="utf-8")
     loaded = notes.load_notes()
     assert len(loaded) == 1
     assert loaded[0]["color"] == "default"
     assert loaded[0]["section_id"] == ""
+
+
+def test_delete_notebook_section_page(tmp_path, monkeypatch):
+    _patch_notes_paths(monkeypatch, tmp_path)
+
+    nb1 = notes.create_notebook("Keep")
+    nb2 = notes.create_notebook("Drop")
+    sec = notes.create_section(notebook_id=nb2["id"], name="Temp")
+    page = notes.create_note(notebook_id=nb2["id"], section_id=sec["id"], title="X")
+    assert notes.delete_page(page["id"]) is True
+    assert notes.get_note(page["id"]) is None
+    assert notes.delete_section(sec["id"]) is True
+    assert notes.delete_notebook(nb2["id"]) is True
+    assert all(n["id"] != nb2["id"] for n in notes.load_notebooks())
+    # Cannot delete the last remaining notebook
+    remaining = notes.load_notebooks()
+    assert len(remaining) >= 1
+    last_id = remaining[0]["id"]
+    # Delete extras first so only one remains
+    for n in remaining[1:]:
+        assert notes.delete_notebook(n["id"]) is True
+    assert len(notes.load_notebooks()) == 1
+    assert notes.delete_notebook(last_id) is False
+    assert notes.delete_notebook(nb1["id"]) is False or nb1["id"] == last_id

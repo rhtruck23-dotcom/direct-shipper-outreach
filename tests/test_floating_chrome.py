@@ -1,4 +1,4 @@
-"""Smoke tests for floating chrome helpers."""
+"""Smoke tests for floating chrome / OneNote client bridge helpers."""
 from __future__ import annotations
 
 import src.floating_chrome as fc
@@ -7,11 +7,10 @@ import src.notes_ui as notes_ui
 
 def test_floating_chrome_module_exports():
     assert callable(fc.inject_floating_chrome)
+    assert callable(fc._bridge_widgets)
 
 
 def test_notes_ui_open_panel_sets_session(monkeypatch):
-    state: dict = {}
-
     class _SS(dict):
         pass
 
@@ -19,33 +18,41 @@ def test_notes_ui_open_panel_sets_session(monkeypatch):
     monkeypatch.setattr(notes_ui.st, "session_state", ss)
     notes_ui.open_note_panel("note_abc")
     assert ss["notes_panel_open"] is True
+    assert ss["onenote_client_open"] is True
     assert ss["selected_note_id"] == "note_abc"
 
 
-def test_consume_fab_draft_prefills_keys(monkeypatch):
-    class _QP(dict):
-        def __getitem__(self, k):
-            return super().get(k, "")
+def test_read_save_payload_from_session(monkeypatch):
+    ss = {
+        "onenote_save_payload": json_dumps_tree(),
+    }
+    monkeypatch.setattr(notes_ui.st, "session_state", ss)
 
+    class _QP(dict):
         def get(self, k, default=None):
             return super().get(k, default if default is not None else "")
 
-        def __delitem__(self, k):
-            if k in self:
-                super().__delitem__(k)
+    monkeypatch.setattr(notes_ui.st, "query_params", _QP())
+    data = notes_ui._read_save_payload()
+    assert data is not None
+    assert data["notebooks"][0]["name"] == "Quick Notes"
 
-    qp = _QP(
-        fab_title="From FAB",
-        fab_body="Body text",
-        fab_nb="nb_1",
-        fab_rem="2026-09-26T14:30",
+
+def json_dumps_tree() -> str:
+    import json
+
+    return json.dumps(
+        {
+            "notebooks": [{"id": "nb_1", "name": "Quick Notes", "created_at": "", "updated_at": ""}],
+            "sections": [
+                {
+                    "id": "sec_1",
+                    "notebook_id": "nb_1",
+                    "name": "General",
+                    "order": 0,
+                }
+            ],
+            "pages": [],
+            "close_after": False,
+        }
     )
-    ss: dict = {}
-    monkeypatch.setattr(notes_ui.st, "session_state", ss)
-    monkeypatch.setattr(notes_ui.st, "query_params", qp)
-    notes_ui._consume_fab_draft_query()
-    assert ss["global_notes_title"] == "From FAB"
-    assert ss["global_notes_body"] == "Body text"
-    assert ss["global_notes_nb_pick"] == "nb_1"
-    assert ss["global_notes_rem_on"] is True
-    assert "fab_title" not in qp
