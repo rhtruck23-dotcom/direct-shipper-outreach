@@ -5,7 +5,7 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 | Field | Fill in |
 |--------|---------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Version to confirm** | **v2026.09.27a · Notes + capacity UAT** — caption under **LogixTrek Outreach** in the left sidebar |
+| **Version to confirm** | **v2026.09.28a · OneNote clone + cov≥90** — caption under **LogixTrek Outreach** in the left sidebar |
 | **Tester name** | _______________________________ |
 | **Date** | _______________ |
 
@@ -13,11 +13,11 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 
 ## Cloud smoke — 15 key lines (do these first)
 
-After deploy, confirm the sidebar caption shows **v2026.09.27a**. Then click through:
+After deploy, confirm the sidebar caption shows **v2026.09.28a**. Then click through:
 
 1. **Login** — Super Admin email + PIN → sidebar shows your name / role.
-2. **Version** — caption reads `v2026.09.27a · Notes + capacity UAT`.
-3. **Notes FAB** — click 📝 (bottom-right). Panel opens in under 1s (no full-page wait). Tree / page editor visible (not stuck on “Loading notebook…”).
+2. **Version** — caption reads `v2026.09.28a · OneNote clone + cov≥90`.
+3. **Notes FAB** — click 📝 (bottom-right). Panel opens instantly (DOM shell; no stuck “Loading…”). Three panes: Notebooks | section tabs + Pages | page canvas.
 4. **Notes edit + Save** — type in a page → **Save** → toast “OneNote saved”; reopen FAB and confirm text stuck.
 5. **Sidebar Add Note** — **📝 Add Note** opens the same panel (hydrated tree).
 6. **Jump-top** — scroll down a long page → ↑ appears → click scrolls to top.
@@ -35,7 +35,7 @@ After deploy, confirm the sidebar caption shows **v2026.09.27a**. Then click thr
 
 ---
 
-## Automation status (v2026.09.27a)
+## Automation status (v2026.09.28a)
 
 Many cases below are **covered by automated pytest** (mocked SMTP / Places / LLM / IMAP). Mark them **Skip** for human UAT unless you want a live click-through. Keep the **Human-only** list short.
 
@@ -113,7 +113,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 **Steps:**
 1. Look under **LogixTrek Outreach** in the left sidebar.
 2. Read the small version / caption line.
-**Expected:** Caption is visible. Note the exact text (should be **v2026.09.27a · Notes + capacity UAT** or the current build label). Write what you see in Comment.
+**Expected:** Caption is visible. Note the exact text (should be **v2026.09.28a · OneNote clone + cov≥90** or the current build label). Write what you see in Comment.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:** (write exact caption here)  
 **Screenshot:** (filename)
@@ -751,20 +751,20 @@ Everything else in this checklist is optional UI confirmation; failures should b
 ### T-120 Floating Add Note on every page
 **Precondition:** Signed in.
 **Steps:**
-1. From Dashboard, click **📝 Add Note** in the sidebar (and/or the bottom-right Add Note button).
+1. From Dashboard, click **📝 Add Note** in the sidebar (and/or the bottom-right 📝 FAB).
 2. Navigate to Shipper → Leads List and confirm Add Note is still available.
 3. Navigate to Carrier and Lead for X pages — same.
-**Expected:** Add Note is reachable on every authenticated page. Floating **📝** opens the client OneNote panel instantly (no full-app wait). After open, notebook tree paints (not stuck on “Loading notebook…”). Left rail: notebooks → sections → pages.
+**Expected:** Add Note is reachable on every authenticated page. Floating **📝** opens the client OneNote panel **instantly** (DOM shell; zero Streamlit rerun). Three panes paint: left **Notebooks**, middle **section tabs + Pages**, right **page canvas**. Never stuck on “Loading notebook…”.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
 **Screenshot:** (filename)
 
 ### T-121 Create notebook + note with reminder
-**Precondition:** Add Note panel open.
+**Precondition:** OneNote panel open (📝 FAB).
 **Steps:**
-1. Create a notebook (e.g. “UAT”).
-2. Add a note with title + body.
-3. Check **Set reminder**, pick today (or tomorrow), Save note.
+1. Click **+** on Notebooks → name e.g. “UAT”.
+2. Click **+** on section tabs (or use General) → **+** on Pages → set title + body.
+3. Set reminder datetime in the toolbar → **Save**.
 4. Open Dashboard → **Note reminders** and confirm it appears in Due today / Upcoming.
 **Expected:** Note persists (`data/onenote_*.json`; cloud sheet tabs when configured). Reminder shows on Dashboard.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
@@ -774,11 +774,11 @@ Everything else in this checklist is optional UI confirmation; failures should b
 ### T-122 Voice note — record / upload
 **Precondition:** Browser allows mic (or have a small audio file). Gemini key optional.
 **Steps:**
-1. Open Add Note → Voice section.
-2. Record with `st.audio_input` **or** upload wav/mp3/webm.
-3. If Gemini key is set, click **Transcribe with Gemini** and append transcript (or note Skip if no key).
-4. Save note (audio-only + manual text is OK if no transcript).
-**Expected:** Audio saves with the note. Transcription works when Gemini key present; otherwise clear message and manual text still works. Web Speech / browser dictate is optional fallback — not required to Pass.
+1. Open 📝 → select/create a page.
+2. Click 🎤 to record **or** 📎 to upload wav/mp3/webm.
+3. Optional: 🗣️ marks transcribe-on-Save (needs Gemini key).
+4. **Save** (audio-only + manual text is OK if no transcript).
+**Expected:** Audio saves with the page. Transcription works when Gemini key present; otherwise clear status and manual text still works.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:** (key present? transcript ok?)  
 **Screenshot:** (filename)
@@ -787,7 +787,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 **Precondition:** Reminder exists from T-121.
 **Steps:**
 1. Dashboard → click reminder row.
-2. Confirm note body/title opens in Notes panel.
+2. Confirm page title/body opens in OneNote panel (correct notebook/section selected).
 3. Mark reminder **Done**.
 4. Confirm it leaves the open reminder tiles.
 **Expected:** Click opens note; Done clears from past/due/upcoming buckets.
@@ -798,13 +798,13 @@ Everything else in this checklist is optional UI confirmation; failures should b
 ### T-124 OneNote pages — notebook / section / page / highlight / voice
 **Precondition:** Floating 📝 OneNote panel open (instant client panel).
 **Steps:**
-1. Click **+** on Notebooks to create a notebook (or expand existing).
-2. Click **+** on a notebook row to add a **section**; click **+** on a section to add a **page**.
+1. **+** Notebooks → create a notebook; rename inline if needed.
+2. **+** on section tabs → add a section (double-click tab to rename); **+** Pages → add a page (rename inline).
 3. Set title + body; use Bold / Italic / highlight / text color / bullets.
-4. Optional: mic record or attach audio; 🗣️ marks transcribe-on-Save (Gemini).
-5. Set reminder datetime; click **Save** (or Save & close).
-6. Re-open and confirm left rail still shows notebook → section → page.
-**Expected:** Left rail hierarchy works without waiting for Streamlit reruns while editing. Save persists to `data/onenote_*.json`. FAB + jump-top still present.
+4. Optional: mic / attach audio; 🗣️ for transcribe-on-Save.
+5. Set reminder; click **Save** (or Save & close).
+6. Close and re-open 📝 — confirm notebooks / section tabs / pages / body persist.
+**Expected:** Three-pane hierarchy works without Streamlit reruns while editing. Save persists to `data/onenote_*.json`. FAB + jump-top still present.
 
 ---
 

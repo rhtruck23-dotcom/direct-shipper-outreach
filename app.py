@@ -3351,7 +3351,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.27a · Notes + capacity UAT")
+        st.caption("v2026.09.28a · OneNote clone + cov≥90")
 
         from src.notes_ui import render_sidebar_add_note_button
 

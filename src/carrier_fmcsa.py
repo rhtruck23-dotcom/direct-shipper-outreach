@@ -71,9 +71,10 @@ def pull_census_carriers(
     Returns (leads, note). Can return thousands for a busy state like VA.
     Emails are usually blank in census — phone + MC/DOT are the primary contacts.
     """
-    st = (state or "").strip().upper()[:2]
-    if len(st) != 2:
+    raw = (state or "").strip().upper()
+    if len(raw) != 2 or not raw.isalpha():
         raise ValueError("Enter a 2-letter state code (e.g. VA, IL, TX).")
+    st = raw
 
     limit = max(1, min(int(limit or 1000), 5000))
     page_size = 1000

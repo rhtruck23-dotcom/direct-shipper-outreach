@@ -1,5 +1,5 @@
 """
-Global floating chrome: OneNote clone panel + Jump-to-top.
+Global floating chrome: OneNote-like clone panel + Jump-to-top.
 
 Injected into the parent Streamlit document so position:fixed sticks to the
 viewport. Opening the 📝 FAB / panel is pure client DOM (<300ms feel) — zero
@@ -7,8 +7,8 @@ Streamlit rerun. Typing, tree expand/collapse, add/rename/delete in the panel
 are DOM-only. Persist happens only on Save via one hidden Streamlit bridge.
 Jump-top stays zero-rerun.
 
-inject_notes_shell() — tiny early inject so FAB exists before page work.
-inject_floating_chrome() — hydrate tree + full panel behavior.
+    inject_notes_shell() — tiny early inject so FAB + shell exist before page work.
+    inject_floating_chrome() — hydrate tree + full panel behavior.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ import streamlit.components.v1 as components
 _CHROME_FLAG = "_lt_floating_chrome_injected"
 _SHELL_FLAG = "_lt_notes_shell_injected"
 
-# Minimal shell: FAB + empty overlay. Opens instantly; tree hydrates later.
+# Minimal shell: FAB + three-pane overlay. Opens instantly; tree hydrates later.
 _SHELL_HTML = """
 <!DOCTYPE html><html><body><script>
 (function () {
@@ -47,7 +47,7 @@ _SHELL_HTML = """
         transition: transform 0.15s ease, opacity 0.2s ease;
       }
       #lt-note-fab:hover, #lt-jump-top:hover { transform: scale(1.06); }
-      #lt-note-fab { right: 1.25rem; bottom: 1.25rem; background: #0B3D4A; color: #fff; }
+      #lt-note-fab { right: 1.25rem; bottom: 1.25rem; background: #7719aa; color: #fff; }
       #lt-jump-top {
         right: 1.25rem; bottom: 5.1rem; background: #0ea5e9; color: #fff;
         opacity: 0; pointer-events: none; visibility: hidden;
@@ -55,32 +55,41 @@ _SHELL_HTML = """
       #lt-jump-top.lt-visible { opacity: 1; pointer-events: auto; visibility: visible; }
       #lt-onenote-overlay {
         position: fixed !important; inset: 0; z-index: 100000 !important;
-        background: rgba(11, 61, 74, 0.35);
+        background: rgba(40, 20, 50, 0.4);
         display: none; align-items: stretch; justify-content: center;
-        padding: 1.25rem; box-sizing: border-box;
+        padding: 1rem; box-sizing: border-box;
         font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
       }
       #lt-onenote-overlay.lt-open { display: flex; }
       #lt-onenote-shell {
-        width: min(1100px, 100%); height: min(90vh, 820px);
-        background: #f3f3f3; border-radius: 10px; overflow: hidden;
-        box-shadow: 0 24px 64px rgba(0,0,0,0.28);
+        width: min(1180px, 100%); height: min(92vh, 860px);
+        background: #f3f2f1; border-radius: 8px; overflow: hidden;
+        box-shadow: 0 24px 64px rgba(0,0,0,0.32);
         display: flex; flex-direction: column; color: #1a1a1a;
       }
       #lt-onenote-topbar {
         display: flex; align-items: center; gap: 0.75rem;
-        padding: 0.55rem 0.85rem; background: #7719aa; color: #fff; flex-shrink: 0;
+        padding: 0.5rem 0.85rem; background: #7719aa; color: #fff; flex-shrink: 0;
       }
       #lt-onenote-topbar h2 { margin: 0; font-size: 1rem; font-weight: 600; flex: 1; }
       #lt-onenote-topbar button {
         border: none; background: rgba(255,255,255,0.18); color: #fff;
-        border-radius: 6px; padding: 0.35rem 0.7rem; cursor: pointer; font-weight: 600;
+        border-radius: 4px; padding: 0.35rem 0.7rem; cursor: pointer; font-weight: 600;
       }
       #lt-onenote-body { display: flex; flex: 1; min-height: 0; }
-      #lt-onenote-rail {
-        width: 280px; min-width: 220px; background: #fff;
-        border-right: 1px solid #ddd; overflow: auto; padding: 0.5rem 0.35rem 1rem;
+      #lt-onenote-nblist {
+        width: 168px; min-width: 140px; background: #2b0a3d; color: #f3e8ff;
+        overflow: auto; padding: 0.45rem 0.3rem 1rem; flex-shrink: 0;
       }
+      #lt-onenote-mid {
+        width: 220px; min-width: 180px; background: #fff;
+        border-right: 1px solid #e0e0e0; display: flex; flex-direction: column; flex-shrink: 0;
+      }
+      #lt-onenote-sectabs {
+        display: flex; flex-wrap: wrap; gap: 2px; padding: 0.4rem 0.35rem 0.25rem;
+        background: #faf8fc; border-bottom: 1px solid #eee; min-height: 36px;
+      }
+      #lt-onenote-pagelist { flex: 1; overflow: auto; padding: 0.35rem 0.25rem 1rem; }
       #lt-onenote-editor {
         flex: 1; display: flex; flex-direction: column; min-width: 0; background: #fff;
       }
@@ -89,6 +98,12 @@ _SHELL_HTML = """
         color: #888; font-size: 0.95rem; padding: 2rem; text-align: center;
       }
       #lt-onenote-status { font-size: 0.72rem; color: rgba(255,255,255,0.85); margin-right: 0.5rem; }
+      .lt-skel { opacity: 0.55; pointer-events: none; }
+      .lt-skel-row {
+        height: 28px; margin: 4px 6px; border-radius: 4px;
+        background: rgba(255,255,255,0.12);
+      }
+      .lt-skel-mid .lt-skel-row { background: #eee; }
     `;
     doc.head.appendChild(style);
   }
@@ -98,11 +113,6 @@ _SHELL_HTML = """
     overlay.classList.add("lt-open");
     if (typeof win.__ltRenderOneNote === "function") {
       try { win.__ltRenderOneNote(); } catch (e) {}
-    } else {
-      const ed = doc.getElementById("lt-onenote-editor");
-      if (ed && !ed.dataset.hydrated) {
-        ed.innerHTML = '<div id="lt-onenote-empty">Loading notebook…</div>';
-      }
     }
   }
   function closePanel() {
@@ -142,12 +152,25 @@ _SHELL_HTML = """
       <div id="lt-onenote-shell">
         <div id="lt-onenote-topbar">
           <h2>📓 OneNote</h2>
-          <span id="lt-onenote-status"></span>
+          <span id="lt-onenote-status">Ready</span>
           <button type="button" id="lt-onenote-close">Close</button>
         </div>
         <div id="lt-onenote-body">
-          <div id="lt-onenote-rail"></div>
-          <div id="lt-onenote-editor"><div id="lt-onenote-empty">Open a page or click + to add one.</div></div>
+          <div id="lt-onenote-nblist" class="lt-skel">
+            <div class="lt-skel-row"></div>
+            <div class="lt-skel-row"></div>
+          </div>
+          <div id="lt-onenote-mid" class="lt-skel-mid">
+            <div id="lt-onenote-sectabs" class="lt-skel"><div class="lt-skel-row" style="width:70px"></div></div>
+            <div id="lt-onenote-pagelist" class="lt-skel">
+              <div class="lt-skel-row"></div>
+              <div class="lt-skel-row"></div>
+              <div class="lt-skel-row"></div>
+            </div>
+          </div>
+          <div id="lt-onenote-editor">
+            <div id="lt-onenote-empty">Select a page — notebooks sync in a moment.</div>
+          </div>
         </div>
       </div>`;
     doc.body.appendChild(overlay);
@@ -206,7 +229,6 @@ def _bridge_widgets() -> tuple[bool, bool]:
 """,
         unsafe_allow_html=True,
     )
-    # Payload textarea — JS writes snapshot JSON here before clicking Save
     st.text_area(
         "lt_onenote_payload",
         key="onenote_save_payload",
@@ -242,7 +264,6 @@ def inject_floating_chrome(
     focus_page_id: select this page when auto_open
     auto_open: open panel immediately (e.g. sidebar / dashboard reminder)
     """
-    # Ensure shell FAB exists even if this hydrate is slow/fails
     inject_notes_shell()
 
     tree = tree or {"notebooks": [], "sections": [], "pages": []}
@@ -260,6 +281,7 @@ def inject_floating_chrome(
   const AUTO_OPEN = {auto_json};
   const doc = window.parent.document;
   const win = window.parent;
+  const SEC_COLORS = ["#7719aa", "#c43e1c", "#217346", "#0078d4", "#ca5010", "#038387", "#8764b8"];
 
   function uid(prefix) {{
     return prefix + "_" + Math.random().toString(16).slice(2, 12);
@@ -268,30 +290,49 @@ def inject_floating_chrome(
     return new Date().toISOString().replace(/\\.\\d{{3}}Z$/, "Z");
   }}
 
-  // ---- state (DOM-only until Save) ----
   let state = {{
     notebooks: Array.isArray(TREE.notebooks) ? TREE.notebooks.map(function (x) {{ return Object.assign({{}}, x); }}) : [],
     sections: Array.isArray(TREE.sections) ? TREE.sections.map(function (x) {{ return Object.assign({{}}, x); }}) : [],
     pages: Array.isArray(TREE.pages) ? TREE.pages.map(function (x) {{ return Object.assign({{}}, x); }}) : [],
-    expandedNb: {{}},
-    expandedSec: {{}},
+    selectedNbId: "",
+    selectedSecId: "",
     selectedPageId: FOCUS_PAGE || "",
     dirty: false,
     mediaRecorder: null,
     recordingChunks: [],
     pendingTranscribe: false,
   }};
-  state.notebooks.forEach(function (nb) {{ state.expandedNb[nb.id] = true; }});
-  state.sections.forEach(function (s) {{ state.expandedSec[s.id] = true; }});
+
+  function syncSelectionFromFocus() {{
+    if (state.selectedPageId) {{
+      const pg = state.pages.find(function (p) {{ return p.id === state.selectedPageId; }});
+      if (pg) {{
+        state.selectedNbId = pg.notebook_id || state.selectedNbId;
+        state.selectedSecId = pg.section_id || state.selectedSecId;
+      }}
+    }}
+    if (!state.selectedNbId && state.notebooks.length) state.selectedNbId = state.notebooks[0].id;
+    const secs = sectionsFor(state.selectedNbId);
+    if (!state.selectedSecId || !secs.find(function (s) {{ return s.id === state.selectedSecId; }})) {{
+      state.selectedSecId = secs[0] ? secs[0].id : "";
+    }}
+    if (!state.selectedPageId) {{
+      const pgs = pagesFor(state.selectedSecId);
+      state.selectedPageId = pgs[0] ? pgs[0].id : "";
+    }}
+  }}
+  syncSelectionFromFocus();
 
   function ensureStyles() {{
-    if (doc.getElementById("lt-floating-chrome-css")) return;
-    const style = doc.createElement("style");
-    style.id = "lt-floating-chrome-css";
+    let style = doc.getElementById("lt-floating-chrome-css");
+    if (!style) {{
+      style = doc.createElement("style");
+      style.id = "lt-floating-chrome-css";
+      doc.head.appendChild(style);
+    }}
     style.textContent = `
       #lt-note-fab, #lt-jump-top {{
-        position: fixed !important;
-        z-index: 99999 !important;
+        position: fixed !important; z-index: 99999 !important;
         width: 52px; height: 52px; border-radius: 50%; border: none;
         cursor: pointer; box-shadow: 0 8px 28px rgba(11, 61, 74, 0.28);
         display: flex; align-items: center; justify-content: center;
@@ -299,84 +340,103 @@ def inject_floating_chrome(
         transition: transform 0.15s ease, opacity 0.2s ease;
       }}
       #lt-note-fab:hover, #lt-jump-top:hover {{ transform: scale(1.06); }}
-      #lt-note-fab {{
-        right: 1.25rem; bottom: 1.25rem; background: #0B3D4A; color: #fff;
-      }}
+      #lt-note-fab {{ right: 1.25rem; bottom: 1.25rem; background: #7719aa; color: #fff; }}
       #lt-jump-top {{
         right: 1.25rem; bottom: 5.1rem; background: #0ea5e9; color: #fff;
         opacity: 0; pointer-events: none; visibility: hidden;
       }}
       #lt-jump-top.lt-visible {{ opacity: 1; pointer-events: auto; visibility: visible; }}
-
       #lt-onenote-overlay {{
         position: fixed !important; inset: 0; z-index: 100000 !important;
-        background: rgba(11, 61, 74, 0.35);
+        background: rgba(40, 20, 50, 0.4);
         display: none; align-items: stretch; justify-content: center;
-        padding: 1.25rem; box-sizing: border-box;
+        padding: 1rem; box-sizing: border-box;
         font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
       }}
       #lt-onenote-overlay.lt-open {{ display: flex; }}
       #lt-onenote-shell {{
-        width: min(1100px, 100%); height: min(90vh, 820px);
-        background: #f3f3f3; border-radius: 10px; overflow: hidden;
-        box-shadow: 0 24px 64px rgba(0,0,0,0.28);
+        width: min(1180px, 100%); height: min(92vh, 860px);
+        background: #f3f2f1; border-radius: 8px; overflow: hidden;
+        box-shadow: 0 24px 64px rgba(0,0,0,0.32);
         display: flex; flex-direction: column; color: #1a1a1a;
       }}
       #lt-onenote-topbar {{
         display: flex; align-items: center; gap: 0.75rem;
-        padding: 0.55rem 0.85rem; background: #7719aa; color: #fff;
-        flex-shrink: 0;
+        padding: 0.5rem 0.85rem; background: #7719aa; color: #fff; flex-shrink: 0;
       }}
-      #lt-onenote-topbar h2 {{
-        margin: 0; font-size: 1rem; font-weight: 600; flex: 1;
-      }}
+      #lt-onenote-topbar h2 {{ margin: 0; font-size: 1rem; font-weight: 600; flex: 1; }}
       #lt-onenote-topbar button {{
         border: none; background: rgba(255,255,255,0.18); color: #fff;
-        border-radius: 6px; padding: 0.35rem 0.7rem; cursor: pointer; font-weight: 600;
+        border-radius: 4px; padding: 0.35rem 0.7rem; cursor: pointer; font-weight: 600;
       }}
       #lt-onenote-topbar button:hover {{ background: rgba(255,255,255,0.28); }}
       #lt-onenote-body {{ display: flex; flex: 1; min-height: 0; }}
-      #lt-onenote-rail {{
-        width: 280px; min-width: 220px; background: #fff;
-        border-right: 1px solid #ddd; overflow: auto; padding: 0.5rem 0.35rem 1rem;
+      #lt-onenote-nblist {{
+        width: 168px; min-width: 140px; background: #2b0a3d; color: #f3e8ff;
+        overflow: auto; padding: 0.45rem 0.3rem 1rem; flex-shrink: 0;
       }}
+      #lt-onenote-mid {{
+        width: 220px; min-width: 180px; background: #fff;
+        border-right: 1px solid #e0e0e0; display: flex; flex-direction: column; flex-shrink: 0;
+      }}
+      #lt-onenote-sectabs {{
+        display: flex; flex-wrap: wrap; gap: 2px; padding: 0.4rem 0.35rem 0.25rem;
+        background: #faf8fc; border-bottom: 1px solid #eee; min-height: 36px; align-items: center;
+      }}
+      #lt-onenote-pagelist {{ flex: 1; overflow: auto; padding: 0.35rem 0.25rem 1rem; }}
       #lt-onenote-editor {{
         flex: 1; display: flex; flex-direction: column; min-width: 0; background: #fff;
       }}
-      .lt-rail-head {{
+      .lt-pane-head {{
         display: flex; align-items: center; justify-content: space-between;
-        padding: 0.35rem 0.5rem; font-size: 0.72rem; font-weight: 700;
-        text-transform: uppercase; letter-spacing: 0.04em; color: #666;
+        padding: 0.3rem 0.45rem; font-size: 0.68rem; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.75;
       }}
-      .lt-rail-head button {{
+      #lt-onenote-nblist .lt-pane-head {{ color: #e9d5ff; }}
+      #lt-onenote-pagelist .lt-pane-head, #lt-onenote-mid .lt-pane-head {{ color: #666; }}
+      .lt-pane-head button {{
         border: none; background: #7719aa; color: #fff; width: 22px; height: 22px;
         border-radius: 4px; cursor: pointer; font-size: 14px; line-height: 1;
       }}
-      .lt-tree-nb, .lt-tree-sec, .lt-tree-pg {{
+      #lt-onenote-nblist .lt-pane-head button {{ background: rgba(255,255,255,0.2); }}
+      .lt-nb-row {{
+        display: flex; align-items: center; gap: 0.2rem;
+        padding: 0.35rem 0.4rem; border-radius: 4px; cursor: pointer;
+        font-size: 0.86rem; margin: 1px 2px;
+      }}
+      .lt-nb-row:hover {{ background: rgba(255,255,255,0.1); }}
+      .lt-nb-row.lt-active {{ background: rgba(255,255,255,0.18); font-weight: 600; }}
+      .lt-sec-tab {{
+        border: none; border-radius: 4px 4px 0 0; padding: 0.28rem 0.55rem;
+        font-size: 0.78rem; cursor: pointer; color: #fff; max-width: 110px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        opacity: 0.72;
+      }}
+      .lt-sec-tab.lt-active {{ opacity: 1; box-shadow: 0 0 0 1px rgba(0,0,0,0.08); }}
+      .lt-sec-add {{
+        border: 1px dashed #bbb; background: transparent; color: #7719aa;
+        border-radius: 4px; width: 24px; height: 24px; cursor: pointer; font-size: 14px;
+      }}
+      .lt-pg-row {{
         display: flex; align-items: center; gap: 0.25rem;
-        padding: 0.28rem 0.4rem; border-radius: 4px; cursor: pointer;
-        font-size: 0.88rem; user-select: none;
+        padding: 0.4rem 0.45rem; border-radius: 4px; cursor: pointer;
+        font-size: 0.88rem; border-left: 3px solid transparent;
       }}
-      .lt-tree-nb:hover, .lt-tree-sec:hover, .lt-tree-pg:hover {{ background: #f0e6f7; }}
-      .lt-tree-pg.lt-active {{ background: #e5d4f5; font-weight: 600; }}
-      .lt-tree-sec {{ padding-left: 1rem; color: #444; }}
-      .lt-tree-pg {{ padding-left: 1.75rem; color: #222; }}
-      .lt-tree-twist {{
-        width: 16px; text-align: center; color: #888; font-size: 0.7rem; flex-shrink: 0;
-      }}
+      .lt-pg-row:hover {{ background: #f5f0fa; }}
+      .lt-pg-row.lt-active {{ background: #efe6f8; border-left-color: #7719aa; font-weight: 600; }}
       .lt-tree-name {{
         flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         border: none; background: transparent; padding: 0; font: inherit; color: inherit;
         text-align: left; cursor: text;
       }}
-      .lt-tree-name:focus {{ outline: 1px solid #7719aa; background: #fff; border-radius: 2px; padding: 0 2px; }}
-      .lt-tree-add, .lt-tree-del {{
-        border: none; background: transparent; color: #7719aa; cursor: pointer;
-        font-size: 0.85rem; padding: 0 3px; opacity: 0.55;
+      .lt-nb-row .lt-tree-name {{ color: #f3e8ff; }}
+      .lt-tree-name:focus {{ outline: 1px solid #c084fc; background: rgba(255,255,255,0.12); border-radius: 2px; padding: 0 2px; }}
+      .lt-pg-row .lt-tree-name:focus {{ outline: 1px solid #7719aa; background: #fff; }}
+      .lt-tree-del {{
+        border: none; background: transparent; color: inherit; cursor: pointer;
+        font-size: 0.9rem; padding: 0 3px; opacity: 0.45;
       }}
-      .lt-tree-nb:hover .lt-tree-add, .lt-tree-sec:hover .lt-tree-add,
-      .lt-tree-nb:hover .lt-tree-del, .lt-tree-sec:hover .lt-tree-del,
-      .lt-tree-pg:hover .lt-tree-del {{ opacity: 1; }}
+      .lt-nb-row:hover .lt-tree-del, .lt-pg-row:hover .lt-tree-del {{ opacity: 0.95; }}
       .lt-toolbar {{
         display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;
         padding: 0.45rem 0.65rem; border-bottom: 1px solid #e5e5e5; background: #fafafa;
@@ -417,7 +477,6 @@ def inject_floating_chrome(
       }}
       .lt-file input {{ display: none; }}
     `;
-    doc.head.appendChild(style);
   }}
 
   function scrollTargets() {{
@@ -463,7 +522,6 @@ def inject_floating_chrome(
   }}
   function findPayloadTextarea() {{
     const areas = Array.from(doc.querySelectorAll("textarea"));
-    // Prefer the one nearest the bridge marker / labeled via nearby text
     return (
       areas.find(function (t) {{
         const lab = (t.getAttribute("aria-label") || "") + (t.id || "");
@@ -493,7 +551,6 @@ def inject_floating_chrome(
     el.dispatchEvent(new Event("input", {{ bubbles: true }}));
     el.dispatchEvent(new Event("change", {{ bubbles: true }}));
   }}
-
   function findPayloadTextareaNearMarker() {{
     const marker = doc.getElementById("lt-fab-bridge-marker");
     if (!marker) return findPayloadTextarea();
@@ -523,13 +580,11 @@ def inject_floating_chrome(
     if (remEl) page.reminder_at = remEl.value ? new Date(remEl.value).toISOString().slice(0, 19) : "";
     page.updated_at = nowIso();
   }}
-
   function markDirty() {{
     state.dirty = true;
     const st = doc.getElementById("lt-onenote-status");
     if (st) st.textContent = "Unsaved changes";
   }}
-
   function buildSnapshot(closeAfter) {{
     flushEditorToState();
     return {{
@@ -544,7 +599,6 @@ def inject_floating_chrome(
       transcribe: !!state.pendingTranscribe,
     }};
   }}
-
   function persistViaBridge(closeAfter) {{
     const snap = buildSnapshot(closeAfter);
     const payload = JSON.stringify(snap);
@@ -571,7 +625,6 @@ def inject_floating_chrome(
     const btn = findBridgeButton("lt_onenote_save");
     if (btn) {{
       btn.style.pointerEvents = "auto";
-      // Defer click so React processes the textarea input event first
       win.setTimeout(function () {{ btn.click(); }}, 30);
       return;
     }}
@@ -596,24 +649,42 @@ def inject_floating_chrome(
     const sec = {{ id: uid("sec"), notebook_id: nb.id, name: "General", order: 0, created_at: nowIso(), updated_at: nowIso() }};
     state.notebooks.push(nb);
     state.sections.push(sec);
-    state.expandedNb[nb.id] = true;
-    state.expandedSec[sec.id] = true;
+    state.selectedNbId = nb.id;
+    state.selectedSecId = sec.id;
+    state.selectedPageId = "";
     markDirty();
-    renderTree();
+    renderAll();
   }}
-  function addSection(nbId) {{
+  function addSection() {{
+    const nbId = state.selectedNbId;
+    if (!nbId) return;
     const name = win.prompt("Section name", "New section");
     if (name === null) return;
     const order = sectionsFor(nbId).reduce(function (m, s) {{ return Math.max(m, s.order || 0); }}, -1) + 1;
     const sec = {{ id: uid("sec"), notebook_id: nbId, name: (name || "").trim() || "New section", order: order, created_at: nowIso(), updated_at: nowIso() }};
     state.sections.push(sec);
-    state.expandedNb[nbId] = true;
-    state.expandedSec[sec.id] = true;
+    state.selectedSecId = sec.id;
+    state.selectedPageId = "";
     markDirty();
-    renderTree();
+    renderAll();
   }}
-  function addPage(nbId, secId) {{
+  function addPage() {{
     flushEditorToState();
+    const nbId = state.selectedNbId;
+    let secId = state.selectedSecId;
+    if (!nbId) return;
+    if (!secId) {{
+      const secs = sectionsFor(nbId);
+      if (!secs.length) {{
+        const sec = {{ id: uid("sec"), notebook_id: nbId, name: "General", order: 0, created_at: nowIso(), updated_at: nowIso() }};
+        state.sections.push(sec);
+        secId = sec.id;
+        state.selectedSecId = secId;
+      }} else {{
+        secId = secs[0].id;
+        state.selectedSecId = secId;
+      }}
+    }}
     const page = {{
       id: uid("note"),
       notebook_id: nbId,
@@ -632,8 +703,6 @@ def inject_floating_chrome(
       created_by: "",
     }};
     state.pages.push(page);
-    state.expandedNb[nbId] = true;
-    state.expandedSec[secId] = true;
     state.selectedPageId = page.id;
     markDirty();
     renderAll();
@@ -648,8 +717,12 @@ def inject_floating_chrome(
       return true;
     }});
     state.pages = state.pages.filter(function (p) {{ return p.notebook_id !== nbId; }});
-    if (state.selectedPageId && !state.pages.find(function (p) {{ return p.id === state.selectedPageId; }})) {{
-      state.selectedPageId = state.pages[0] ? state.pages[0].id : "";
+    if (state.selectedNbId === nbId) {{
+      state.selectedNbId = state.notebooks[0] ? state.notebooks[0].id : "";
+      const secs = sectionsFor(state.selectedNbId);
+      state.selectedSecId = secs[0] ? secs[0].id : "";
+      const pgs = pagesFor(state.selectedSecId);
+      state.selectedPageId = pgs[0] ? pgs[0].id : "";
     }}
     markDirty();
     renderAll();
@@ -669,6 +742,7 @@ def inject_floating_chrome(
       if (p.section_id === secId) p.section_id = generalId;
     }});
     state.sections = state.sections.filter(function (s) {{ return s.id !== secId; }});
+    if (state.selectedSecId === secId) state.selectedSecId = generalId;
     markDirty();
     renderAll();
   }}
@@ -676,7 +750,8 @@ def inject_floating_chrome(
     if (!win.confirm("Delete this page?")) return;
     state.pages = state.pages.filter(function (p) {{ return p.id !== pageId; }});
     if (state.selectedPageId === pageId) {{
-      state.selectedPageId = state.pages[0] ? state.pages[0].id : "";
+      const pgs = pagesFor(state.selectedSecId);
+      state.selectedPageId = pgs[0] ? pgs[0].id : "";
     }}
     markDirty();
     renderAll();
@@ -708,9 +783,7 @@ def inject_floating_chrome(
     }} catch (e) {{}}
     markDirty();
   }}
-  function insertBullet() {{
-    execFmt("insertUnorderedList");
-  }}
+  function insertBullet() {{ execFmt("insertUnorderedList"); }}
 
   async function toggleRecord() {{
     const btn = doc.getElementById("lt-btn-mic");
@@ -753,7 +826,6 @@ def inject_floating_chrome(
       alert("Could not start recording: " + (e && e.message ? e.message : e));
     }}
   }}
-
   function onAudioFile(file) {{
     if (!file) return;
     const reader = new win.FileReader();
@@ -767,124 +839,140 @@ def inject_floating_chrome(
     reader.readAsDataURL(file);
   }}
 
-  function renderTree() {{
-    const rail = doc.getElementById("lt-onenote-rail");
-    if (!rail) return;
-    let html = '<div class="lt-rail-head"><span>Notebooks</span><button type="button" id="lt-add-nb" title="Add notebook">+</button></div>';
-    state.notebooks.forEach(function (nb) {{
-      const open = !!state.expandedNb[nb.id];
-      html += '<div class="lt-tree-nb" data-nb="' + nb.id + '">';
-      html += '<span class="lt-tree-twist">' + (open ? "▼" : "▶") + "</span>";
-      html += '<input class="lt-tree-name" data-rename="nb" data-id="' + nb.id + '" value="' + escAttr(nb.name) + '" />';
-      html += '<button type="button" class="lt-tree-add" data-add-sec="' + nb.id + '" title="Add section">+</button>';
-      html += '<button type="button" class="lt-tree-del" data-del-nb="' + nb.id + '" title="Delete notebook">×</button>';
-      html += "</div>";
-      if (open) {{
-        sectionsFor(nb.id).forEach(function (sec) {{
-          const sop = !!state.expandedSec[sec.id];
-          html += '<div class="lt-tree-sec" data-sec="' + sec.id + '">';
-          html += '<span class="lt-tree-twist">' + (sop ? "▼" : "▶") + "</span>";
-          html += '<input class="lt-tree-name" data-rename="sec" data-id="' + sec.id + '" value="' + escAttr(sec.name) + '" />';
-          html += '<button type="button" class="lt-tree-add" data-add-pg="' + nb.id + "|" + sec.id + '" title="Add page">+</button>';
-          html += '<button type="button" class="lt-tree-del" data-del-sec="' + sec.id + '" title="Delete section">×</button>';
-          html += "</div>";
-          if (sop) {{
-            pagesFor(sec.id).forEach(function (pg) {{
-              const active = pg.id === state.selectedPageId ? " lt-active" : "";
-              html += '<div class="lt-tree-pg' + active + '" data-pg="' + pg.id + '">';
-              html += '<span class="lt-tree-twist">📄</span>';
-              html += '<span class="lt-tree-name" style="cursor:pointer">' + escHtml(pg.title || "Untitled page") + "</span>";
-              html += '<button type="button" class="lt-tree-del" data-del-pg="' + pg.id + '" title="Delete page">×</button>';
-              html += "</div>";
-            }});
-          }}
-        }});
-      }}
-    }});
-    rail.innerHTML = html;
-
-    const addNb = doc.getElementById("lt-add-nb");
-    if (addNb) addNb.onclick = function (e) {{ e.stopPropagation(); addNotebook(); }};
-
-    rail.querySelectorAll(".lt-tree-nb").forEach(function (row) {{
-      row.addEventListener("click", function (e) {{
-        if (e.target.closest("button,input")) return;
-        const id = row.getAttribute("data-nb");
-        state.expandedNb[id] = !state.expandedNb[id];
-        renderTree();
-      }});
-    }});
-    rail.querySelectorAll(".lt-tree-sec").forEach(function (row) {{
-      row.addEventListener("click", function (e) {{
-        if (e.target.closest("button,input")) return;
-        const id = row.getAttribute("data-sec");
-        state.expandedSec[id] = !state.expandedSec[id];
-        renderTree();
-      }});
-    }});
-    rail.querySelectorAll(".lt-tree-pg").forEach(function (row) {{
-      row.addEventListener("click", function (e) {{
-        if (e.target.closest("button")) return;
-        flushEditorToState();
-        state.selectedPageId = row.getAttribute("data-pg");
-        renderAll();
-      }});
-    }});
-    rail.querySelectorAll("[data-add-sec]").forEach(function (btn) {{
-      btn.onclick = function (e) {{ e.stopPropagation(); addSection(btn.getAttribute("data-add-sec")); }};
-    }});
-    rail.querySelectorAll("[data-add-pg]").forEach(function (btn) {{
-      btn.onclick = function (e) {{
-        e.stopPropagation();
-        const parts = (btn.getAttribute("data-add-pg") || "").split("|");
-        addPage(parts[0], parts[1]);
-      }};
-    }});
-    rail.querySelectorAll("[data-del-nb]").forEach(function (btn) {{
-      btn.onclick = function (e) {{ e.stopPropagation(); deleteNotebook(btn.getAttribute("data-del-nb")); }};
-    }});
-    rail.querySelectorAll("[data-del-sec]").forEach(function (btn) {{
-      btn.onclick = function (e) {{ e.stopPropagation(); deleteSection(btn.getAttribute("data-del-sec")); }};
-    }});
-    rail.querySelectorAll("[data-del-pg]").forEach(function (btn) {{
-      btn.onclick = function (e) {{ e.stopPropagation(); deletePage(btn.getAttribute("data-del-pg")); }};
-    }});
-    rail.querySelectorAll("input.lt-tree-name").forEach(function (inp) {{
-      inp.addEventListener("click", function (e) {{ e.stopPropagation(); }});
-      inp.addEventListener("change", function () {{
-        const kind = inp.getAttribute("data-rename");
-        const id = inp.getAttribute("data-id");
-        const val = (inp.value || "").trim() || "Untitled";
-        if (kind === "nb") {{
-          const nb = state.notebooks.find(function (n) {{ return n.id === id; }});
-          if (nb) {{ nb.name = val; nb.updated_at = nowIso(); markDirty(); }}
-        }} else {{
-          const sec = state.sections.find(function (s) {{ return s.id === id; }});
-          if (sec) {{ sec.name = val; sec.updated_at = nowIso(); markDirty(); }}
-        }}
-      }});
-    }});
-  }}
-
   function escHtml(s) {{
     return String(s || "")
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
   }}
   function escAttr(s) {{ return escHtml(s).replace(/'/g, "&#39;"); }}
-
   function toLocalInput(iso) {{
     if (!iso) return "";
     try {{
       const d = new Date(iso);
-      if (isNaN(d.getTime())) {{
-        // already local-ish
-        return String(iso).slice(0, 16);
-      }}
+      if (isNaN(d.getTime())) return String(iso).slice(0, 16);
       const pad = function (n) {{ return String(n).padStart(2, "0"); }};
       return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
         "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
     }} catch (e) {{ return ""; }}
+  }}
+
+  function renderNotebooks() {{
+    const rail = doc.getElementById("lt-onenote-nblist");
+    if (!rail) return;
+    rail.classList.remove("lt-skel");
+    let html = '<div class="lt-pane-head"><span>Notebooks</span><button type="button" id="lt-add-nb" title="Add notebook">+</button></div>';
+    state.notebooks.forEach(function (nb) {{
+      const active = nb.id === state.selectedNbId ? " lt-active" : "";
+      html += '<div class="lt-nb-row' + active + '" data-nb="' + nb.id + '">';
+      html += '<input class="lt-tree-name" data-rename="nb" data-id="' + nb.id + '" value="' + escAttr(nb.name) + '" />';
+      html += '<button type="button" class="lt-tree-del" data-del-nb="' + nb.id + '" title="Delete">×</button>';
+      html += "</div>";
+    }});
+    rail.innerHTML = html;
+    const addNb = doc.getElementById("lt-add-nb");
+    if (addNb) addNb.onclick = function (e) {{ e.stopPropagation(); addNotebook(); }};
+    rail.querySelectorAll(".lt-nb-row").forEach(function (row) {{
+      row.addEventListener("click", function (e) {{
+        if (e.target.closest("button,input")) return;
+        flushEditorToState();
+        state.selectedNbId = row.getAttribute("data-nb");
+        const secs = sectionsFor(state.selectedNbId);
+        state.selectedSecId = secs[0] ? secs[0].id : "";
+        const pgs = pagesFor(state.selectedSecId);
+        state.selectedPageId = pgs[0] ? pgs[0].id : "";
+        renderAll();
+      }});
+    }});
+    rail.querySelectorAll("[data-del-nb]").forEach(function (btn) {{
+      btn.onclick = function (e) {{ e.stopPropagation(); deleteNotebook(btn.getAttribute("data-del-nb")); }};
+    }});
+    rail.querySelectorAll("input.lt-tree-name").forEach(function (inp) {{
+      inp.addEventListener("click", function (e) {{ e.stopPropagation(); }});
+      inp.addEventListener("change", function () {{
+        const id = inp.getAttribute("data-id");
+        const val = (inp.value || "").trim() || "Untitled";
+        const nb = state.notebooks.find(function (n) {{ return n.id === id; }});
+        if (nb) {{ nb.name = val; nb.updated_at = nowIso(); markDirty(); }}
+      }});
+    }});
+  }}
+
+  function renderSectionsAndPages() {{
+    const tabs = doc.getElementById("lt-onenote-sectabs");
+    const list = doc.getElementById("lt-onenote-pagelist");
+    if (!tabs || !list) return;
+    const secs = sectionsFor(state.selectedNbId);
+    let th = "";
+    secs.forEach(function (sec, i) {{
+      const active = sec.id === state.selectedSecId ? " lt-active" : "";
+      const color = SEC_COLORS[i % SEC_COLORS.length];
+      th += '<button type="button" class="lt-sec-tab' + active + '" data-sec="' + sec.id + '" style="background:' + color + '" title="' + escAttr(sec.name) + '">' + escHtml(sec.name) + "</button>";
+    }});
+    th += '<button type="button" class="lt-sec-add" id="lt-add-sec" title="Add section">+</button>';
+    if (state.selectedSecId) {{
+      th += '<button type="button" class="lt-sec-add" id="lt-del-sec" title="Delete section" style="color:#c62828;border-color:#e0a0a0">×</button>';
+    }}
+    tabs.innerHTML = th;
+
+    let ph = '<div class="lt-pane-head"><span>Pages</span><button type="button" id="lt-add-pg" title="Add page">+</button></div>';
+    const pgs = pagesFor(state.selectedSecId);
+    if (!pgs.length) {{
+      ph += '<div style="padding:0.75rem;color:#888;font-size:0.85rem">No pages yet. Click + to add one.</div>';
+    }}
+    pgs.forEach(function (pg) {{
+      const active = pg.id === state.selectedPageId ? " lt-active" : "";
+      ph += '<div class="lt-pg-row' + active + '" data-pg="' + pg.id + '">';
+      ph += '<input class="lt-tree-name" data-rename="pg" data-id="' + pg.id + '" value="' + escAttr(pg.title || "Untitled page") + '" />';
+      ph += '<button type="button" class="lt-tree-del" data-del-pg="' + pg.id + '" title="Delete">×</button>';
+      ph += "</div>";
+    }});
+    list.innerHTML = ph;
+
+    tabs.querySelectorAll("[data-sec]").forEach(function (btn) {{
+      btn.onclick = function () {{
+        flushEditorToState();
+        state.selectedSecId = btn.getAttribute("data-sec");
+        const pgs2 = pagesFor(state.selectedSecId);
+        state.selectedPageId = pgs2[0] ? pgs2[0].id : "";
+        renderAll();
+      }};
+      btn.ondblclick = function () {{
+        const sec = state.sections.find(function (s) {{ return s.id === btn.getAttribute("data-sec"); }});
+        if (!sec) return;
+        const name = win.prompt("Rename section", sec.name);
+        if (name === null) return;
+        sec.name = (name || "").trim() || "Untitled section";
+        sec.updated_at = nowIso();
+        markDirty();
+        renderAll();
+      }};
+    }});
+    const addSec = doc.getElementById("lt-add-sec");
+    if (addSec) addSec.onclick = function () {{ addSection(); }};
+    const delSec = doc.getElementById("lt-del-sec");
+    if (delSec) delSec.onclick = function () {{ deleteSection(state.selectedSecId); }};
+    const addPg = doc.getElementById("lt-add-pg");
+    if (addPg) addPg.onclick = function () {{ addPage(); }};
+    list.querySelectorAll(".lt-pg-row").forEach(function (row) {{
+      row.addEventListener("click", function (e) {{
+        if (e.target.closest("button,input")) return;
+        flushEditorToState();
+        state.selectedPageId = row.getAttribute("data-pg");
+        renderAll();
+      }});
+    }});
+    list.querySelectorAll("[data-del-pg]").forEach(function (btn) {{
+      btn.onclick = function (e) {{ e.stopPropagation(); deletePage(btn.getAttribute("data-del-pg")); }};
+    }});
+    list.querySelectorAll("input.lt-tree-name").forEach(function (inp) {{
+      inp.addEventListener("click", function (e) {{ e.stopPropagation(); }});
+      inp.addEventListener("change", function () {{
+        const id = inp.getAttribute("data-id");
+        const val = (inp.value || "").trim() || "Untitled page";
+        const pg = state.pages.find(function (p) {{ return p.id === id; }});
+        if (pg) {{ pg.title = val; pg.updated_at = nowIso(); markDirty(); }}
+      }});
+    }});
   }}
 
   function renderEditor() {{
@@ -892,7 +980,7 @@ def inject_floating_chrome(
     if (!editor) return;
     const page = selectedPage();
     if (!page) {{
-      editor.innerHTML = '<div id="lt-onenote-empty">Select a page or click <b>+</b> on a section to add one.</div>';
+      editor.innerHTML = '<div id="lt-onenote-empty">Select a page or click <b>+</b> on Pages to add one.</div>';
       return;
     }}
     editor.innerHTML = `
@@ -946,14 +1034,13 @@ def inject_floating_chrome(
     doc.getElementById("lt-btn-save").onclick = function () {{ persistViaBridge(false); }};
     doc.getElementById("lt-btn-save-close").onclick = function () {{ persistViaBridge(true); }};
     doc.getElementById("lt-page-title").oninput = function () {{ markDirty(); }};
-    if (body) {{
-      body.oninput = function () {{ markDirty(); }};
-    }}
+    if (body) body.oninput = function () {{ markDirty(); }};
     if (rem) rem.onchange = function () {{ markDirty(); }};
   }}
 
   function renderAll() {{
-    renderTree();
+    renderNotebooks();
+    renderSectionsAndPages();
     renderEditor();
   }}
 
@@ -961,17 +1048,7 @@ def inject_floating_chrome(
     const overlay = doc.getElementById("lt-onenote-overlay");
     if (!overlay) return;
     overlay.classList.add("lt-open");
-    if (!state.selectedPageId && state.pages.length) {{
-      state.selectedPageId = state.pages[0].id;
-    }}
-    // Expand ancestors of focused page
-    if (state.selectedPageId) {{
-      const pg = selectedPage();
-      if (pg) {{
-        state.expandedNb[pg.notebook_id] = true;
-        state.expandedSec[pg.section_id] = true;
-      }}
-    }}
+    syncSelectionFromFocus();
     renderAll();
   }}
   function closePanel() {{
@@ -1012,6 +1089,14 @@ def inject_floating_chrome(
         else openPanel();
       }});
       doc.body.appendChild(fab);
+    }} else {{
+      // Rebind FAB to hydrated openPanel (shell may have bound a stub)
+      fab.onclick = function (e) {{
+        e.preventDefault(); e.stopPropagation();
+        const overlay = doc.getElementById("lt-onenote-overlay");
+        if (overlay && overlay.classList.contains("lt-open")) closePanel();
+        else openPanel();
+      }};
     }}
 
     let overlay = doc.getElementById("lt-onenote-overlay");
@@ -1026,7 +1111,11 @@ def inject_floating_chrome(
             <button type="button" id="lt-onenote-close">Close</button>
           </div>
           <div id="lt-onenote-body">
-            <div id="lt-onenote-rail"></div>
+            <div id="lt-onenote-nblist"></div>
+            <div id="lt-onenote-mid">
+              <div id="lt-onenote-sectabs"></div>
+              <div id="lt-onenote-pagelist"></div>
+            </div>
             <div id="lt-onenote-editor"></div>
           </div>
         </div>
@@ -1038,14 +1127,27 @@ def inject_floating_chrome(
       const closeBtn = doc.getElementById("lt-onenote-close");
       if (closeBtn) closeBtn.onclick = function (e) {{ e.preventDefault(); closePanel(); }};
     }} else {{
-      // Refresh in-memory tree from latest inject if panel closed / not dirty
+      // Migrate old two-pane shell → three-pane if needed
+      const body = doc.getElementById("lt-onenote-body");
+      if (body && !doc.getElementById("lt-onenote-nblist")) {{
+        body.innerHTML = `
+          <div id="lt-onenote-nblist"></div>
+          <div id="lt-onenote-mid">
+            <div id="lt-onenote-sectabs"></div>
+            <div id="lt-onenote-pagelist"></div>
+          </div>
+          <div id="lt-onenote-editor"></div>`;
+      }}
       if (!overlay.classList.contains("lt-open") || !state.dirty) {{
         state.notebooks = Array.isArray(TREE.notebooks) ? TREE.notebooks.map(function (x) {{ return Object.assign({{}}, x); }}) : [];
         state.sections = Array.isArray(TREE.sections) ? TREE.sections.map(function (x) {{ return Object.assign({{}}, x); }}) : [];
         state.pages = Array.isArray(TREE.pages) ? TREE.pages.map(function (x) {{ return Object.assign({{}}, x); }}) : [];
         state.dirty = false;
         if (FOCUS_PAGE) state.selectedPageId = FOCUS_PAGE;
+        syncSelectionFromFocus();
       }}
+      const closeBtn = doc.getElementById("lt-onenote-close");
+      if (closeBtn) closeBtn.onclick = function (e) {{ e.preventDefault(); closePanel(); }};
     }}
 
     if (!win.__ltJumpScrollBound) {{
@@ -1064,7 +1166,6 @@ def inject_floating_chrome(
       win.setInterval(onScroll, 800);
     }}
 
-    // Expose for sidebar / dashboard / early shell
     win.__ltOpenOneNote = openPanel;
     win.__ltCloseOneNote = closePanel;
     win.__ltRenderOneNote = renderAll;
@@ -1083,8 +1184,6 @@ def inject_floating_chrome(
       }} catch (e) {{}}
     }}
 
-    // If shell opened the panel before this hydrate arrived, paint the tree now
-    // (otherwise UI stays on "Loading notebook…").
     const openOverlay = doc.getElementById("lt-onenote-overlay");
     if (openOverlay && openOverlay.classList.contains("lt-open")) {{
       try {{ renderAll(); }} catch (e) {{}}
@@ -1096,7 +1195,6 @@ def inject_floating_chrome(
 </script>
 </body></html>
 """
-    # height=1: Streamlit often skips executing scripts in height=0 iframes
     components.html(html, height=1, width=1)
     st.session_state[_CHROME_FLAG] = True
     st.session_state[_SHELL_FLAG] = True

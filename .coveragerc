@@ -1,6 +1,6 @@
 # Coverage config — business logic in src/
 # Streamlit page modules omitted (UI wiring; covered by E2E UAT, not unit tests)
-# fail_under ~90 accepted (coverage chase to 96 abandoned)
+# Measured fail_under=90 (do not chase 96)
 [run]
 source = src
 branch = False
