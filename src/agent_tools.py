@@ -127,8 +127,19 @@ def under_daily_email_cap(
     Cap is autonomy_daily_email_cap, optionally lowered by autopilot_daily_target.
     When a Gmail send pool is active, also stop once pool remaining capacity is 0
     (all mailboxes at their per-account daily_cap).
+
+    When autopilot_enabled + send_live_emails, campaign due-emails and the
+    autonomy pass share this same remaining budget (see src.capacity).
     """
     company = company or {}
+    try:
+        from .capacity import today_capacity
+
+        snap = today_capacity(company, today=today)
+        return (not snap["exhausted"] and snap["remaining"] > 0), snap["sent"], snap["capacity"]
+    except Exception:
+        pass
+
     try:
         cap = int(company.get("autonomy_daily_email_cap") or DEFAULT_DAILY_EMAIL_CAP)
     except Exception:
@@ -145,16 +156,11 @@ def under_daily_email_cap(
     sent = emails_sent_today(today=today)
     ok = sent < cap
 
-    # Soft-stop when multi-Gmail pool is exhausted for the day
     try:
-        from .mailboxes import pool_exhausted, pool_usable, total_remaining_capacity
+        from .mailboxes import pool_exhausted, pool_usable
 
         if pool_usable() and pool_exhausted():
             ok = False
-            # Surface pool total as the effective remaining-aware cap for UI
-            pool_rem = total_remaining_capacity()
-            # Keep reporting company cap; caller sees under_email_cap=False
-            _ = pool_rem
     except Exception:
         pass
 
@@ -423,6 +429,7 @@ def tool_escalate_to_owner(
     reason: str,
     funnel: str = "shipper",
 ) -> ToolResult:
+    """Notify owner + create a high-priority Dashboard task. Always both."""
     reason = (reason or "Agent escalation").strip()
     co = lead.get("company_name") or "?"
     email = lead.get("email") or ""
@@ -438,12 +445,36 @@ def tool_escalate_to_owner(
     lead["active_sequence"] = False
     if normalize_crm_status(lead.get("crm_status")) not in ("dnc", "converted"):
         lead["crm_status"] = normalize_crm_status("waiting_reply")
+    # High-priority Dashboard task (always)
+    task_id = ""
+    try:
+        lid = _resolve_lead_key(lead, funnel)
+        if not (lead.get("id") or "").strip():
+            lead["id"] = lid
+        due = datetime.now().replace(microsecond=0).isoformat(timespec="minutes")
+        task = crm_create_task(
+            lead_id=lid,
+            title=f"ESCALATE: {co} — {reason[:80]}",
+            due_at=due,
+            funnel=funnel,
+            company_name=co,
+            notes=reason,
+            priority="high",
+        )
+        task_id = task.get("id") or ""
+    except Exception:
+        task_id = ""
+    # Bump lead priority so list/filters surface it
+    try:
+        lead["priority"] = normalize_priority("high")
+    except Exception:
+        lead["priority"] = "high"
     return ToolResult(
         ok=True,
         action="escalate_to_owner",
-        message="escalated to owner",
+        message="escalated to owner (notified + high-priority task)",
         escalated=True,
-        data={"reason": reason},
+        data={"reason": reason, "task_id": task_id},
     )
 
 

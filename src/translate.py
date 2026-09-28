@@ -185,7 +185,7 @@ def _store_original(key_prefix: str, subject: str, body: str) -> None:
     st.session_state[f"{key_prefix}_lang_orig_body"] = body
 
 
-def render_email_lang_toolbar(
+def render_email_lang_toolbar(  # pragma: no cover
     *,
     key_prefix: str,
     company: Optional[dict] = None,
@@ -294,7 +294,7 @@ def render_email_lang_toolbar(
     }
 
 
-def render_inbound_translate(
+def render_inbound_translate(  # pragma: no cover
     *,
     key_prefix: str,
     inbound_key: str,
@@ -327,7 +327,7 @@ def render_inbound_translate(
             st.code(orig)
 
 
-def render_preview_translate(
+def render_preview_translate(  # pragma: no cover
     subject: str,
     body: str,
     *,

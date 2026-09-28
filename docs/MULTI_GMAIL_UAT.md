@@ -1,4 +1,4 @@
-# Multi-Gmail send pool UAT (v2026.09.26e)
+# Multi-Gmail send pool UAT (v2026.09.27a)
 
 Click through this checklist after deploy. **Do not commit real App Passwords.**
 

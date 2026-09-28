@@ -5,13 +5,37 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 | Field | Fill in |
 |--------|---------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Version to confirm** | **v2026.09.26j** — or check the caption under **LogixTrek Outreach** in the left sidebar |
+| **Version to confirm** | **v2026.09.27a · Notes + capacity UAT** — caption under **LogixTrek Outreach** in the left sidebar |
 | **Tester name** | _______________________________ |
 | **Date** | _______________ |
 
 ---
 
-## Automation status (v2026.09.26j)
+## Cloud smoke — 15 key lines (do these first)
+
+After deploy, confirm the sidebar caption shows **v2026.09.27a**. Then click through:
+
+1. **Login** — Super Admin email + PIN → sidebar shows your name / role.
+2. **Version** — caption reads `v2026.09.27a · Notes + capacity UAT`.
+3. **Notes FAB** — click 📝 (bottom-right). Panel opens in under 1s (no full-page wait). Tree / page editor visible (not stuck on “Loading notebook…”).
+4. **Notes edit + Save** — type in a page → **Save** → toast “OneNote saved”; reopen FAB and confirm text stuck.
+5. **Sidebar Add Note** — **📝 Add Note** opens the same panel (hydrated tree).
+6. **Jump-top** — scroll down a long page → ↑ appears → click scrolls to top.
+7. **Dry-run send** — **Send LIVE emails** OFF. Pipeline / due send still “sends” as dry-run (no real mail).
+8. **DNC** — mark a lead Do Not Contact → bot / agent / campaign skip it.
+9. **Today capacity** — Dashboard shows Capacity / Sent / Remaining (soft cap ± Gmail pool).
+10. **Multi-Gmail** — Org Setup → Gmail send pool: 2–3 App Passwords, caps 200 (see `docs/MULTI_GMAIL_UAT.md`). Live test only to yourself.
+11. **Autopilot dry-run** — Autopilot ON, LIVE OFF → **Run agent now** once; read summary; no real mail.
+12. **Autopilot LIVE caution** — only when ready: LIVE ON + Autopilot ON shares soft cap + pool. Soft-stops when exhausted; resumes next day. Keep intentional.
+13. **Inbox Bot** — paste a rate/pricing reply → escalate creates **owner notify + high-priority task**. Paste OOO / thanks → no escalate spam.
+14. **Spanish** — Pipeline preview **Convert to Spanish**; Inbox paste Spanish → **Convert to English**; edit before send.
+15. **Sign out** — sidebar **Sign out** returns to login.
+
+**Safety:** keep **Send LIVE emails** OFF until Multi-Gmail / live steps. IMAP poll stays **OFF** unless App Passwords verified (`imap_poll_enabled`).
+
+---
+
+## Automation status (v2026.09.27a)
 
 Many cases below are **covered by automated pytest** (mocked SMTP / Places / LLM / IMAP). Mark them **Skip** for human UAT unless you want a live click-through. Keep the **Human-only** list short.
 
@@ -89,7 +113,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 **Steps:**
 1. Look under **LogixTrek Outreach** in the left sidebar.
 2. Read the small version / caption line.
-**Expected:** Caption is visible. Note the exact text (should be **v2026.09.26j** or the current build label). Write what you see in Comment.
+**Expected:** Caption is visible. Note the exact text (should be **v2026.09.27a · Notes + capacity UAT** or the current build label). Write what you see in Comment.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:** (write exact caption here)  
 **Screenshot:** (filename)
@@ -730,7 +754,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 1. From Dashboard, click **📝 Add Note** in the sidebar (and/or the bottom-right Add Note button).
 2. Navigate to Shipper → Leads List and confirm Add Note is still available.
 3. Navigate to Carrier and Lead for X pages — same.
-**Expected:** Add Note is reachable on every authenticated page. Floating **📝** opens the client OneNote panel instantly (no full-app wait). Left rail: notebooks → sections → pages.
+**Expected:** Add Note is reachable on every authenticated page. Floating **📝** opens the client OneNote panel instantly (no full-app wait). After open, notebook tree paints (not stuck on “Loading notebook…”). Left rail: notebooks → sections → pages.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
 **Screenshot:** (filename)

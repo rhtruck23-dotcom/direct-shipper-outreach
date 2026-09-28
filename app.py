@@ -3041,9 +3041,7 @@ def page_inbox():
             }
         )
 
-        if decision.intent == "escalate" or (
-            decision.escalate_to_owner and decision.intent == "escalate"
-        ):
+        if decision.intent == "escalate":
             tool_escalate_to_owner(
                 lead,
                 company,
@@ -3054,6 +3052,8 @@ def page_inbox():
                 "Escalated — owner notified + high-priority Dashboard task created. "
                 "You close rates / loads yourself."
             )
+            if decision.owner_alert:
+                st.code(decision.owner_alert)
         elif decision.reply_body and not is_dnc(lead):
             # Draft for edit + Spanish convert before optional send
             st.session_state["ship_inbox_draft_subj"] = decision.reply_subject or ""
@@ -3069,19 +3069,6 @@ def page_inbox():
         elif decision.intent == "ooo":
             tool_append_note(lead, "[bot] OOO / auto-reply — sequence kept, no outbound.", author="agent")
             st.info("Out-of-office detected — no reply sent; sequence kept for later.")
-
-        if decision.escalate_to_owner and decision.owner_alert and decision.intent != "escalate":
-            tool_escalate_to_owner(
-                lead,
-                company,
-                reason=decision.owner_alert,
-                funnel="shipper",
-            )
-            st.info("Owner alert + high-priority task logged.")
-            st.code(decision.owner_alert)
-        elif decision.escalate_to_owner and decision.intent == "escalate":
-            st.info("Owner alert + high-priority task logged.")
-            st.code(decision.owner_alert)
 
         rem = lead.get("remarks") or ""
         tag = f"Reply:{decision.intent}"
@@ -3260,6 +3247,15 @@ def main():
     if not user:
         return
 
+    # Reset once-per-run Notes shell guard, then inject FAB before page / Sheet work
+    st.session_state["_lt_notes_shell_done"] = False
+    try:
+        from src.floating_chrome import inject_notes_shell
+
+        inject_notes_shell()
+    except Exception:
+        pass
+
     _handle_gmail_oauth_callback()
 
     pages_available = allowed_pages(user)
@@ -3355,7 +3351,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.26j · OneNote clone")
+        st.caption("v2026.09.27a · Notes + capacity UAT")
 
         from src.notes_ui import render_sidebar_add_note_button
 

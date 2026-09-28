@@ -23,6 +23,7 @@ TASK_COLUMNS = [
     "title",
     "due_at",
     "status",
+    "priority",
     "created_at",
     "done_at",
     "company_name",
@@ -94,6 +95,7 @@ def _blank_task() -> dict[str, Any]:
         "title": "",
         "due_at": "",
         "status": "open",  # open | done
+        "priority": "medium",  # low | medium | high
         "created_at": "",
         "done_at": "",
         "company_name": "",
@@ -107,6 +109,8 @@ def _normalize_task(raw: dict) -> dict:
         if k in raw and raw[k] not in (None,):
             t[k] = raw[k]
     t["status"] = "done" if str(t.get("status") or "").lower() == "done" else "open"
+    pri = str(t.get("priority") or "medium").strip().lower()
+    t["priority"] = pri if pri in ("low", "medium", "high") else "medium"
     t["title"] = str(t.get("title") or "").strip()
     t["lead_id"] = str(t.get("lead_id") or "").strip()
     t["funnel"] = str(t.get("funnel") or "shipper").strip() or "shipper"
@@ -204,6 +208,7 @@ def create_task(
     funnel: str = "shipper",
     company_name: str = "",
     notes: str = "",
+    priority: str = "medium",
 ) -> dict:
     tasks = load_tasks()
     task = _normalize_task(
@@ -214,6 +219,7 @@ def create_task(
             "funnel": funnel,
             "company_name": company_name,
             "notes": notes,
+            "priority": priority,
             "status": "open",
         }
     )

@@ -21,6 +21,28 @@ def run_due_emails(
     keyset = {k.lower() for k in only_keys} if only_keys else None
     results = []
 
+    # When autopilot + LIVE, share mailbox/soft caps with the autonomy pass
+    share_caps = bool(company.get("autonomy_autopilot") and company.get("send_live_emails"))
+    cap_snap = None
+    if share_caps:
+        try:
+            from .capacity import can_send_under_shared_caps
+
+            ok_cap, reason, cap_snap = can_send_under_shared_caps(company)
+            if not ok_cap:
+                return [
+                    {
+                        "lead": "(pool)",
+                        "ok": False,
+                        "error": reason
+                        or "Shared daily capacity exhausted — resumes next day",
+                        "capacity": cap_snap,
+                        "mailbox_exhausted": True,
+                    }
+                ]
+        except Exception:
+            share_caps = False
+
     for lead in leads:
         if keyset is not None and lead_key(lead) not in keyset:
             continue
@@ -50,6 +72,26 @@ def run_due_emails(
         step = next_action_for_lead(lead, today)
         if step is None:
             continue
+
+        # Re-check shared caps before each send when autopilot+live
+        if share_caps:
+            try:
+                from .capacity import can_send_under_shared_caps
+
+                ok_cap, reason, cap_snap = can_send_under_shared_caps(company)
+                if not ok_cap:
+                    results.append(
+                        {
+                            "lead": lead.get("company_name"),
+                            "ok": False,
+                            "error": reason or "Shared daily capacity exhausted",
+                            "mailbox_exhausted": True,
+                            "capacity": cap_snap,
+                        }
+                    )
+                    break
+            except Exception:
+                pass
 
         subject, body = render_email(step, lead, company)
         send_result = send_email(

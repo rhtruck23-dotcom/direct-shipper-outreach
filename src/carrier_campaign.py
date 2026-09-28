@@ -20,6 +20,25 @@ def run_due_carrier_emails(
     keyset = {k.lower() for k in only_keys} if only_keys else None
     results = []
 
+    share_caps = bool(company.get("autonomy_autopilot") and company.get("send_live_emails"))
+    if share_caps:
+        try:
+            from .capacity import can_send_under_shared_caps
+
+            ok_cap, reason, snap = can_send_under_shared_caps(company)
+            if not ok_cap:
+                return [
+                    {
+                        "lead": "(pool)",
+                        "ok": False,
+                        "error": reason or "Shared daily capacity exhausted — resumes next day",
+                        "capacity": snap,
+                        "mailbox_exhausted": True,
+                    }
+                ]
+        except Exception:
+            share_caps = False
+
     for lead in leads:
         if keyset is not None and carrier_key(lead) not in keyset:
             continue
@@ -48,6 +67,25 @@ def run_due_carrier_emails(
         step = next_action_for_lead(lead, today)
         if step is None:
             continue
+
+        if share_caps:
+            try:
+                from .capacity import can_send_under_shared_caps
+
+                ok_cap, reason, snap = can_send_under_shared_caps(company)
+                if not ok_cap:
+                    results.append(
+                        {
+                            "lead": lead.get("company_name"),
+                            "ok": False,
+                            "error": reason or "Shared daily capacity exhausted",
+                            "mailbox_exhausted": True,
+                            "capacity": snap,
+                        }
+                    )
+                    break
+            except Exception:
+                pass
 
         subject, body = render_carrier_email(step, lead, company)
         send_result = send_email(

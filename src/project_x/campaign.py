@@ -29,6 +29,25 @@ def run_due_x_emails(
     results = []
     pid = project.get("id") or ""
 
+    share_caps = bool(company.get("autonomy_autopilot") and company.get("send_live_emails"))
+    if share_caps:
+        try:
+            from ..capacity import can_send_under_shared_caps
+
+            ok_cap, reason, snap = can_send_under_shared_caps(company)
+            if not ok_cap:
+                return [
+                    {
+                        "lead": "(pool)",
+                        "ok": False,
+                        "error": reason or "Shared daily capacity exhausted — resumes next day",
+                        "capacity": snap,
+                        "mailbox_exhausted": True,
+                    }
+                ]
+        except Exception:
+            share_caps = False
+
     for lead in leads:
         if pid and (lead.get("project_id") or "") != pid:
             continue
@@ -59,6 +78,25 @@ def run_due_x_emails(
         step = next_action_for_lead(lead, today)
         if step is None:
             continue
+
+        if share_caps:
+            try:
+                from ..capacity import can_send_under_shared_caps
+
+                ok_cap, reason, snap = can_send_under_shared_caps(company)
+                if not ok_cap:
+                    results.append(
+                        {
+                            "lead": lead.get("company_name"),
+                            "ok": False,
+                            "error": reason or "Shared daily capacity exhausted",
+                            "mailbox_exhausted": True,
+                            "capacity": snap,
+                        }
+                    )
+                    break
+            except Exception:
+                pass
 
         if use_llm:
             subject, body, reasoning = compose_step_email(

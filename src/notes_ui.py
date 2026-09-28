@@ -3,6 +3,9 @@ OneNote UI bridge: client-side clone panel (floating_chrome) + one Save bridge.
 
 The Streamlit left-rail / dialog editor was removed — all notebook/section/page
 UX is DOM-only in the parent document. Persist only on Save.
+
+Opening 📝 is zero-rerun (DOM). Early inject_notes_shell() puts the FAB on
+screen before any notes I/O so open feels instant.
 """
 from __future__ import annotations
 
@@ -31,8 +34,32 @@ def open_note_panel(note_id: str | None = None) -> None:
 
 
 def render_sidebar_add_note_button() -> None:
+    """
+    Sidebar entry. Streamlit always reruns on button click; we also fire a
+    client open so the panel appears as soon as the shell exists (no wait for
+    a second round-trip beyond this click's inevitable rerun).
+    """
+    import streamlit.components.v1 as components
+
     if st.button("📝 Add Note", key="sidebar_add_note", use_container_width=True):
         open_note_panel()
+        try:
+            components.html(
+                """<script>
+(function () {
+  const w = window.parent;
+  try { w.sessionStorage.setItem("lt_onenote_keep_open", "1"); } catch (e) {}
+  if (typeof w.__ltOpenOneNote === "function") {
+    try { w.__ltOpenOneNote(); } catch (e) {}
+  }
+})();
+</script>""",
+                height=1,
+                width=1,
+            )
+        except Exception:
+            pass
+        # Soft rerun only to hydrate tree; shell already opens via JS/sessionStorage
         st.rerun()
 
 
@@ -70,6 +97,21 @@ def _read_save_payload() -> Optional[dict[str, Any]]:
     return None
 
 
+def _cached_tree() -> dict[str, Any]:
+    """Session-cached export; notes.py also memoizes until save."""
+    tree = st.session_state.get("_onenote_tree_cache")
+    if isinstance(tree, dict) and "notebooks" in tree:
+        return tree
+    ensure_default_notebook()
+    tree = export_tree_for_client()
+    st.session_state["_onenote_tree_cache"] = tree
+    return tree
+
+
+def _invalidate_tree_cache() -> None:
+    st.session_state.pop("_onenote_tree_cache", None)
+
+
 def render_floating_add_note(
     *,
     company: Optional[dict] = None,
@@ -79,10 +121,11 @@ def render_floating_add_note(
     Inject client OneNote clone + jump-top. Handle one Save bridge rerun.
     Opening 📝 is zero-rerun (DOM). Save is the only intentional notes rerun.
     """
-    from .floating_chrome import _bridge_widgets, inject_floating_chrome
+    from .floating_chrome import _bridge_widgets, inject_floating_chrome, inject_notes_shell
     import streamlit.components.v1 as components
 
-    ensure_default_notebook()
+    # Shell first — FAB usable even if tree load hiccups
+    inject_notes_shell()
 
     # Query-param save fallback
     try:
@@ -123,7 +166,6 @@ def render_floating_add_note(
   const desc = Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype, "value");
   if (desc && desc.set) desc.set.call(ta, payload); else ta.value = payload;
   ta.dispatchEvent(new Event("input", { bubbles: true }));
-  // Re-click save so Streamlit picks up the value on the next run
   const buttons = Array.from(doc.querySelectorAll("button"));
   const btn = buttons.find(function (b) {
     return (b.innerText || "").trim() === "lt_onenote_save";
@@ -135,10 +177,9 @@ def render_floating_add_note(
 })();
 </script>
 """,
-            height=0,
-            width=0,
+            height=1,
+            width=1,
         )
-        # Second click arrives on next run with payload in textarea
     elif save_clicked and not payload_ready and st.session_state.get("_onenote_resync_done"):
         st.session_state.pop("_onenote_resync_done", None)
         st.warning("OneNote save did not sync — click Save once more.")
@@ -170,6 +211,7 @@ def render_floating_add_note(
                 company=company,
                 transcribe_audio=transcribe,
             )
+            _invalidate_tree_cache()
             st.session_state["onenote_save_payload"] = ""
             try:
                 import streamlit.components.v1 as _c
@@ -181,8 +223,8 @@ try {
   window.parent.sessionStorage.removeItem("lt_onenote_resync");
 } catch (e) {}
 </script>""",
-                    height=0,
-                    width=0,
+                    height=1,
+                    width=1,
                 )
             except Exception:
                 pass
@@ -195,7 +237,7 @@ try {
                 st.session_state["notes_panel_open"] = True
             st.toast("OneNote saved")
 
-    tree = export_tree_for_client()
+    tree = _cached_tree()
     focus = str(st.session_state.get("selected_note_id") or "")
     auto_open = bool(
         st.session_state.get("onenote_client_open")

@@ -60,10 +60,43 @@ REFERRAL_PATTERNS = [
     r"\bour (logistics|transportation|shipping) (manager|team|dept)",
 ]
 
+# Routine — auto-handle, no owner escalate
+OOO_PATTERNS = [
+    r"\bout of (the )?office\b",
+    r"\booo\b",
+    r"\bon (vacation|leave|pto|holiday)\b",
+    r"\baway (from|until)\b",
+    r"\bautomatic reply\b",
+    r"\bauto[\s-]?reply\b",
+    r"\bi will be (out|away)\b",
+]
+
+THANKS_ONLY_PATTERNS = [
+    r"^(thanks|thank you|thx|ty)[\s!.]*$",
+    r"^(thanks|thank you)[,!]?\s+(got it|received|noted)[\s!.]*$",
+]
+
+TIMING_PATTERNS = [
+    r"\b(not right now|not at (this|the) (time|moment)|maybe later|check back|reach out in)\b",
+    r"\b(next quarter|after (the )?holidays|in a few months)\b",
+    r"\bcircling back later\b",
+]
+
+INFO_REQUEST_PATTERNS = [
+    r"\b(where are you based|what (lanes|equipment) do you (run|haul))\b",
+    r"\b(send|share) (your )?(authority|mc|dot|website)\b",
+    r"\bcompany (info|snapshot|overview)\b",
+]
+
+ALREADY_COVERED_PATTERNS = [
+    r"\b(already have (a )?(carrier|broker|provider)|we('re| are) all set|not looking)\b",
+    r"\bhappy with (our|current) (carrier|provider)\b",
+]
+
 
 @dataclass
 class BotDecision:
-    intent: str  # opt_out | escalate | positive | referral | unclear
+    intent: str  # opt_out | escalate | positive | referral | ooo | thanks | timing | info | covered | unclear
     auto_send: bool
     reply_subject: str
     reply_body: str
@@ -74,13 +107,28 @@ class BotDecision:
 
 
 def classify_reply(text: str) -> str:
-    t = (text or "").lower()
+    t = (text or "").lower().strip()
     for pat in OPT_OUT_PATTERNS:
         if re.search(pat, t):
             return "opt_out"
     for pat in ESCALATE_PATTERNS:
         if re.search(pat, t):
             return "escalate"
+    for pat in OOO_PATTERNS:
+        if re.search(pat, t):
+            return "ooo"
+    for pat in THANKS_ONLY_PATTERNS:
+        if re.search(pat, t, flags=re.I):
+            return "thanks"
+    for pat in TIMING_PATTERNS:
+        if re.search(pat, t):
+            return "timing"
+    for pat in ALREADY_COVERED_PATTERNS:
+        if re.search(pat, t):
+            return "covered"
+    for pat in INFO_REQUEST_PATTERNS:
+        if re.search(pat, t):
+            return "info"
     for pat in REFERRAL_PATTERNS:
         if re.search(pat, t):
             return "referral"
@@ -102,6 +150,7 @@ def handle_reply(lead: dict, inbound_text: str, company: dict[str, Any]) -> BotD
     dot = company.get("my_dot", "")
     web = company.get("website", "")
     equip = company.get("equipment", "")
+    origin = company.get("origin_area", "")
 
     if intent == "opt_out":
         return BotDecision(
@@ -137,6 +186,92 @@ def handle_reply(lead: dict, inbound_text: str, company: dict[str, Any]) -> BotD
             mark_positive=True,
         )
 
+    if intent == "ooo":
+        return BotDecision(
+            intent=intent,
+            auto_send=False,  # no reply to auto-responder noise
+            reply_subject="",
+            reply_body="",
+            escalate_to_owner=False,
+            owner_alert="",
+            stop_sequence=False,  # keep sequence; nudge next_contact later via agent
+            mark_positive=False,
+        )
+
+    if intent == "thanks":
+        return BotDecision(
+            intent=intent,
+            auto_send=True,
+            reply_subject=f"Re: You're welcome — {my}",
+            reply_body=(
+                f"Hi {contact},\n\n"
+                f"You're welcome — happy to help. If a lane or capacity question "
+                f"comes up later, my direct line is {phone}.\n\n"
+                f"{name}\n{my}"
+            ),
+            escalate_to_owner=False,
+            owner_alert="",
+            stop_sequence=True,
+            mark_positive=True,
+        )
+
+    if intent == "timing":
+        return BotDecision(
+            intent=intent,
+            auto_send=True,
+            reply_subject=f"Re: Timing noted — {my}",
+            reply_body=(
+                f"Hi {contact},\n\n"
+                f"Understood on timing — I'll pause outreach for now and check back later. "
+                f"If anything opens up sooner, I'm at {phone} / {email}.\n\n"
+                f"{name}\n{my}"
+            ),
+            escalate_to_owner=False,
+            owner_alert="",
+            stop_sequence=True,
+            mark_positive=True,
+        )
+
+    if intent == "covered":
+        return BotDecision(
+            intent=intent,
+            auto_send=True,
+            reply_subject=f"Re: Thanks for letting me know — {my}",
+            reply_body=(
+                f"Hi {contact},\n\n"
+                f"Appreciate the clarity — glad {co} is covered. I'll close the loop "
+                f"on our side. If you ever need backup capacity, keep us in mind "
+                f"({phone}).\n\n"
+                f"{name}\n{my}"
+            ),
+            escalate_to_owner=False,
+            owner_alert="",
+            stop_sequence=True,
+            mark_positive=False,
+        )
+
+    if intent == "info":
+        return BotDecision(
+            intent=intent,
+            auto_send=True,
+            reply_subject=f"Re: {my} — quick company snapshot",
+            reply_body=(
+                f"Hi {contact},\n\n"
+                f"Happy to share a quick snapshot of {my}:\n"
+                f"- Based: {origin}\n"
+                f"- Equipment: {equip}\n"
+                f"- Authority: {mc} / {dot}\n"
+                f"- Website: {web}\n"
+                f"- Direct: {phone} | {email}\n\n"
+                f"Happy to dig into a specific lane whenever useful.\n\n"
+                f"{name}\n{my}"
+            ),
+            escalate_to_owner=False,
+            owner_alert="",
+            stop_sequence=False,
+            mark_positive=True,
+        )
+
     if intent == "referral":
         return BotDecision(
             intent=intent,
@@ -150,8 +285,9 @@ def handle_reply(lead: dict, inbound_text: str, company: dict[str, Any]) -> BotD
                 f"I'll reach out to them directly and won't keep bothering you.\n\n"
                 f"{name}\n{my} | {phone}\nMC# {mc}"
             ),
-            escalate_to_owner=True,
-            owner_alert=f"Referral reply from {co}. Bot asked for the right contact. Review thread.",
+            # Soft notify via note/task only when referral names arrive — not escalate
+            escalate_to_owner=False,
+            owner_alert="",
             stop_sequence=True,
             mark_positive=True,
         )
@@ -169,20 +305,18 @@ def handle_reply(lead: dict, inbound_text: str, company: dict[str, Any]) -> BotD
                 f"- Authority: {mc} / {dot}\n"
                 f"- Website: {web}\n"
                 f"- Direct line: {phone} | {email}\n\n"
-                f"Happy to hop on a short call, send our insurance certificate / W-9, "
-                f"or look at a specific lane when you're ready. What works best for you?\n\n"
+                f"Happy to hop on a short call or look at a specific lane when you're ready. "
+                f"What works best for you?\n\n"
                 f"{name}\n{my}"
             ),
-            escalate_to_owner=True,
-            owner_alert=(
-                f"POSITIVE interest from {co} ({lead.get('email')}). "
-                f"Bot sent a capability snapshot. Call them soon.\n\n{inbound_text}"
-            ),
+            # Capability snapshot is safe — escalate only if they later ask rates
+            escalate_to_owner=False,
+            owner_alert="",
             stop_sequence=True,
             mark_positive=True,
         )
 
-    # unclear — acknowledge, escalate lightly, stop sequence so we don't keep blasting
+    # unclear — acknowledge without owner escalate (agent/task can follow up)
     return BotDecision(
         intent=intent,
         auto_send=True,
@@ -195,11 +329,8 @@ def handle_reply(lead: dict, inbound_text: str, company: dict[str, Any]) -> BotD
             f"Either way, my direct line is {phone} if a quick call is easier.\n\n"
             f"{name}\n{my}"
         ),
-        escalate_to_owner=True,
-        owner_alert=(
-            f"Unclear reply from {co}. Bot sent a clarifying question. Review and take over.\n\n"
-            f"{inbound_text}"
-        ),
+        escalate_to_owner=False,
+        owner_alert="",
         stop_sequence=True,
         mark_positive=True,
     )

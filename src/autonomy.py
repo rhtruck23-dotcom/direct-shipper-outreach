@@ -329,7 +329,7 @@ def run_autonomy_pass(
         )
 
     ok_cap, sent, cap = under_daily_email_cap(company)
-    return {
+    out = {
         "ran": True,
         "processed": len(summaries),
         "summaries": summaries,
@@ -338,7 +338,18 @@ def run_autonomy_pass(
         "email_cap": cap,
         "under_email_cap": ok_cap,
         "daily_cap_default": DEFAULT_DAILY_EMAIL_CAP,
+        "capacity_exhausted": not ok_cap,
     }
+    try:
+        from .capacity import today_capacity
+
+        snap = today_capacity(company)
+        out["remaining"] = snap.get("remaining")
+        out["resumes_msg"] = snap.get("resumes_msg") or ""
+        out["share_caps"] = snap.get("share_caps")
+    except Exception:
+        pass
+    return out
 
 
 def format_pass_summary(result: dict) -> str:
@@ -349,6 +360,11 @@ def format_pass_summary(result: dict) -> str:
         f"escalated {result.get('escalated', 0)}; "
         f"emails today {result.get('emails_today')}/{result.get('email_cap')}."
     ]
+    if result.get("capacity_exhausted"):
+        lines.append(
+            result.get("resumes_msg")
+            or "Daily capacity exhausted — resumes next day."
+        )
     for s in result.get("summaries") or []:
         acts = ", ".join(
             f"{r.get('action')}{'✓' if r.get('ok') else '✗'}"

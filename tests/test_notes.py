@@ -21,6 +21,7 @@ def _patch_notes_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(notes, "_LEGACY_NOTES", tmp_path / "notes.json")
     monkeypatch.setattr(notes, "NOTE_AUDIO_DIR", tmp_path / "note_audio")
     monkeypatch.setattr(notes, "_using_cloud", lambda: False)
+    notes._invalidate_mem()
 
 
 def test_create_notebook_and_note(tmp_path, monkeypatch):
@@ -282,6 +283,7 @@ def test_migrate_legacy_note_without_color(tmp_path, monkeypatch):
         "created_by": "",
     }
     (tmp_path / "onenote_pages.json").write_text(json.dumps([legacy]), encoding="utf-8")
+    notes._invalidate_mem()
     loaded = notes.load_notes()
     assert len(loaded) == 1
     assert loaded[0]["color"] == "default"

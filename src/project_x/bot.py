@@ -6,7 +6,6 @@ from typing import Any
 
 from ..bot import BotDecision
 from ..emailer import send_email
-from ..notify import notify_owner
 from .agent import classify_reply_sentiment, compose_reply
 from .leads import mark_x_response
 from .store import update_x_lead
@@ -25,15 +24,25 @@ def handle_x_reply(
         lead, inbound_text, company, project, intent=intent
     )
 
-    stop = intent in ("opt_out", "escalate", "positive", "referral", "unclear")
-    mark_pos = intent != "opt_out"
-    escalate = intent in ("escalate", "positive", "referral", "unclear")
+    # Routine intents auto-handle; only rate/contract/load escalate to owner
+    stop = intent in (
+        "opt_out",
+        "escalate",
+        "positive",
+        "referral",
+        "unclear",
+        "thanks",
+        "timing",
+        "covered",
+    )
+    mark_pos = intent not in ("opt_out", "covered", "ooo")
+    escalate = intent == "escalate"
     auto = bool(body) and intent != "escalate"
 
     owner_alert = ""
     if escalate:
         owner_alert = (
-            f"Lead-for-X [{project.get('name')}] {intent.upper()}: "
+            f"Lead-for-X [{project.get('name')}] ESCALATE: "
             f"{lead.get('company_name')} ({lead.get('email')})\n"
             f"Sentiment: {labels['sentiment']}\n"
             f"Reasoning: {reasoning}\n\nTheir message:\n{inbound_text}"
@@ -117,20 +126,15 @@ def process_inbox_reply(
             summary["mode"] = result.get("mode") or ""
 
     if decision.escalate_to_owner and decision.owner_alert:
-        from ..agent_tools import tool_append_note
+        from ..agent_tools import tool_escalate_to_owner
 
-        notify_owner(
+        # Always notify + high-priority Dashboard task
+        tool_escalate_to_owner(
+            lead,
             company,
-            f"X {decision.intent.upper()}: {lead.get('company_name')} [{project.get('name')}]",
-            decision.owner_alert,
+            reason=decision.owner_alert[:400],
+            funnel="lead_x",
         )
-        if decision.intent == "escalate":
-            tool_append_note(
-                lead,
-                f"[ESCALATE] {decision.owner_alert[:200]}",
-                author="agent",
-            )
-            lead["active_sequence"] = False
 
     rem = lead.get("remarks") or ""
     tag = f"XReply:{decision.intent}"

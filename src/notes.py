@@ -58,6 +58,20 @@ HIGHLIGHT_STYLES = {
 DEFAULT_NOTEBOOK_NAME = "Quick Notes"
 DEFAULT_SECTION_NAME = "General"
 
+# In-process cache — avoids repeat disk/Sheet I/O on every Streamlit rerun.
+# Invalidated on every save_* / apply_onenote_snapshot.
+_MEM: dict[str, Any] = {
+    "notebooks": None,
+    "sections": None,
+    "pages": None,
+    "tree": None,
+}
+
+
+def _invalidate_mem() -> None:
+    for k in _MEM:
+        _MEM[k] = None
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -301,65 +315,107 @@ def _merge_legacy_local(canonical: Path, legacy: Path) -> list[dict]:
 
 
 def load_notebooks() -> list[dict]:
+    """Local JSON first (instant). Sheets only when local empty (seed + cache)."""
+    if _MEM["notebooks"] is not None:
+        return [dict(x) for x in _MEM["notebooks"]]
+    raw = _merge_legacy_local(NOTEBOOKS_JSON, _LEGACY_NOTEBOOKS)
+    if raw:
+        rows = [_normalize_notebook(x) for x in raw]
+        _MEM["notebooks"] = rows
+        return [dict(x) for x in rows]
     if _using_cloud():
         try:
             rows = _load_sheet_rows("notebooks", NOTEBOOK_COLUMNS, _normalize_notebook)
             if rows:
-                return rows
+                try:
+                    _save_json_list(NOTEBOOKS_JSON, rows)
+                except Exception:
+                    pass
+                _MEM["notebooks"] = rows
+                return [dict(x) for x in rows]
         except Exception:
             pass
-    raw = _merge_legacy_local(NOTEBOOKS_JSON, _LEGACY_NOTEBOOKS)
-    return [_normalize_notebook(x) for x in raw]
+    _MEM["notebooks"] = []
+    return []
 
 
 def save_notebooks(notebooks: list[dict]) -> None:
     normalized = [_normalize_notebook(n) for n in notebooks]
+    # Only drop this key + tree — don't wipe sections/pages mid multi-save
+    _MEM["notebooks"] = None
+    _MEM["tree"] = None
+    # Always write local first so the next render is instant
+    _save_json_list(NOTEBOOKS_JSON, normalized)
+    _MEM["notebooks"] = normalized
     if _using_cloud():
         try:
             _save_sheet_rows("notebooks", NOTEBOOK_COLUMNS, normalized, _normalize_notebook)
-            _save_json_list(NOTEBOOKS_JSON, normalized)
-            return
         except Exception:
             pass
-    _save_json_list(NOTEBOOKS_JSON, normalized)
 
 
 def load_sections() -> list[dict]:
+    if _MEM["sections"] is not None:
+        return [dict(x) for x in _MEM["sections"]]
+    raw = _merge_legacy_local(SECTIONS_JSON, _LEGACY_SECTIONS)
+    if raw:
+        rows = [_normalize_section(x) for x in raw]
+        _MEM["sections"] = rows
+        return [dict(x) for x in rows]
     if _using_cloud():
         try:
             rows = _load_sheet_rows("note_sections", SECTION_COLUMNS, _normalize_section)
             if rows:
-                return rows
+                try:
+                    _save_json_list(SECTIONS_JSON, rows)
+                except Exception:
+                    pass
+                _MEM["sections"] = rows
+                return [dict(x) for x in rows]
         except Exception:
             pass
-    raw = _merge_legacy_local(SECTIONS_JSON, _LEGACY_SECTIONS)
-    return [_normalize_section(x) for x in raw]
+    _MEM["sections"] = []
+    return []
 
 
 def save_sections(sections: list[dict]) -> None:
     normalized = [_normalize_section(s) for s in sections]
+    _MEM["sections"] = None
+    _MEM["tree"] = None
+    _save_json_list(SECTIONS_JSON, normalized)
+    _MEM["sections"] = normalized
     if _using_cloud():
         try:
             _save_sheet_rows(
                 "note_sections", SECTION_COLUMNS, normalized, _normalize_section
             )
-            _save_json_list(SECTIONS_JSON, normalized)
-            return
         except Exception:
             pass
-    _save_json_list(SECTIONS_JSON, normalized)
 
 
 def load_notes() -> list[dict]:
+    if _MEM["pages"] is not None:
+        return [dict(x) for x in _MEM["pages"]]
+    raw = _merge_legacy_local(NOTES_JSON, _LEGACY_NOTES)
+    if raw:
+        rows = [_migrate_note_row(_normalize_note(x)) for x in raw]
+        _MEM["pages"] = rows
+        return [dict(x) for x in rows]
     if _using_cloud():
         try:
             rows = _load_sheet_rows("notes", NOTE_COLUMNS, _normalize_note)
             if rows:
-                return [_migrate_note_row(r) for r in rows]
+                rows = [_migrate_note_row(r) for r in rows]
+                try:
+                    _save_json_list(NOTES_JSON, rows)
+                except Exception:
+                    pass
+                _MEM["pages"] = rows
+                return [dict(x) for x in rows]
         except Exception:
             pass
-    raw = _merge_legacy_local(NOTES_JSON, _LEGACY_NOTES)
-    return [_migrate_note_row(_normalize_note(x)) for x in raw]
+    _MEM["pages"] = []
+    return []
 
 
 def _migrate_note_row(note: dict) -> dict:
@@ -374,14 +430,15 @@ def _migrate_note_row(note: dict) -> dict:
 
 def save_notes(notes: list[dict]) -> None:
     normalized = [_migrate_note_row(n) for n in notes]
+    _MEM["pages"] = None
+    _MEM["tree"] = None
+    _save_json_list(NOTES_JSON, normalized)
+    _MEM["pages"] = normalized
     if _using_cloud():
         try:
             _save_sheet_rows("notes", NOTE_COLUMNS, normalized, _normalize_note)
-            _save_json_list(NOTES_JSON, normalized)
-            return
         except Exception:
             pass
-    _save_json_list(NOTES_JSON, normalized)
 
 
 def ensure_default_section(notebook_id: str, *, name: str = DEFAULT_SECTION_NAME) -> dict:
@@ -877,12 +934,14 @@ def page_to_client(note: dict) -> dict[str, Any]:
 
 
 def export_tree_for_client() -> dict[str, Any]:
-    """Full hierarchy for zero-rerun client panel."""
+    """Full hierarchy for zero-rerun client panel (memoized until next save)."""
+    if _MEM["tree"] is not None:
+        return _MEM["tree"]
     ensure_default_notebook()
     notebooks = load_notebooks()
     sections = load_sections()
     pages = [page_to_client(p) for p in load_notes()]
-    return {
+    tree = {
         "notebooks": [
             {
                 "id": n["id"],
@@ -905,6 +964,8 @@ def export_tree_for_client() -> dict[str, Any]:
         ],
         "pages": pages,
     }
+    _MEM["tree"] = tree
+    return tree
 
 
 def apply_onenote_snapshot(
@@ -919,6 +980,7 @@ def apply_onenote_snapshot(
     Decodes audio_b64 onto pages; optionally Gemini-transcribes and appends.
     """
     now = _utc_now()
+    _invalidate_mem()
     notebooks_in = snapshot.get("notebooks") or []
     sections_in = snapshot.get("sections") or []
     pages_in = snapshot.get("pages") or []

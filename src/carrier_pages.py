@@ -609,15 +609,20 @@ def page_carrier_inbox():
             st.session_state["cib_draft_lead"] = carrier_key(lead)
             st.info("Reply draft ready below — convert language, edit, then Send.")
         elif decision.intent == "escalate":
-            st.warning("Escalated — you close lease-on / pay terms yourself.")
+            from src.agent_tools import tool_escalate_to_owner
 
-        if decision.escalate_to_owner and decision.owner_alert:
-            notify_owner(
+            tool_escalate_to_owner(
+                lead,
                 company,
-                f"CARRIER {decision.intent.upper()}: {lead.get('company_name')}",
-                decision.owner_alert,
+                reason=decision.owner_alert or "Carrier rate/lease language",
+                funnel="carrier",
             )
-            st.info("Owner alert logged.")
+            st.warning(
+                "Escalated — owner notified + high-priority task. "
+                "You close lease-on / pay terms."
+            )
+            if decision.owner_alert:
+                st.code(decision.owner_alert)
 
         rem = lead.get("remarks") or ""
         tag = f"CarrierReply:{decision.intent}"

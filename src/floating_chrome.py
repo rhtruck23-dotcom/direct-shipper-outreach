@@ -6,6 +6,9 @@ viewport. Opening the 📝 FAB / panel is pure client DOM (<300ms feel) — zero
 Streamlit rerun. Typing, tree expand/collapse, add/rename/delete in the panel
 are DOM-only. Persist happens only on Save via one hidden Streamlit bridge.
 Jump-top stays zero-rerun.
+
+inject_notes_shell() — tiny early inject so FAB exists before page work.
+inject_floating_chrome() — hydrate tree + full panel behavior.
 """
 from __future__ import annotations
 
@@ -16,6 +19,167 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 _CHROME_FLAG = "_lt_floating_chrome_injected"
+_SHELL_FLAG = "_lt_notes_shell_injected"
+
+# Minimal shell: FAB + empty overlay. Opens instantly; tree hydrates later.
+_SHELL_HTML = """
+<!DOCTYPE html><html><body><script>
+(function () {
+  const doc = window.parent.document;
+  const win = window.parent;
+  if (doc.getElementById("lt-note-fab") && doc.getElementById("lt-onenote-overlay")) {
+    win.__ltOpenOneNote = win.__ltOpenOneNote || function () {
+      const o = doc.getElementById("lt-onenote-overlay");
+      if (o) o.classList.add("lt-open");
+    };
+    return;
+  }
+  if (!doc.getElementById("lt-floating-chrome-css")) {
+    const style = doc.createElement("style");
+    style.id = "lt-floating-chrome-css";
+    style.textContent = `
+      #lt-note-fab, #lt-jump-top {
+        position: fixed !important; z-index: 99999 !important;
+        width: 52px; height: 52px; border-radius: 50%; border: none;
+        cursor: pointer; box-shadow: 0 8px 28px rgba(11, 61, 74, 0.28);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 22px; line-height: 1;
+        transition: transform 0.15s ease, opacity 0.2s ease;
+      }
+      #lt-note-fab:hover, #lt-jump-top:hover { transform: scale(1.06); }
+      #lt-note-fab { right: 1.25rem; bottom: 1.25rem; background: #0B3D4A; color: #fff; }
+      #lt-jump-top {
+        right: 1.25rem; bottom: 5.1rem; background: #0ea5e9; color: #fff;
+        opacity: 0; pointer-events: none; visibility: hidden;
+      }
+      #lt-jump-top.lt-visible { opacity: 1; pointer-events: auto; visibility: visible; }
+      #lt-onenote-overlay {
+        position: fixed !important; inset: 0; z-index: 100000 !important;
+        background: rgba(11, 61, 74, 0.35);
+        display: none; align-items: stretch; justify-content: center;
+        padding: 1.25rem; box-sizing: border-box;
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      }
+      #lt-onenote-overlay.lt-open { display: flex; }
+      #lt-onenote-shell {
+        width: min(1100px, 100%); height: min(90vh, 820px);
+        background: #f3f3f3; border-radius: 10px; overflow: hidden;
+        box-shadow: 0 24px 64px rgba(0,0,0,0.28);
+        display: flex; flex-direction: column; color: #1a1a1a;
+      }
+      #lt-onenote-topbar {
+        display: flex; align-items: center; gap: 0.75rem;
+        padding: 0.55rem 0.85rem; background: #7719aa; color: #fff; flex-shrink: 0;
+      }
+      #lt-onenote-topbar h2 { margin: 0; font-size: 1rem; font-weight: 600; flex: 1; }
+      #lt-onenote-topbar button {
+        border: none; background: rgba(255,255,255,0.18); color: #fff;
+        border-radius: 6px; padding: 0.35rem 0.7rem; cursor: pointer; font-weight: 600;
+      }
+      #lt-onenote-body { display: flex; flex: 1; min-height: 0; }
+      #lt-onenote-rail {
+        width: 280px; min-width: 220px; background: #fff;
+        border-right: 1px solid #ddd; overflow: auto; padding: 0.5rem 0.35rem 1rem;
+      }
+      #lt-onenote-editor {
+        flex: 1; display: flex; flex-direction: column; min-width: 0; background: #fff;
+      }
+      #lt-onenote-empty {
+        flex: 1; display: flex; align-items: center; justify-content: center;
+        color: #888; font-size: 0.95rem; padding: 2rem; text-align: center;
+      }
+      #lt-onenote-status { font-size: 0.72rem; color: rgba(255,255,255,0.85); margin-right: 0.5rem; }
+    `;
+    doc.head.appendChild(style);
+  }
+  function openPanel() {
+    const overlay = doc.getElementById("lt-onenote-overlay");
+    if (!overlay) return;
+    overlay.classList.add("lt-open");
+    if (typeof win.__ltRenderOneNote === "function") {
+      try { win.__ltRenderOneNote(); } catch (e) {}
+    } else {
+      const ed = doc.getElementById("lt-onenote-editor");
+      if (ed && !ed.dataset.hydrated) {
+        ed.innerHTML = '<div id="lt-onenote-empty">Loading notebook…</div>';
+      }
+    }
+  }
+  function closePanel() {
+    const overlay = doc.getElementById("lt-onenote-overlay");
+    if (overlay) overlay.classList.remove("lt-open");
+  }
+  if (!doc.getElementById("lt-jump-top")) {
+    const jump = doc.createElement("button");
+    jump.id = "lt-jump-top"; jump.type = "button";
+    jump.title = "Jump to top"; jump.setAttribute("aria-label", "Jump to top");
+    jump.innerHTML = "↑";
+    jump.addEventListener("click", function (e) {
+      e.preventDefault(); e.stopPropagation();
+      try { win.scrollTo({ top: 0, behavior: "smooth" }); } catch (err) {}
+      const main = doc.querySelector('[data-testid="stAppViewContainer"]');
+      if (main) main.scrollTop = 0;
+    });
+    doc.body.appendChild(jump);
+  }
+  if (!doc.getElementById("lt-note-fab")) {
+    const fab = doc.createElement("button");
+    fab.id = "lt-note-fab"; fab.type = "button";
+    fab.title = "OneNote"; fab.setAttribute("aria-label", "Open OneNote");
+    fab.innerHTML = "📝";
+    fab.addEventListener("click", function (e) {
+      e.preventDefault(); e.stopPropagation();
+      const overlay = doc.getElementById("lt-onenote-overlay");
+      if (overlay && overlay.classList.contains("lt-open")) closePanel();
+      else openPanel();
+    });
+    doc.body.appendChild(fab);
+  }
+  if (!doc.getElementById("lt-onenote-overlay")) {
+    const overlay = doc.createElement("div");
+    overlay.id = "lt-onenote-overlay";
+    overlay.innerHTML = `
+      <div id="lt-onenote-shell">
+        <div id="lt-onenote-topbar">
+          <h2>📓 OneNote</h2>
+          <span id="lt-onenote-status"></span>
+          <button type="button" id="lt-onenote-close">Close</button>
+        </div>
+        <div id="lt-onenote-body">
+          <div id="lt-onenote-rail"></div>
+          <div id="lt-onenote-editor"><div id="lt-onenote-empty">Open a page or click + to add one.</div></div>
+        </div>
+      </div>`;
+    doc.body.appendChild(overlay);
+    overlay.addEventListener("click", function (e) {
+      if (e.target === overlay) closePanel();
+    });
+    const closeBtn = doc.getElementById("lt-onenote-close");
+    if (closeBtn) closeBtn.onclick = function (e) { e.preventDefault(); closePanel(); };
+  }
+  win.__ltOpenOneNote = openPanel;
+  win.__ltCloseOneNote = closePanel;
+  try {
+    if (win.sessionStorage.getItem("lt_onenote_keep_open") === "1") {
+      win.sessionStorage.removeItem("lt_onenote_keep_open");
+      openPanel();
+    }
+  } catch (e) {}
+})();
+</script></body></html>
+"""
+
+
+def inject_notes_shell() -> None:
+    """
+    Tiny early inject so 📝 FAB exists before heavy page / notes I/O.
+    Once per Streamlit script run (caller resets `_lt_notes_shell_done`).
+    """
+    if st.session_state.get("_lt_notes_shell_done"):
+        return
+    components.html(_SHELL_HTML, height=1, width=1)
+    st.session_state["_lt_notes_shell_done"] = True
+    st.session_state[_SHELL_FLAG] = True
 
 
 def _bridge_widgets() -> tuple[bool, bool]:
@@ -78,6 +242,9 @@ def inject_floating_chrome(
     focus_page_id: select this page when auto_open
     auto_open: open panel immediately (e.g. sidebar / dashboard reminder)
     """
+    # Ensure shell FAB exists even if this hydrate is slow/fails
+    inject_notes_shell()
+
     tree = tree or {"notebooks": [], "sections": [], "pages": []}
     tree_json = json.dumps(tree, ensure_ascii=False)
     focus_json = json.dumps(str(focus_page_id or ""))
@@ -897,9 +1064,13 @@ def inject_floating_chrome(
       win.setInterval(onScroll, 800);
     }}
 
-    // Expose for sidebar / dashboard
+    // Expose for sidebar / dashboard / early shell
     win.__ltOpenOneNote = openPanel;
     win.__ltCloseOneNote = closePanel;
+    win.__ltRenderOneNote = renderAll;
+
+    const editorEl = doc.getElementById("lt-onenote-editor");
+    if (editorEl) editorEl.dataset.hydrated = "1";
 
     if (AUTO_OPEN || FOCUS_PAGE) {{
       openPanel();
@@ -911,6 +1082,13 @@ def inject_floating_chrome(
         }}
       }} catch (e) {{}}
     }}
+
+    // If shell opened the panel before this hydrate arrived, paint the tree now
+    // (otherwise UI stays on "Loading notebook…").
+    const openOverlay = doc.getElementById("lt-onenote-overlay");
+    if (openOverlay && openOverlay.classList.contains("lt-open")) {{
+      try {{ renderAll(); }} catch (e) {{}}
+    }}
   }}
 
   try {{ ensureChrome(); }} catch (err) {{ console.warn("lt onenote chrome", err); }}
@@ -918,5 +1096,7 @@ def inject_floating_chrome(
 </script>
 </body></html>
 """
-    components.html(html, height=0, width=0)
+    # height=1: Streamlit often skips executing scripts in height=0 iframes
+    components.html(html, height=1, width=1)
     st.session_state[_CHROME_FLAG] = True
+    st.session_state[_SHELL_FLAG] = True
