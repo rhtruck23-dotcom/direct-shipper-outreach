@@ -1,11 +1,8 @@
 """
-OneNote UI bridge: client-side clone panel (floating_chrome) + one Save bridge.
+OneNote UI bridge: one client panel inject + one Save bridge.
 
-The Streamlit left-rail / dialog editor was removed — all notebook/section/page
-UX is DOM-only in the parent document. Persist only on Save.
-
-Opening 📝 is zero-rerun (DOM). Early inject_notes_shell() puts the FAB on
-screen before any notes I/O so open feels instant.
+Opening 📝 is zero-rerun once the panel exists in the parent DOM.
+Persist only on Save. Voice/mic UI is intentionally omitted (unreliable).
 """
 from __future__ import annotations
 
@@ -34,32 +31,9 @@ def open_note_panel(note_id: str | None = None) -> None:
 
 
 def render_sidebar_add_note_button() -> None:
-    """
-    Sidebar entry. Streamlit always reruns on button click; we also fire a
-    client open so the panel appears as soon as the shell exists (no wait for
-    a second round-trip beyond this click's inevitable rerun).
-    """
-    import streamlit.components.v1 as components
-
+    """Sidebar entry — one Streamlit rerun to hydrate tree; no extra iframe."""
     if st.button("📝 Add Note", key="sidebar_add_note", use_container_width=True):
         open_note_panel()
-        try:
-            components.html(
-                """<script>
-(function () {
-  const w = window.parent;
-  try { w.sessionStorage.setItem("lt_onenote_keep_open", "1"); } catch (e) {}
-  if (typeof w.__ltOpenOneNote === "function") {
-    try { w.__ltOpenOneNote(); } catch (e) {}
-  }
-})();
-</script>""",
-                height=1,
-                width=1,
-            )
-        except Exception:
-            pass
-        # Soft rerun only to hydrate tree; shell already opens via JS/sessionStorage
         st.rerun()
 
 
@@ -118,16 +92,13 @@ def render_floating_add_note(
     user: Optional[dict] = None,
 ) -> None:
     """
-    Inject client OneNote clone + jump-top. Handle one Save bridge rerun.
-    Opening 📝 is zero-rerun (DOM). Save is the only intentional notes rerun.
+    Inject client OneNote clone + jump-top once. Handle Save bridge.
+
+    Single components.html per run (inside inject_floating_chrome).
+    Opening 📝 is DOM-only after first hydrate. Save is the only notes write path.
     """
-    from .floating_chrome import _bridge_widgets, inject_floating_chrome, inject_notes_shell
-    import streamlit.components.v1 as components
+    from .floating_chrome import _bridge_widgets, inject_floating_chrome
 
-    # Shell first — FAB usable even if tree load hiccups
-    inject_notes_shell()
-
-    # Query-param save fallback
     try:
         qp = st.query_params
         if str(qp.get("onenote_save", "") or "") in ("1", "true", "yes"):
@@ -138,12 +109,15 @@ def render_floating_add_note(
 
     save_clicked, _open_clicked = _bridge_widgets()
 
-    # If Save clicked but textarea empty, pull snapshot from sessionStorage once
     payload_ready = isinstance(st.session_state.get("onenote_save_payload"), str) and str(
         st.session_state.get("onenote_save_payload") or ""
     ).strip().startswith("{")
+
+    # Rare: Save clicked but textarea empty — one resync from sessionStorage
     if save_clicked and not payload_ready and not st.session_state.get("_onenote_resync_done"):
         st.session_state["_onenote_resync_done"] = True
+        import streamlit.components.v1 as components
+
         components.html(
             """
 <script>
@@ -170,10 +144,7 @@ def render_floating_add_note(
   const btn = buttons.find(function (b) {
     return (b.innerText || "").trim() === "lt_onenote_save";
   });
-  if (btn) {
-    try { win.sessionStorage.setItem("lt_onenote_resync", "1"); } catch (e) {}
-    setTimeout(function () { btn.click(); }, 40);
-  }
+  if (btn) setTimeout(function () { btn.click(); }, 40);
 })();
 </script>
 """,
@@ -204,59 +175,56 @@ def render_floating_add_note(
             if user:
                 author = str(user.get("name") or user.get("email") or "")
             close_after = bool(payload.get("close_after"))
-            transcribe = bool(payload.get("transcribe"))
             apply_onenote_snapshot(
                 payload,
                 created_by=author,
                 company=company,
-                transcribe_audio=transcribe,
+                transcribe_audio=False,
             )
             _invalidate_tree_cache()
             st.session_state["onenote_save_payload"] = ""
-            try:
-                import streamlit.components.v1 as _c
-
-                _c.html(
-                    """<script>
-try {
-  window.parent.sessionStorage.removeItem("lt_onenote_payload");
-  window.parent.sessionStorage.removeItem("lt_onenote_resync");
-} catch (e) {}
-</script>""",
-                    height=1,
-                    width=1,
-                )
-            except Exception:
-                pass
             if close_after:
                 st.session_state["notes_panel_open"] = False
                 st.session_state["onenote_client_open"] = False
                 st.session_state.pop("selected_note_id", None)
             else:
-                st.session_state["onenote_client_open"] = True
-                st.session_state["notes_panel_open"] = True
+                # Keep panel open via sessionStorage, not sticky Streamlit flags
+                st.session_state["onenote_client_open"] = False
+                st.session_state["notes_panel_open"] = False
+                try:
+                    import streamlit.components.v1 as _c
+
+                    _c.html(
+                        """<script>
+try {
+  window.parent.sessionStorage.removeItem("lt_onenote_payload");
+  window.parent.sessionStorage.setItem("lt_onenote_keep_open", "1");
+} catch (e) {}
+</script>""",
+                        height=1,
+                        width=1,
+                    )
+                except Exception:
+                    pass
             st.toast("OneNote saved")
 
     tree = _cached_tree()
-    focus = str(st.session_state.get("selected_note_id") or "")
+    focus = str(st.session_state.pop("selected_note_id", "") or "")
+    # One-shot open flags — never leave sticky across page nav (caused lag + stale overlay)
     auto_open = bool(
-        st.session_state.get("onenote_client_open")
-        or st.session_state.get("notes_panel_open")
+        st.session_state.pop("onenote_client_open", False)
+        or st.session_state.pop("notes_panel_open", False)
         or focus
     )
     inject_floating_chrome(tree=tree, focus_page_id=focus, auto_open=auto_open)
 
-    if auto_open:
-        st.session_state["onenote_client_open"] = False
 
-
-# Legacy aliases kept so older imports / tests do not break
 def render_notes_panel(
     *,
     company: Optional[dict] = None,
     user: Optional[dict] = None,
     key_prefix: str = "notes",
 ) -> None:
-    """Deprecated: opens client OneNote instead of Streamlit expander."""
+    """Deprecated alias: opens client OneNote instead of Streamlit expander."""
     open_note_panel()
     render_floating_add_note(company=company, user=user)

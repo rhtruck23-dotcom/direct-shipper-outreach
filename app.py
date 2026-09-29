@@ -406,6 +406,21 @@ st.markdown(
   code, pre {
     border-radius: 10px !important;
   }
+
+  /* Hide 1px components.html glue iframes (Notes/FAB inject) — cuts layout thrash */
+  iframe[height="1"],
+  iframe[height="0"],
+  div[data-testid="stHtml"]:has(iframe[height="1"]) {
+    position: absolute !important;
+    width: 0 !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    border: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
 </style>
 """,
     unsafe_allow_html=True,
@@ -896,9 +911,16 @@ def _style_status_column(df: pd.DataFrame):
 
 
 def _goto_page(page: str, *, group: str | None = None) -> None:
+    prev = st.session_state.get("nav_page")
     st.session_state.nav_page = page
     if group is not None:
         st.session_state.nav_group = group
+    if prev != page:
+        # Drop one-shot Notes open flags so page switches don't reopen overlay / lag
+        st.session_state.pop("onenote_client_open", None)
+        st.session_state.pop("notes_panel_open", None)
+        st.session_state.pop("selected_note_id", None)
+        st.session_state["_lt_nav_epoch"] = int(st.session_state.get("_lt_nav_epoch") or 0) + 1
     st.rerun()
 
 
@@ -3247,14 +3269,8 @@ def main():
     if not user:
         return
 
-    # Reset once-per-run Notes shell guard, then inject FAB before page / Sheet work
+    # Single Notes/FAB inject happens once at end of main (avoid triple iframe lag)
     st.session_state["_lt_notes_shell_done"] = False
-    try:
-        from src.floating_chrome import inject_notes_shell
-
-        inject_notes_shell()
-    except Exception:
-        pass
 
     _handle_gmail_oauth_callback()
 
@@ -3304,9 +3320,17 @@ def main():
         st.session_state.nav_group = "settings"
 
     def _goto(page: str, group: str | None = None):
+        prev = st.session_state.get("nav_page")
         st.session_state.nav_page = page
         if group is not None:
             st.session_state.nav_group = group
+        if prev != page:
+            st.session_state.pop("onenote_client_open", None)
+            st.session_state.pop("notes_panel_open", None)
+            st.session_state.pop("selected_note_id", None)
+            st.session_state["_lt_nav_epoch"] = int(
+                st.session_state.get("_lt_nav_epoch") or 0
+            ) + 1
         st.rerun()
 
     def _nav_mark(kind: str):
@@ -3351,7 +3375,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.28a · OneNote clone + cov≥90")
+        st.caption("v2026.09.28b · Lean core")
 
         from src.notes_ui import render_sidebar_add_note_button
 
@@ -3453,9 +3477,12 @@ def main():
         "Cloud Hosting": page_cloud,
         "Help": page_help,
     }
-    pages[page]()
+    # Keyed container remounts page body on nav switch — reduces stale widget residue
+    epoch = int(st.session_state.get("_lt_nav_epoch") or 0)
+    with st.container(key=f"lt_main_{page}_{epoch}"):
+        pages[page]()
 
-    # Global floating Add Note (every authenticated page)
+    # Global floating Add Note — one inject per authenticated render
     from src.notes_ui import render_floating_add_note
 
     render_floating_add_note(company=_company(), user=user)

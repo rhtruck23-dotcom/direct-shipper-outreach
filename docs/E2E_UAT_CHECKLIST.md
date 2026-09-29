@@ -5,7 +5,7 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 | Field | Fill in |
 |--------|---------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Version to confirm** | **v2026.09.28a · OneNote clone + cov≥90** — caption under **LogixTrek Outreach** in the left sidebar |
+| **Version to confirm** | **v2026.09.28b · Lean core** — caption under **LogixTrek Outreach** in the left sidebar |
 | **Tester name** | _______________________________ |
 | **Date** | _______________ |
 
@@ -13,20 +13,20 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 
 ## Cloud smoke — 15 key lines (do these first)
 
-After deploy, confirm the sidebar caption shows **v2026.09.28a**. Then click through:
+After deploy, confirm the sidebar caption shows **v2026.09.28b**. Then click through:
 
 1. **Login** — Super Admin email + PIN → sidebar shows your name / role.
-2. **Version** — caption reads `v2026.09.28a · OneNote clone + cov≥90`.
-3. **Notes FAB** — click 📝 (bottom-right). Panel opens instantly (DOM shell; no stuck “Loading…”). Three panes: Notebooks | section tabs + Pages | page canvas.
-4. **Notes edit + Save** — type in a page → **Save** → toast “OneNote saved”; reopen FAB and confirm text stuck.
-5. **Sidebar Add Note** — **📝 Add Note** opens the same panel (hydrated tree).
+2. **Version** — caption reads `v2026.09.28b · Lean core`.
+3. **Notes FAB** — click 📝 (bottom-right). Three panes: Notebooks | section tabs + Pages | left-aligned page canvas. Typing stays left (not centered).
+4. **Notes edit + Save** — type in a page → **Save** → toast “OneNote saved”; reopen FAB and confirm text stuck. (Voice/mic is **removed** from UI.)
+5. **Sidebar Add Note** — **📝 Add Note** opens the same panel.
 6. **Jump-top** — scroll down a long page → ↑ appears → click scrolls to top.
-7. **Dry-run send** — **Send LIVE emails** OFF. Pipeline / due send still “sends” as dry-run (no real mail).
-8. **DNC** — mark a lead Do Not Contact → bot / agent / campaign skip it.
-9. **Today capacity** — Dashboard shows Capacity / Sent / Remaining (soft cap ± Gmail pool).
-10. **Multi-Gmail** — Org Setup → Gmail send pool: 2–3 App Passwords, caps 200 (see `docs/MULTI_GMAIL_UAT.md`). Live test only to yourself.
-11. **Autopilot dry-run** — Autopilot ON, LIVE OFF → **Run agent now** once; read summary; no real mail.
-12. **Autopilot LIVE caution** — only when ready: LIVE ON + Autopilot ON shares soft cap + pool. Soft-stops when exhausted; resumes next day. Keep intentional.
+7. **Page switch** — move Shipper → Carrier → Dashboard; main area should match the selected page (no previous-page residue / sticky Notes overlay).
+8. **Dry-run send** — **Send LIVE emails** OFF. Pipeline / due send still “sends” as dry-run (no real mail).
+9. **DNC** — mark a lead Do Not Contact → bot / agent / campaign skip it.
+10. **Today capacity** — Dashboard shows Capacity / Sent / Remaining (soft cap ± Gmail pool).
+11. **Multi-Gmail** — Org Setup → Gmail send pool: 2–3 App Passwords, caps 200 (see `docs/MULTI_GMAIL_UAT.md`). Live test only to yourself.
+12. **Autopilot dry-run** — Autopilot ON, LIVE OFF → **Run agent now** once; read summary; no real mail. (Autopilot stays OFF by default.)
 13. **Inbox Bot** — paste a rate/pricing reply → escalate creates **owner notify + high-priority task**. Paste OOO / thanks → no escalate spam.
 14. **Spanish** — Pipeline preview **Convert to Spanish**; Inbox paste Spanish → **Convert to English**; edit before send.
 15. **Sign out** — sidebar **Sign out** returns to login.
@@ -35,7 +35,7 @@ After deploy, confirm the sidebar caption shows **v2026.09.28a**. Then click thr
 
 ---
 
-## Automation status (v2026.09.28a)
+## Automation status (v2026.09.28b)
 
 Many cases below are **covered by automated pytest** (mocked SMTP / Places / LLM / IMAP). Mark them **Skip** for human UAT unless you want a live click-through. Keep the **Human-only** list short.
 
@@ -61,9 +61,9 @@ Many cases below are **covered by automated pytest** (mocked SMTP / Places / LLM
 3. **T-027** Flip Autopilot ON for a production week (keep LIVE intentional)
 4. **T-031** Live Google Places / Gemini Find & Vet (needs API keys)
 5. **T-071** Live LLM template generate for Lead-for-X (needs key)
-6. **T-122** Voice note transcription (needs Gemini key + mic)
-7. **T-083** Cloud Sheet connection if deploying Streamlit Cloud
-8. Optional: enable `imap_poll_enabled` only after App Passwords verified, then smoke-poll once
+6. **T-083** Cloud Sheet connection if deploying Streamlit Cloud
+7. Optional: enable `imap_poll_enabled` only after App Passwords verified, then smoke-poll once
+8. **T-122** Voice/mic — **removed from Notes UI** in lean build (Skip / N/A)
 
 Everything else in this checklist is optional UI confirmation; failures should be rare if pytest is green.
 
@@ -113,7 +113,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 **Steps:**
 1. Look under **LogixTrek Outreach** in the left sidebar.
 2. Read the small version / caption line.
-**Expected:** Caption is visible. Note the exact text (should be **v2026.09.28a · OneNote clone + cov≥90** or the current build label). Write what you see in Comment.
+**Expected:** Caption is visible. Note the exact text (should be **v2026.09.28b · Lean core** or the current build label). Write what you see in Comment.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:** (write exact caption here)  
 **Screenshot:** (filename)
@@ -753,8 +753,8 @@ Everything else in this checklist is optional UI confirmation; failures should b
 **Steps:**
 1. From Dashboard, click **📝 Add Note** in the sidebar (and/or the bottom-right 📝 FAB).
 2. Navigate to Shipper → Leads List and confirm Add Note is still available.
-3. Navigate to Carrier and Lead for X pages — same.
-**Expected:** Add Note is reachable on every authenticated page. Floating **📝** opens the client OneNote panel **instantly** (DOM shell; zero Streamlit rerun). Three panes paint: left **Notebooks**, middle **section tabs + Pages**, right **page canvas**. Never stuck on “Loading notebook…”.
+3. Navigate to Carrier and Lead for X — confirm previous page content does not linger.
+**Expected:** Add Note on every authenticated page. **📝** opens three panes (Notebooks | sections+Pages | canvas). Editor is **left-aligned**. No mic/voice buttons. No stuck “Loading…”.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
 **Screenshot:** (filename)
@@ -763,7 +763,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 **Precondition:** OneNote panel open (📝 FAB).
 **Steps:**
 1. Click **+** on Notebooks → name e.g. “UAT”.
-2. Click **+** on section tabs (or use General) → **+** on Pages → set title + body.
+2. Click **+** on section tabs (or use General) → **+** on Pages → set title + body (left-aligned).
 3. Set reminder datetime in the toolbar → **Save**.
 4. Open Dashboard → **Note reminders** and confirm it appears in Due today / Upcoming.
 **Expected:** Note persists (`data/onenote_*.json`; cloud sheet tabs when configured). Reminder shows on Dashboard.
@@ -771,17 +771,10 @@ Everything else in this checklist is optional UI confirmation; failures should b
 **Comment:**  
 **Screenshot:** (filename)
 
-### T-122 Voice note — record / upload
-**Precondition:** Browser allows mic (or have a small audio file). Gemini key optional.
-**Steps:**
-1. Open 📝 → select/create a page.
-2. Click 🎤 to record **or** 📎 to upload wav/mp3/webm.
-3. Optional: 🗣️ marks transcribe-on-Save (needs Gemini key).
-4. **Save** (audio-only + manual text is OK if no transcript).
-**Expected:** Audio saves with the page. Transcription works when Gemini key present; otherwise clear status and manual text still works.
-**Result:** [ ] Pass  [ ] Fail  [ ] Skip  
-**Comment:** (key present? transcript ok?)  
-**Screenshot:** (filename)
+### T-122 Voice note — REMOVED (lean build)
+**Status:** Mic / upload / voice-to-text controls are **hidden** until reliable. Mark **Skip**.
+**Result:** [ ] Pass  [ ] Fail  [x] Skip  
+**Comment:** Removed from UI in v2026.09.28b  
 
 ### T-123 Open note from Dashboard reminder + mark done
 **Precondition:** Reminder exists from T-121.
@@ -795,16 +788,15 @@ Everything else in this checklist is optional UI confirmation; failures should b
 **Comment:**  
 **Screenshot:** (filename)
 
-### T-124 OneNote pages — notebook / section / page / highlight / voice
-**Precondition:** Floating 📝 OneNote panel open (instant client panel).
+### T-124 OneNote pages — notebook / section / page / highlight
+**Precondition:** Floating 📝 OneNote panel open.
 **Steps:**
 1. **+** Notebooks → create a notebook; rename inline if needed.
-2. **+** on section tabs → add a section (double-click tab to rename); **+** Pages → add a page (rename inline).
-3. Set title + body; use Bold / Italic / highlight / text color / bullets.
-4. Optional: mic / attach audio; 🗣️ for transcribe-on-Save.
-5. Set reminder; click **Save** (or Save & close).
-6. Close and re-open 📝 — confirm notebooks / section tabs / pages / body persist.
-**Expected:** Three-pane hierarchy works without Streamlit reruns while editing. Save persists to `data/onenote_*.json`. FAB + jump-top still present.
+2. **+** on section tabs → add a section (double-click tab to rename); **+** Pages → add a page.
+3. Set title + body; use Bold / Italic / highlight / text color / bullets. Confirm left-align.
+4. Set reminder; click **Save** (or Save & close).
+5. Close and re-open 📝 — confirm hierarchy + body persist.
+**Expected:** Three-pane editing works. Save persists to `data/onenote_*.json`. FAB + jump-top present. No voice controls.
 
 ---
 

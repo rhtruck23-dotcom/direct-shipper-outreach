@@ -2,13 +2,11 @@
 Global floating chrome: OneNote-like clone panel + Jump-to-top.
 
 Injected into the parent Streamlit document so position:fixed sticks to the
-viewport. Opening the 📝 FAB / panel is pure client DOM (<300ms feel) — zero
-Streamlit rerun. Typing, tree expand/collapse, add/rename/delete in the panel
-are DOM-only. Persist happens only on Save via one hidden Streamlit bridge.
-Jump-top stays zero-rerun.
+viewport. Prefer a single inject_floating_chrome() per Streamlit run (do not
+also call inject_notes_shell in the same run — that doubles iframes / lag).
 
-    inject_notes_shell() — tiny early inject so FAB + shell exist before page work.
-    inject_floating_chrome() — hydrate tree + full panel behavior.
+Opening 📝 / typing / tree edits are DOM-only. Persist only on Save via the
+hidden Streamlit bridge. Voice/mic UI is omitted until reliable.
 """
 from __future__ import annotations
 
@@ -91,7 +89,8 @@ _SHELL_HTML = """
       }
       #lt-onenote-pagelist { flex: 1; overflow: auto; padding: 0.35rem 0.25rem 1rem; }
       #lt-onenote-editor {
-        flex: 1; display: flex; flex-direction: column; min-width: 0; background: #fff;
+        flex: 1; display: flex; flex-direction: column; align-items: stretch;
+        min-width: 0; background: #fff; text-align: left;
       }
       #lt-onenote-empty {
         flex: 1; display: flex; align-items: center; justify-content: center;
@@ -260,11 +259,16 @@ def inject_floating_chrome(
     """
     Inject fixed FABs + full OneNote clone panel once per app render.
 
+    One components.html only — do not also call inject_notes_shell() in the
+    same run (that doubles iframes and causes page lag / stale residue).
+
     tree: {notebooks, sections, pages} from notes.export_tree_for_client()
     focus_page_id: select this page when auto_open
     auto_open: open panel immediately (e.g. sidebar / dashboard reminder)
     """
-    inject_notes_shell()
+    # Mark shell as done so a stray early inject_notes_shell() is a no-op
+    st.session_state["_lt_notes_shell_done"] = True
+    st.session_state[_SHELL_FLAG] = True
 
     tree = tree or {"notebooks": [], "sections": [], "pages": []}
     tree_json = json.dumps(tree, ensure_ascii=False)
@@ -298,9 +302,6 @@ def inject_floating_chrome(
     selectedSecId: "",
     selectedPageId: FOCUS_PAGE || "",
     dirty: false,
-    mediaRecorder: null,
-    recordingChunks: [],
-    pendingTranscribe: false,
   }};
 
   function syncSelectionFromFocus() {{
@@ -385,7 +386,8 @@ def inject_floating_chrome(
       }}
       #lt-onenote-pagelist {{ flex: 1; overflow: auto; padding: 0.35rem 0.25rem 1rem; }}
       #lt-onenote-editor {{
-        flex: 1; display: flex; flex-direction: column; min-width: 0; background: #fff;
+        flex: 1; display: flex; flex-direction: column; align-items: stretch;
+        min-width: 0; background: #fff; text-align: left !important;
       }}
       .lt-pane-head {{
         display: flex; align-items: center; justify-content: space-between;
@@ -441,12 +443,11 @@ def inject_floating_chrome(
         display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;
         padding: 0.45rem 0.65rem; border-bottom: 1px solid #e5e5e5; background: #fafafa;
       }}
-      .lt-toolbar button, .lt-toolbar label.lt-file {{
+      .lt-toolbar button {{
         border: 1px solid #ccc; background: #fff; border-radius: 5px;
         padding: 0.28rem 0.45rem; cursor: pointer; font-size: 0.82rem; min-width: 28px;
       }}
-      .lt-toolbar button:hover, .lt-toolbar label.lt-file:hover {{ background: #f0e6f7; border-color: #7719aa; }}
-      .lt-toolbar button.lt-rec-on {{ background: #c62828; color: #fff; border-color: #c62828; }}
+      .lt-toolbar button:hover {{ background: #f0e6f7; border-color: #7719aa; }}
       .lt-toolbar input[type="color"] {{
         width: 28px; height: 28px; border: 1px solid #ccc; border-radius: 5px; padding: 0; cursor: pointer;
       }}
@@ -459,14 +460,21 @@ def inject_floating_chrome(
       .lt-hl-b {{ background: #bbdefb !important; }}
       #lt-page-title {{
         border: none; border-bottom: 1px solid #eee; font-size: 1.35rem; font-weight: 600;
-        padding: 0.65rem 1rem 0.4rem; width: 100%; box-sizing: border-box; outline: none;
+        padding: 0.65rem 1.25rem 0.4rem; width: 100%; max-width: 720px;
+        box-sizing: border-box; outline: none; text-align: left !important;
+        margin: 0; align-self: flex-start;
       }}
       #lt-page-body {{
-        flex: 1; overflow: auto; padding: 0.75rem 1rem 1.25rem;
-        outline: none; min-height: 180px; line-height: 1.5; font-size: 0.95rem;
+        flex: 1; overflow: auto; padding: 0.75rem 1.25rem 1.5rem;
+        outline: none; min-height: 180px; line-height: 1.55; font-size: 0.95rem;
+        text-align: left !important; direction: ltr; unicode-bidi: plaintext;
+        max-width: 720px; width: 100%; box-sizing: border-box;
+        margin: 0; align-self: flex-start;
       }}
+      #lt-page-body * {{ text-align: left !important; }}
       #lt-page-body:empty:before {{
         content: attr(data-placeholder); color: #999; pointer-events: none;
+        text-align: left !important;
       }}
       #lt-onenote-empty {{
         flex: 1; display: flex; align-items: center; justify-content: center;
@@ -475,7 +483,6 @@ def inject_floating_chrome(
       #lt-onenote-status {{
         font-size: 0.72rem; color: rgba(255,255,255,0.85); margin-right: 0.5rem;
       }}
-      .lt-file input {{ display: none; }}
     `;
   }}
 
@@ -591,12 +598,10 @@ def inject_floating_chrome(
       notebooks: state.notebooks,
       sections: state.sections,
       pages: state.pages.map(function (p) {{
-        const copy = Object.assign({{}}, p);
-        if (state.pendingTranscribe && copy.audio_b64) copy.transcribe_on_save = true;
-        return copy;
+        return Object.assign({{}}, p);
       }}),
       close_after: !!closeAfter,
-      transcribe: !!state.pendingTranscribe,
+      transcribe: false,
     }};
   }}
   function persistViaBridge(closeAfter) {{
@@ -785,60 +790,6 @@ def inject_floating_chrome(
   }}
   function insertBullet() {{ execFmt("insertUnorderedList"); }}
 
-  async function toggleRecord() {{
-    const btn = doc.getElementById("lt-btn-mic");
-    if (state.mediaRecorder && state.mediaRecorder.state === "recording") {{
-      state.mediaRecorder.stop();
-      if (btn) {{ btn.classList.remove("lt-rec-on"); btn.textContent = "🎤"; }}
-      return;
-    }}
-    if (!win.navigator.mediaDevices || !win.navigator.mediaDevices.getUserMedia) {{
-      alert("Microphone not available in this browser.");
-      return;
-    }}
-    try {{
-      const stream = await win.navigator.mediaDevices.getUserMedia({{ audio: true }});
-      state.recordingChunks = [];
-      const mr = new win.MediaRecorder(stream);
-      state.mediaRecorder = mr;
-      mr.ondataavailable = function (ev) {{
-        if (ev.data && ev.data.size) state.recordingChunks.push(ev.data);
-      }};
-      mr.onstop = function () {{
-        stream.getTracks().forEach(function (t) {{ t.stop(); }});
-        const blob = new win.Blob(state.recordingChunks, {{ type: mr.mimeType || "audio/webm" }});
-        const reader = new win.FileReader();
-        reader.onloadend = function () {{
-          const page = selectedPage();
-          if (!page) return;
-          const dataUrl = String(reader.result || "");
-          page.audio_b64 = dataUrl;
-          page.audio_mime = blob.type || "audio/webm";
-          markDirty();
-          const st = doc.getElementById("lt-onenote-status");
-          if (st) st.textContent = "Audio attached (saves with page)";
-        }};
-        reader.readAsDataURL(blob);
-      }};
-      mr.start();
-      if (btn) {{ btn.classList.add("lt-rec-on"); btn.textContent = "⏹"; }}
-    }} catch (e) {{
-      alert("Could not start recording: " + (e && e.message ? e.message : e));
-    }}
-  }}
-  function onAudioFile(file) {{
-    if (!file) return;
-    const reader = new win.FileReader();
-    reader.onloadend = function () {{
-      const page = selectedPage();
-      if (!page) return;
-      page.audio_b64 = String(reader.result || "");
-      page.audio_mime = file.type || "audio/webm";
-      markDirty();
-    }};
-    reader.readAsDataURL(file);
-  }}
-
   function escHtml(s) {{
     return String(s || "")
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -993,9 +944,6 @@ def inject_floating_chrome(
         <button type="button" class="lt-hl-b" id="lt-hl-b" title="Highlight blue">Hl</button>
         <input type="color" id="lt-text-color" value="#1565c0" title="Text color" />
         <button type="button" id="lt-fmt-ul" title="Bullet list">• List</button>
-        <button type="button" id="lt-btn-mic" title="Record voice">🎤</button>
-        <label class="lt-file" title="Upload audio">📎<input type="file" id="lt-audio-file" accept="audio/*,.webm,.wav,.mp3,.m4a,.ogg" /></label>
-        <button type="button" id="lt-btn-vtt" title="Voice-to-text on Save (Gemini)">🗣️</button>
         <label style="font-size:0.75rem;color:#666;margin-left:0.35rem">Reminder
           <input type="datetime-local" id="lt-page-reminder" />
         </label>
@@ -1003,11 +951,20 @@ def inject_floating_chrome(
         <button type="button" id="lt-btn-save" style="background:#7719aa;color:#fff;border-color:#7719aa">Save</button>
         <button type="button" id="lt-btn-save-close">Save &amp; close</button>
       </div>
-      <input id="lt-page-title" type="text" value="${{escAttr(page.title || "")}}" placeholder="Page title" />
-      <div id="lt-page-body" contenteditable="true" data-placeholder="Start typing…"></div>
+      <input id="lt-page-title" type="text" value="${{escAttr(page.title || "")}}" placeholder="Page title" autocomplete="off" />
+      <div id="lt-page-body" contenteditable="true" data-placeholder="Start typing…" spellcheck="true"></div>
     `;
     const body = doc.getElementById("lt-page-body");
-    if (body) body.innerHTML = page.body_html || page.body || "";
+    if (body) {{
+      body.innerHTML = page.body_html || page.body || "";
+      body.style.textAlign = "left";
+      body.setAttribute("dir", "ltr");
+    }}
+    const titleEl = doc.getElementById("lt-page-title");
+    if (titleEl) {{
+      titleEl.style.textAlign = "left";
+      titleEl.setAttribute("dir", "ltr");
+    }}
     const rem = doc.getElementById("lt-page-reminder");
     if (rem) rem.value = toLocalInput(page.reminder_at || "");
 
@@ -1021,19 +978,9 @@ def inject_floating_chrome(
       execFmt("foreColor", e.target.value);
     }};
     doc.getElementById("lt-fmt-ul").onclick = function () {{ insertBullet(); }};
-    doc.getElementById("lt-btn-mic").onclick = function () {{ toggleRecord(); }};
-    doc.getElementById("lt-audio-file").onchange = function (e) {{
-      onAudioFile(e.target.files && e.target.files[0]);
-    }};
-    doc.getElementById("lt-btn-vtt").onclick = function () {{
-      state.pendingTranscribe = true;
-      const st = doc.getElementById("lt-onenote-status");
-      if (st) st.textContent = "Will transcribe audio on Save (needs Gemini key)";
-      markDirty();
-    }};
     doc.getElementById("lt-btn-save").onclick = function () {{ persistViaBridge(false); }};
     doc.getElementById("lt-btn-save-close").onclick = function () {{ persistViaBridge(true); }};
-    doc.getElementById("lt-page-title").oninput = function () {{ markDirty(); }};
+    if (titleEl) titleEl.oninput = function () {{ markDirty(); }};
     if (body) body.oninput = function () {{ markDirty(); }};
     if (rem) rem.onchange = function () {{ markDirty(); }};
   }}
@@ -1163,7 +1110,6 @@ def inject_floating_chrome(
         try {{ el.addEventListener("scroll", onScroll, {{ passive: true }}); }} catch (e) {{}}
       }}
       onScroll();
-      win.setInterval(onScroll, 800);
     }}
 
     win.__ltOpenOneNote = openPanel;
