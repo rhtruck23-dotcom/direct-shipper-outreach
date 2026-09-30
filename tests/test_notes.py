@@ -312,3 +312,59 @@ def test_delete_notebook_section_page(tmp_path, monkeypatch):
     assert len(notes.load_notebooks()) == 1
     assert notes.delete_notebook(last_id) is False
     assert notes.delete_notebook(nb1["id"]) is False or nb1["id"] == last_id
+
+
+def test_ensure_audio_embed_and_page_to_client(tmp_path, monkeypatch):
+    _patch_notes_paths(monkeypatch, tmp_path)
+
+    nb = notes.ensure_default_notebook()
+    note = notes.create_note(
+        notebook_id=nb["id"],
+        title="Mic page",
+        body="<p>hello</p>",
+        audio_bytes=b"RIFF-fake-wav",
+        audio_mime="audio/wav",
+    )
+    url = notes.audio_data_url_for_note(note)
+    assert url.startswith("data:audio/wav;base64,")
+    embedded = notes.ensure_audio_embed_in_body("<p>hello</p>", url)
+    assert "lt-note-audio" in embedded
+    assert "controls" in embedded
+    # Idempotent replace — still one <audio> player
+    again = notes.ensure_audio_embed_in_body(embedded, url)
+    assert again.count("<audio") == 1
+    assert 'class="lt-note-audio"' in again
+
+    client = notes.page_to_client(note)
+    assert client["audio_b64"].startswith("data:")
+    assert "lt-note-audio" in client["body_html"]
+
+    # Snapshot with fresh audio_b64 embeds into persisted body
+    notes._invalidate_mem()
+    snap = {
+        "notebooks": [{"id": nb["id"], "name": "N"}],
+        "sections": [
+            {
+                "id": "sec_e",
+                "notebook_id": nb["id"],
+                "name": "General",
+                "order": 0,
+            }
+        ],
+        "pages": [
+            {
+                "id": "note_embed1",
+                "notebook_id": nb["id"],
+                "section_id": "sec_e",
+                "title": "Rec",
+                "body": "<p>note</p>",
+                "audio_b64": url,
+                "audio_mime": "audio/wav",
+            }
+        ],
+    }
+    out = notes.apply_onenote_snapshot(snap)
+    page = next(p for p in out["pages"] if p["id"] == "note_embed1")
+    assert page.get("audio_path")
+    assert "lt-note-audio" in (page.get("body_html") or page.get("body") or "")
+    assert notes.ensure_audio_embed_in_body("x", "") == "x"

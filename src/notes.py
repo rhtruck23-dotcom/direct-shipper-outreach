@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -911,22 +912,75 @@ def attach_audio_to_note(
     return update_note(note_id, audio_path=rel, audio_mime=mime)
 
 
+def audio_data_url_for_note(note: dict, *, max_bytes: int = 4_000_000) -> str:
+    """
+    Build a data: URL for an existing note_audio blob so the client can embed
+    <audio controls>. Returns "" when missing, unreadable, or over max_bytes.
+    """
+    raw = read_note_audio_bytes(note)
+    if not raw or len(raw) > max_bytes:
+        return ""
+    mime = (note.get("audio_mime") or "").strip() or "audio/webm"
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def ensure_audio_embed_in_body(body_html: str, data_url: str) -> str:
+    """
+    Ensure body HTML contains one <audio class="lt-note-audio"> using data_url.
+    Replaces any prior lt-note-audio player. No-op if data_url empty.
+    """
+    html = body_html or ""
+    url = (data_url or "").strip()
+    if not url:
+        return html
+    # Strip prior embedded players (div wrap or bare audio)
+    html = re.sub(
+        r'<div[^>]*class="[^"]*lt-note-audio-wrap[^"]*"[^>]*>.*?</div>',
+        "",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    html = re.sub(
+        r'<audio[^>]*class="[^"]*lt-note-audio[^"]*"[^>]*>.*?</audio>',
+        "",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    html = re.sub(
+        r"<audio[^>]*class='[^']*lt-note-audio[^']*'[^>]*>.*?</audio>",
+        "",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    embed = (
+        '<div class="lt-note-audio-wrap" contenteditable="false">'
+        "<p><em>Voice recording</em></p>"
+        f'<audio class="lt-note-audio" controls preload="metadata" src="{url}"></audio>'
+        "</div>"
+    )
+    return (html.rstrip() + "\n" + embed).strip()
+
+
 def page_to_client(note: dict) -> dict[str, Any]:
     """Serialize a page for the client OneNote panel (includes body_html)."""
     n = _migrate_note_row(note)
+    data_url = audio_data_url_for_note(n)
+    body = n["body"] or ""
+    if data_url and "lt-note-audio" not in body:
+        body = ensure_audio_embed_in_body(body, data_url)
     return {
         "id": n["id"],
         "notebook_id": n["notebook_id"],
         "section_id": n["section_id"],
         "title": n["title"],
-        "body_html": n["body"],
-        "body": n["body"],
+        "body_html": body,
+        "body": body,
         "color": n["color"],
         "reminder_at": n["reminder_at"],
         "reminder_done": n["reminder_done"],
         "audio_path": n["audio_path"],
         "audio_mime": n["audio_mime"],
-        "audio_b64": "",
+        "audio_b64": data_url,
         "created_at": n["created_at"],
         "updated_at": n["updated_at"],
         "created_by": n["created_by"],
@@ -1018,6 +1072,13 @@ def apply_onenote_snapshot(
             if rel:
                 p["audio_path"] = rel
                 p["audio_mime"] = mime
+                # Persist playable embed in page body (reopen works without a file server)
+                data_url = (
+                    audio_b64
+                    if audio_b64.startswith("data:")
+                    else f"data:{mime};base64,{audio_b64.split(',', 1)[-1]}"
+                )
+                p["body"] = ensure_audio_embed_in_body(p.get("body") or "", data_url)
             if transcribe_audio or raw.get("transcribe_on_save"):
                 try:
                     audio_bytes = base64.b64decode(
@@ -1030,8 +1091,10 @@ def apply_onenote_snapshot(
                     )
                     if transcript:
                         body = p.get("body") or ""
-                        sep = "" if not body or body.endswith(("\n", " ")) else " "
-                        p["body"] = (body + sep + transcript).strip() if body else transcript
+                        # Prefer appending as a paragraph outside the audio wrap
+                        block = f"<p>{transcript}</p>"
+                        if transcript not in body:
+                            p["body"] = (body.rstrip() + "\n" + block).strip() if body else block
                 except Exception:
                     pass
         if created_by and not p.get("created_by"):

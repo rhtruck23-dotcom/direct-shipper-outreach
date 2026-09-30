@@ -2,7 +2,7 @@
 OneNote UI bridge: one client panel inject + one Save bridge.
 
 Opening 📝 is zero-rerun once the panel exists in the parent DOM.
-Persist only on Save. Voice/mic UI is intentionally omitted (unreliable).
+Persist only on Save. Voice-to-text + Record live in floating_chrome.js.
 """
 from __future__ import annotations
 

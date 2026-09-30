@@ -5,7 +5,7 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 | Field | Fill in |
 |--------|---------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Version to confirm** | **v2026.09.28b · Lean core** — caption under **LogixTrek Outreach** in the left sidebar |
+| **Version to confirm** | **v2026.09.29a · Notes voice+embed** — caption under **LogixTrek Outreach** in the left sidebar |
 | **Tester name** | _______________________________ |
 | **Date** | _______________ |
 
@@ -13,12 +13,12 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 
 ## Cloud smoke — 15 key lines (do these first)
 
-After deploy, confirm the sidebar caption shows **v2026.09.28b**. Then click through:
+After deploy, confirm the sidebar caption shows **v2026.09.29a**. Then click through:
 
 1. **Login** — Super Admin email + PIN → sidebar shows your name / role.
-2. **Version** — caption reads `v2026.09.28b · Lean core`.
+2. **Version** — caption reads `v2026.09.29a · Notes voice+embed`.
 3. **Notes FAB** — click 📝 (bottom-right). Three panes: Notebooks | section tabs + Pages | left-aligned page canvas. Typing stays left (not centered).
-4. **Notes edit + Save** — type in a page → **Save** → toast “OneNote saved”; reopen FAB and confirm text stuck. (Voice/mic is **removed** from UI.)
+4. **Notes edit + Save** — type in a page → **Save** → toast “OneNote saved”; reopen FAB and confirm text stuck. Voice to text + Record embed `<audio controls>` on the page.
 5. **Sidebar Add Note** — **📝 Add Note** opens the same panel.
 6. **Jump-top** — scroll down a long page → ↑ appears → click scrolls to top.
 7. **Page switch** — move Shipper → Carrier → Dashboard; main area should match the selected page (no previous-page residue / sticky Notes overlay).
@@ -35,7 +35,7 @@ After deploy, confirm the sidebar caption shows **v2026.09.28b**. Then click thr
 
 ---
 
-## Automation status (v2026.09.28b)
+## Automation status (v2026.09.29a)
 
 Many cases below are **covered by automated pytest** (mocked SMTP / Places / LLM / IMAP). Mark them **Skip** for human UAT unless you want a live click-through. Keep the **Human-only** list short.
 
@@ -63,7 +63,7 @@ Many cases below are **covered by automated pytest** (mocked SMTP / Places / LLM
 5. **T-071** Live LLM template generate for Lead-for-X (needs key)
 6. **T-083** Cloud Sheet connection if deploying Streamlit Cloud
 7. Optional: enable `imap_poll_enabled` only after App Passwords verified, then smoke-poll once
-8. **T-122** Voice/mic — **removed from Notes UI** in lean build (Skip / N/A)
+8. **T-122** Voice/mic — restored in v2026.09.29a (Voice to text + Record embed)
 
 Everything else in this checklist is optional UI confirmation; failures should be rare if pytest is green.
 
@@ -754,7 +754,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 1. From Dashboard, click **📝 Add Note** in the sidebar (and/or the bottom-right 📝 FAB).
 2. Navigate to Shipper → Leads List and confirm Add Note is still available.
 3. Navigate to Carrier and Lead for X — confirm previous page content does not linger.
-**Expected:** Add Note on every authenticated page. **📝** opens three panes (Notebooks | sections+Pages | canvas). Editor is **left-aligned**. No mic/voice buttons. No stuck “Loading…”.
+**Expected:** Add Note on every authenticated page. **📝** opens three panes (Notebooks | sections+Pages | canvas). Editor is **left-aligned**. Toolbar includes **Voice to text** + **Record**. No stuck “Loading…”.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
 **Screenshot:** (filename)
@@ -771,10 +771,15 @@ Everything else in this checklist is optional UI confirmation; failures should b
 **Comment:**  
 **Screenshot:** (filename)
 
-### T-122 Voice note — REMOVED (lean build)
-**Status:** Mic / upload / voice-to-text controls are **hidden** until reliable. Mark **Skip**.
-**Result:** [ ] Pass  [ ] Fail  [x] Skip  
-**Comment:** Removed from UI in v2026.09.28b  
+### T-122 Voice to text + Record embed
+**Precondition:** OneNote page open; mic allowed; Chrome/Edge preferred (HTTPS).
+**Steps:**
+1. Click **Voice to text** → speak → confirm transcript appears in the page body → **Stop voice**.
+2. Click **Record** → speak → **Stop record** → confirm `<audio controls>` player appears on the page.
+3. Click **Save** → close → reopen page → confirm player still plays.
+**Expected:** Dictation inserts text; recording embeds playable audio on the page and survives Save/reopen.
+**Result:** [ ] Pass  [ ] Fail  [ ] Skip  
+**Comment:**  
 
 ### T-123 Open note from Dashboard reminder + mark done
 **Precondition:** Reminder exists from T-121.
