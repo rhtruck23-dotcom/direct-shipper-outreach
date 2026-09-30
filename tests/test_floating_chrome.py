@@ -36,6 +36,22 @@ def test_onenote_is_floating_draggable_window():
     assert "localStorage" in inject_src
 
 
+def test_save_and_close_closes_panel_client_side():
+    """Save & close must closePanel after bridge click; Save alone must not."""
+    import inspect
+
+    inject_src = inspect.getsource(fc.inject_floating_chrome)
+    assert 'persistViaBridge(true)' in inject_src or "persistViaBridge(true)" in inject_src
+    assert "persistViaBridge(false)" in inject_src
+    assert "lt-btn-save-close" in inject_src
+    # After bridge click with closeAfter, must hide shell (same as ×)
+    assert "closePanel()" in inject_src
+    assert "Saved — closing" in inject_src
+    notes_src = inspect.getsource(notes_ui.render_floating_add_note)
+    assert "__ltCloseOneNote" in notes_src
+    assert 'close_after' in notes_src or "close_after" in notes_src
+
+
 def test_parent_voice_runtime_has_mic_and_speech():
     """Voice must run in parent realm with microphone allow + Web Speech + MediaRecorder."""
     src = fc._PARENT_VOICE_JS

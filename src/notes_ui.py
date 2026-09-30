@@ -187,6 +187,40 @@ def render_floating_add_note(
                 st.session_state["notes_panel_open"] = False
                 st.session_state["onenote_client_open"] = False
                 st.session_state.pop("selected_note_id", None)
+                # Belt-and-suspenders: ensure floating shell closes after save ack
+                try:
+                    import streamlit.components.v1 as _c
+
+                    _c.html(
+                        """<script>
+(function () {
+  try {
+    window.parent.sessionStorage.removeItem("lt_onenote_payload");
+    window.parent.sessionStorage.setItem("lt_onenote_keep_open", "0");
+  } catch (e) {}
+  try {
+    if (typeof window.parent.__ltCloseOneNote === "function") {
+      window.parent.__ltCloseOneNote();
+      return;
+    }
+  } catch (e2) {}
+  try {
+    var doc = window.parent.document;
+    var o = doc.getElementById("lt-onenote-overlay");
+    if (o) {
+      o.classList.remove("lt-open");
+      o.classList.remove("lt-minimized");
+    }
+    var chip = doc.getElementById("lt-onenote-chip");
+    if (chip) chip.classList.remove("lt-show");
+  } catch (e3) {}
+})();
+</script>""",
+                        height=1,
+                        width=1,
+                    )
+                except Exception:
+                    pass
             else:
                 # Keep panel open via sessionStorage, not sticky Streamlit flags
                 st.session_state["onenote_client_open"] = False

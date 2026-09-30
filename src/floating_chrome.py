@@ -1152,7 +1152,21 @@ def inject_floating_chrome(
     const btn = findBridgeButton("lt_onenote_save");
     if (btn) {{
       btn.style.pointerEvents = "auto";
-      win.setTimeout(function () {{ btn.click(); }}, 30);
+      win.setTimeout(function () {{
+        btn.click();
+        // Bridge click queued Streamlit save — close shell immediately for Save & close
+        // (do not wait on round-trip; overlay would keep lt-open across reruns otherwise).
+        state.dirty = false;
+        const stEl = doc.getElementById("lt-onenote-status");
+        if (stEl) stEl.textContent = closeAfter ? "Saved — closing" : "Saving…";
+        if (closeAfter) {{
+          try {{
+            win.sessionStorage.setItem("lt_onenote_keep_open", "0");
+            win.sessionStorage.removeItem("lt_onenote_payload");
+          }} catch (e) {{}}
+          closePanel();
+        }}
+      }}, 30);
       return;
     }}
     alert("Could not reach Save bridge. Try sidebar Add Note and Save again.");
