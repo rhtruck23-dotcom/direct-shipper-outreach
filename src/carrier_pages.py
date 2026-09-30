@@ -36,7 +36,6 @@ from src.stages import (
     set_carrier_deal_stage,
     stage_label,
 )
-from src.storage import using_cloud
 
 
 def _user():
@@ -263,16 +262,8 @@ def page_carrier_leads():
     if not can(user, "carrier_leads", "read"):
         st.error("No access to Carrier Leads.")
         return
-    st.caption(
-        "Owner-operator recruiting memory. Color = email stage. "
-        "Deal stage = onboarding after they reply (packet → docs → hired)."
-    )
     if not is_super_admin(user):
         st.info("You only see carriers assigned to you.")
-    if using_cloud():
-        st.success("☁️ Carrier tab: Google Sheet `carrier_leads`")
-    else:
-        st.warning("💾 Local carrier DB")
 
     leads = _refresh_carriers()
     f1, f2, f3, f4 = st.columns(4)

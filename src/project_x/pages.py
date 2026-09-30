@@ -35,7 +35,6 @@ from src.project_x.templates import ensure_templates, render_x_email
 from src.rbac import can, can_access_lead, is_super_admin, scope_leads
 from src.schedule import days_until_next, next_action_for_lead
 from src.stages import STAGE_STYLE, contact_indicator, stage_label
-from src.storage import using_cloud
 
 
 def _user():
@@ -377,10 +376,6 @@ def page_x_leads_list():
     if not project:
         return
     _project_picker(key="x_list_proj")
-    if using_cloud():
-        st.success("☁️ Cloud: Google Sheet `x_leads`")
-    else:
-        st.warning("💾 Local `data/x_leads.json`")
 
     leads = _refresh_leads(project["id"])
     f1, f2, f3, f4 = st.columns(4)

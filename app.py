@@ -1509,13 +1509,8 @@ def page_leads_list():
     if not can(user, "leads", "read"):
         st.error("No access to Leads.")
         return
-    st.caption(
-        "Your permanent contact record. Color = stage. "
-        "Do Not Contact and finished sequences are blocked from repeat spam."
-    )
     if not is_super_admin(user):
         st.info("You only see leads assigned to you by Super Admin.")
-    _storage_banner()
     st.markdown(_legend_html(), unsafe_allow_html=True)
 
     leads = _refresh_leads()
@@ -3484,7 +3479,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.30b · Visible leads tabs")
+        st.caption("v2026.09.30c · Leads list header cleanup")
 
         from src.notes_ui import render_sidebar_add_note_button
 
