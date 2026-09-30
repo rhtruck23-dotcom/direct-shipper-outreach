@@ -225,6 +225,6 @@ def render_notes_panel(
     user: Optional[dict] = None,
     key_prefix: str = "notes",
 ) -> None:
-    """Deprecated alias: opens client OneNote instead of Streamlit expander."""
+    """Deprecated alias: opens the floating OneNote window (never embeds in page body)."""
     open_note_panel()
     render_floating_add_note(company=company, user=user)

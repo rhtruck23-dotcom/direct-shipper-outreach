@@ -3494,7 +3494,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.30d · Gmail pool activate")
+        st.caption("v2026.09.30e · Floating Notes window")
 
         from src.notes_ui import render_sidebar_add_note_button
 

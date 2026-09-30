@@ -10,6 +10,32 @@ def test_floating_chrome_module_exports():
     assert callable(fc._bridge_widgets)
 
 
+def test_onenote_is_floating_draggable_window():
+    """Notes must be a fixed floating window with drag + min/max/close, not a full-page modal."""
+    shell = fc._SHELL_HTML
+    assert "lt_onenote_geom" in shell
+    assert "lt-onenote-min" in shell
+    assert "lt-onenote-max" in shell
+    assert "cursor: move" in shell
+    assert "pointer-events: none" in shell
+    assert "rgba(40, 20, 50, 0.4)" not in shell
+    assert "lt-maximized" in shell
+    assert "lt-onenote-chip" in shell
+    assert "minimizePanel" in shell
+
+    import inspect
+
+    inject_src = inspect.getsource(fc.inject_floating_chrome)
+    assert "lt_onenote_geom" in inject_src
+    assert "lt-onenote-min" in inject_src
+    assert "lt-onenote-max" in inject_src
+    assert "cursor: move" in inject_src
+    assert "pointer-events: none" in inject_src
+    assert "rgba(40, 20, 50, 0.4)" not in inject_src
+    assert "__ltMinimizeOneNote" in inject_src
+    assert "localStorage" in inject_src
+
+
 def test_parent_voice_runtime_has_mic_and_speech():
     """Voice must run in parent realm with microphone allow + Web Speech + MediaRecorder."""
     src = fc._PARENT_VOICE_JS
