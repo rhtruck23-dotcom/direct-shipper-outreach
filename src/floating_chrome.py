@@ -8,6 +8,9 @@ also call inject_notes_shell in the same run — that doubles iframes / lag).
 Opening 📝 / typing / tree edits are DOM-only. Persist only on Save via the
 hidden Streamlit bridge. Voice-to-text (Web Speech) + in-panel MediaRecorder
 embed recordings into the page body as <audio controls>.
+
+Mic APIs run in the *parent* window (not the hidden components.html iframe)
+so Chrome user-activation + Permissions-Policy allow microphone access.
 """
 from __future__ import annotations
 
@@ -19,6 +22,281 @@ import streamlit.components.v1 as components
 
 _CHROME_FLAG = "_lt_floating_chrome_injected"
 _SHELL_FLAG = "_lt_notes_shell_injected"
+
+# Executed as a <script> in the parent document (top Streamlit page).
+# Must not rely on the components.html iframe realm for SpeechRecognition /
+# getUserMedia — hidden 1px iframes lose user-activation and mic permission.
+_PARENT_VOICE_JS = r"""
+(function () {
+  if (window.__ltVoiceParentReady) return;
+  window.__ltVoiceParentReady = true;
+
+  function hooks() { return window.__ltNotesHooks || null; }
+  function voice() {
+    if (!window.__ltVoice) {
+      window.__ltVoice = {
+        recognition: null,
+        listening: false,
+        recorder: null,
+        chunks: [],
+        stream: null,
+        recording: false
+      };
+    }
+    return window.__ltVoice;
+  }
+
+  function ensureMicAllow() {
+    try {
+      var frames = document.querySelectorAll("iframe");
+      for (var i = 0; i < frames.length; i++) {
+        var f = frames[i];
+        var allow = f.getAttribute("allow") || "";
+        if (allow.toLowerCase().indexOf("microphone") === -1) {
+          f.setAttribute(
+            "allow",
+            (allow ? allow + "; " : "") + "microphone; camera; autoplay"
+          );
+        }
+      }
+    } catch (e) {}
+  }
+
+  window.__ltToggleVoiceToText = function () {
+    ensureMicAllow();
+    var h = hooks();
+    var v = voice();
+    if (!h) {
+      try { window.alert("Notes voice not ready — reopen the Notes panel."); } catch (e) {}
+      return;
+    }
+    if (v.listening) {
+      try { if (v.recognition) v.recognition.stop(); } catch (e) {}
+      v.listening = false;
+      v.recognition = null;
+      h.updateVoiceButtons();
+      h.showToast("Voice-to-text stopped");
+      return;
+    }
+    if (v.recording) {
+      h.showToast("Stop recording before using voice-to-text", true);
+      return;
+    }
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      h.showToast("Voice-to-text needs Chrome or Edge (Web Speech API).", true);
+      return;
+    }
+    if (!window.isSecureContext) {
+      h.showToast("Microphone requires HTTPS (or localhost).", true);
+      return;
+    }
+    if (!h.selectedPage() || !h.getBody()) {
+      h.showToast("Open a page first.", true);
+      return;
+    }
+
+    function beginSR() {
+      var rec = new SR();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = (window.navigator.language || "en-US");
+      var lastFinal = "";
+      rec.onresult = function (ev) {
+        var finalChunk = "";
+        for (var i = ev.resultIndex; i < ev.results.length; i++) {
+          if (ev.results[i].isFinal) {
+            finalChunk += ev.results[i][0].transcript;
+          }
+        }
+        finalChunk = (finalChunk || "").trim();
+        if (finalChunk && finalChunk !== lastFinal) {
+          lastFinal = finalChunk;
+          h.insertTextAtCursor(" " + finalChunk);
+          h.showToast(
+            "Transcribed: " +
+              finalChunk.slice(0, 60) +
+              (finalChunk.length > 60 ? "…" : "")
+          );
+        }
+      };
+      rec.onerror = function (ev) {
+        var err = (ev && ev.error) || "unknown";
+        if (err === "not-allowed" || err === "service-not-allowed") {
+          h.showToast("Mic permission denied — allow microphone for this site.", true);
+        } else if (err === "no-speech") {
+          h.showToast("No speech heard — try again.", true);
+        } else if (err !== "aborted") {
+          h.showToast("Voice-to-text error: " + err, true);
+        }
+        v.listening = false;
+        h.updateVoiceButtons();
+      };
+      rec.onend = function () {
+        v.listening = false;
+        v.recognition = null;
+        h.updateVoiceButtons();
+      };
+      v.recognition = rec;
+      try {
+        rec.start();
+        v.listening = true;
+        h.updateVoiceButtons();
+        var body = h.getBody();
+        if (body) body.focus();
+        h.showToast("Listening… speak now");
+      } catch (e) {
+        v.listening = false;
+        h.updateVoiceButtons();
+        h.showToast(
+          "Could not start voice-to-text: " + (e && e.message ? e.message : e),
+          true
+        );
+      }
+    }
+
+    // Prime mic permission in the parent window, then start Web Speech.
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices
+        .getUserMedia({ audio: true })
+        .then(function (stream) {
+          try {
+            stream.getTracks().forEach(function (t) { t.stop(); });
+          } catch (e) {}
+          beginSR();
+        })
+        .catch(function (err) {
+          var name = (err && err.name) || "";
+          if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+            h.showToast("Mic permission denied — allow microphone for this site.", true);
+          } else if (name === "NotFoundError") {
+            h.showToast("No microphone found.", true);
+          } else {
+            // Fall back to SpeechRecognition alone (some browsers gate only SR).
+            beginSR();
+          }
+        });
+    } else {
+      beginSR();
+    }
+  };
+
+  window.__ltToggleRecording = function () {
+    ensureMicAllow();
+    var h = hooks();
+    var v = voice();
+    if (!h) {
+      try { window.alert("Notes voice not ready — reopen the Notes panel."); } catch (e) {}
+      return;
+    }
+    if (v.recording) {
+      if (v.recorder && v.recorder.state !== "inactive") {
+        try { v.recorder.stop(); } catch (e) {}
+      } else {
+        v.recording = false;
+        h.stopMediaStream();
+        h.updateVoiceButtons();
+      }
+      return;
+    }
+    if (v.listening) {
+      h.showToast("Stop voice-to-text before recording.", true);
+      return;
+    }
+    if (!h.selectedPage()) {
+      h.showToast("Open a page first.", true);
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      h.showToast("Recording needs a modern browser with mic access.", true);
+      return;
+    }
+    if (!window.MediaRecorder) {
+      h.showToast("MediaRecorder not supported in this browser.", true);
+      return;
+    }
+    if (!window.isSecureContext) {
+      h.showToast("Microphone requires HTTPS (or localhost).", true);
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      v.stream = stream;
+      v.chunks = [];
+      var mime = "";
+      var candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+      for (var i = 0; i < candidates.length; i++) {
+        if (window.MediaRecorder.isTypeSupported && window.MediaRecorder.isTypeSupported(candidates[i])) {
+          mime = candidates[i];
+          break;
+        }
+      }
+      var opts = mime ? { mimeType: mime } : undefined;
+      var recorder;
+      try {
+        recorder = opts ? new window.MediaRecorder(stream, opts) : new window.MediaRecorder(stream);
+      } catch (e) {
+        h.stopMediaStream();
+        h.showToast("Could not start recorder: " + (e && e.message ? e.message : e), true);
+        return;
+      }
+      v.recorder = recorder;
+      recorder.ondataavailable = function (ev) {
+        if (ev.data && ev.data.size) v.chunks.push(ev.data);
+      };
+      recorder.onerror = function () {
+        h.showToast("Recording failed.", true);
+        v.recording = false;
+        h.stopMediaStream();
+        h.updateVoiceButtons();
+      };
+      recorder.onstop = function () {
+        v.recording = false;
+        h.updateVoiceButtons();
+        var usedMime = recorder.mimeType || mime || "audio/webm";
+        var blob = new window.Blob(v.chunks, { type: usedMime });
+        v.chunks = [];
+        h.stopMediaStream();
+        if (!blob.size) {
+          h.showToast("Recording was empty — try again.", true);
+          return;
+        }
+        h.blobToDataUrl(blob).then(function (dataUrl) {
+          if (!dataUrl) {
+            h.showToast("Could not encode recording.", true);
+            return;
+          }
+          h.embedAudioInPage(dataUrl, usedMime.split(";")[0] || "audio/webm");
+          h.showToast("Recording embedded — click Save to persist.");
+        }).catch(function (err) {
+          h.showToast((err && err.message) || "Failed to embed recording", true);
+        });
+      };
+      try {
+        recorder.start(1000);
+        v.recording = true;
+        h.updateVoiceButtons();
+        h.showToast("Recording… click Stop record when done");
+      } catch (e2) {
+        h.stopMediaStream();
+        v.recording = false;
+        h.updateVoiceButtons();
+        h.showToast("Could not start recording: " + (e2 && e2.message ? e2.message : e2), true);
+      }
+    }).catch(function (err) {
+      var name = (err && err.name) || "";
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        h.showToast("Mic permission denied — allow microphone for this site.", true);
+      } else if (name === "NotFoundError") {
+        h.showToast("No microphone found.", true);
+      } else {
+        h.showToast("Mic error: " + (err && err.message ? err.message : name || err), true);
+      }
+    });
+  };
+
+  ensureMicAllow();
+})();
+"""
 
 # Minimal shell: FAB + three-pane overlay. Opens instantly; tree hydrates later.
 _SHELL_HTML = """
@@ -275,6 +553,7 @@ def inject_floating_chrome(
     tree_json = json.dumps(tree, ensure_ascii=False)
     focus_json = json.dumps(str(focus_page_id or ""))
     auto_json = "true" if auto_open else "false"
+    voice_js_literal = json.dumps(_PARENT_VOICE_JS)
 
     html = f"""
 <!DOCTYPE html>
@@ -284,6 +563,7 @@ def inject_floating_chrome(
   const TREE = {tree_json};
   const FOCUS_PAGE = {focus_json};
   const AUTO_OPEN = {auto_json};
+  const _ltVoiceSrc = {voice_js_literal};
   const doc = window.parent.document;
   const win = window.parent;
   const SEC_COLORS = ["#7719aa", "#c43e1c", "#217346", "#0078d4", "#ca5010", "#038387", "#8764b8"];
@@ -453,7 +733,7 @@ def inject_floating_chrome(
         background: #c62828; color: #fff; border-color: #c62828; animation: lt-pulse 1.2s infinite;
       }}
       .lt-toolbar button.lt-listening {{
-        background: #1565c0; color: #fff; border-color: #1565c0;
+        background: #1565c0; color: #fff; border-color: #1565c0; animation: lt-pulse 1.2s infinite;
       }}
       @keyframes lt-pulse {{
         0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.65; }}
@@ -474,8 +754,9 @@ def inject_floating_chrome(
       #lt-onenote-toast {{
         position: absolute; bottom: 1rem; left: 50%; transform: translateX(-50%);
         background: #323232; color: #fff; padding: 0.45rem 0.9rem; border-radius: 6px;
-        font-size: 0.85rem; z-index: 20; opacity: 0; pointer-events: none;
+        font-size: 0.85rem; z-index: 50; opacity: 0; pointer-events: none;
         transition: opacity 0.2s ease; max-width: 90%; text-align: center;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.25);
       }}
       #lt-onenote-toast.lt-show {{ opacity: 1; }}
       .lt-hl-y {{ background: #fff59d !important; }}
@@ -933,205 +1214,80 @@ def inject_floating_chrome(
     const rBtn = doc.getElementById("lt-btn-record");
     if (vBtn) {{
       vBtn.classList.toggle("lt-listening", !!voice.listening);
-      vBtn.textContent = voice.listening ? "Stop voice" : "Voice to text";
+      vBtn.setAttribute("aria-pressed", voice.listening ? "true" : "false");
+      vBtn.textContent = voice.listening ? "⏹ Stop" : "🎤 Voice";
       vBtn.title = voice.listening ? "Stop dictation" : "Dictate into the page (Web Speech)";
     }}
     if (rBtn) {{
       rBtn.classList.toggle("lt-recording", !!voice.recording);
-      rBtn.textContent = voice.recording ? "Stop record" : "Record";
+      rBtn.setAttribute("aria-pressed", voice.recording ? "true" : "false");
+      rBtn.textContent = voice.recording ? "⏹ Stop" : "⏺ Record";
       rBtn.title = voice.recording
         ? "Stop and embed recording on this page"
         : "Record audio and embed player on this page";
     }}
   }}
 
-  function stopVoiceToText() {{
-    if (voice.recognition) {{
-      try {{ voice.recognition.stop(); }} catch (e) {{}}
-    }}
-    voice.listening = false;
-    updateVoiceButtons();
-  }}
-
-  function toggleVoiceToText() {{
-    if (voice.listening) {{
-      stopVoiceToText();
-      showToast("Voice-to-text stopped");
-      return;
-    }}
-    if (voice.recording) {{
-      showToast("Stop recording before using voice-to-text", true);
-      return;
-    }}
-    const SR = win.SpeechRecognition || win.webkitSpeechRecognition;
-    if (!SR) {{
-      showToast("Voice-to-text needs Chrome or Edge (Web Speech API).", true);
-      return;
-    }}
-    if (!win.isSecureContext && win.location.protocol !== "https:") {{
-      showToast("Microphone requires HTTPS (or localhost).", true);
-      return;
-    }}
-    const body = doc.getElementById("lt-page-body");
-    if (!selectedPage() || !body) {{
-      showToast("Open a page first.", true);
-      return;
-    }}
-    const rec = new SR();
-    rec.continuous = true;
-    rec.interimResults = false;
-    rec.lang = (win.navigator.language || "en-US");
-    rec.onresult = function (ev) {{
-      let chunk = "";
-      for (let i = ev.resultIndex; i < ev.results.length; i++) {{
-        if (ev.results[i].isFinal) chunk += ev.results[i][0].transcript;
-      }}
-      chunk = (chunk || "").trim();
-      if (chunk) {{
-        const needsSpace = true;
-        insertTextAtCursor((needsSpace ? " " : "") + chunk);
-        showToast("Transcribed: " + chunk.slice(0, 60) + (chunk.length > 60 ? "…" : ""));
-      }}
-    }};
-    rec.onerror = function (ev) {{
-      const err = (ev && ev.error) || "unknown";
-      if (err === "not-allowed" || err === "service-not-allowed") {{
-        showToast("Mic permission denied — allow microphone for this site.", true);
-      }} else if (err === "no-speech") {{
-        showToast("No speech heard — try again.", true);
-      }} else if (err !== "aborted") {{
-        showToast("Voice-to-text error: " + err, true);
-      }}
-      voice.listening = false;
-      updateVoiceButtons();
-    }};
-    rec.onend = function () {{
-      voice.listening = false;
-      voice.recognition = null;
-      updateVoiceButtons();
-    }};
-    voice.recognition = rec;
+  function ensureMicAllowOnFrames() {{
     try {{
-      rec.start();
-      voice.listening = true;
-      updateVoiceButtons();
-      body.focus();
-      showToast("Listening… speak now");
-    }} catch (e) {{
-      voice.listening = false;
-      updateVoiceButtons();
-      showToast("Could not start voice-to-text: " + (e && e.message ? e.message : e), true);
+      if (window.frameElement) {{
+        const fe = window.frameElement;
+        let allow = fe.getAttribute("allow") || "";
+        if (allow.toLowerCase().indexOf("microphone") === -1) {{
+          fe.setAttribute("allow", (allow ? allow + "; " : "") + "microphone; camera; autoplay");
+        }}
+      }}
+    }} catch (e) {{}}
+    try {{
+      doc.querySelectorAll("iframe").forEach(function (f) {{
+        let allow = f.getAttribute("allow") || "";
+        if (allow.toLowerCase().indexOf("microphone") === -1) {{
+          f.setAttribute("allow", (allow ? allow + "; " : "") + "microphone; camera; autoplay");
+        }}
+      }});
+    }} catch (e2) {{}}
+  }}
+
+  function installParentVoiceRuntime() {{
+    ensureMicAllowOnFrames();
+    // Refresh hooks each inject so closures stay current after Streamlit reruns.
+    win.__ltNotesHooks = {{
+      showToast: showToast,
+      insertTextAtCursor: insertTextAtCursor,
+      selectedPage: selectedPage,
+      markDirty: markDirty,
+      embedAudioInPage: embedAudioInPage,
+      updateVoiceButtons: updateVoiceButtons,
+      blobToDataUrl: blobToDataUrl,
+      stopMediaStream: stopMediaStream,
+      getBody: function () {{ return doc.getElementById("lt-page-body"); }},
+    }};
+    if (!doc.getElementById("lt-voice-parent-runtime")) {{
+      const s = doc.createElement("script");
+      s.id = "lt-voice-parent-runtime";
+      s.textContent = _ltVoiceSrc;
+      (doc.head || doc.documentElement).appendChild(s);
     }}
   }}
 
-  function stopRecording() {{
-    if (voice.recorder && voice.recorder.state !== "inactive") {{
-      try {{ voice.recorder.stop(); }} catch (e) {{}}
-    }} else {{
-      voice.recording = false;
-      stopMediaStream();
-      updateVoiceButtons();
+  function bindVoiceButtons() {{
+    installParentVoiceRuntime();
+    const voiceBtn = doc.getElementById("lt-btn-voice");
+    const recBtn = doc.getElementById("lt-btn-record");
+    // Inline handlers run in the *parent* document realm (user-activation + mic).
+    if (voiceBtn) {{
+      voiceBtn.setAttribute(
+        "onclick",
+        "window.__ltToggleVoiceToText && window.__ltToggleVoiceToText(); return false;"
+      );
     }}
-  }}
-
-  function toggleRecording() {{
-    if (voice.recording) {{
-      stopRecording();
-      return;
+    if (recBtn) {{
+      recBtn.setAttribute(
+        "onclick",
+        "window.__ltToggleRecording && window.__ltToggleRecording(); return false;"
+      );
     }}
-    if (voice.listening) {{
-      showToast("Stop voice-to-text before recording.", true);
-      return;
-    }}
-    if (!selectedPage()) {{
-      showToast("Open a page first.", true);
-      return;
-    }}
-    if (!win.navigator.mediaDevices || !win.navigator.mediaDevices.getUserMedia) {{
-      showToast("Recording needs a modern browser with mic access.", true);
-      return;
-    }}
-    if (!win.MediaRecorder) {{
-      showToast("MediaRecorder not supported in this browser.", true);
-      return;
-    }}
-    if (!win.isSecureContext && win.location.protocol !== "https:") {{
-      showToast("Microphone requires HTTPS (or localhost).", true);
-      return;
-    }}
-    win.navigator.mediaDevices.getUserMedia({{ audio: true }}).then(function (stream) {{
-      voice.stream = stream;
-      voice.chunks = [];
-      let mime = "";
-      const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
-      for (let i = 0; i < candidates.length; i++) {{
-        if (win.MediaRecorder.isTypeSupported && win.MediaRecorder.isTypeSupported(candidates[i])) {{
-          mime = candidates[i];
-          break;
-        }}
-      }}
-      const opts = mime ? {{ mimeType: mime }} : undefined;
-      let recorder;
-      try {{
-        recorder = opts ? new win.MediaRecorder(stream, opts) : new win.MediaRecorder(stream);
-      }} catch (e) {{
-        stopMediaStream();
-        showToast("Could not start recorder: " + (e && e.message ? e.message : e), true);
-        return;
-      }}
-      voice.recorder = recorder;
-      recorder.ondataavailable = function (ev) {{
-        if (ev.data && ev.data.size) voice.chunks.push(ev.data);
-      }};
-      recorder.onerror = function () {{
-        showToast("Recording failed.", true);
-        voice.recording = false;
-        stopMediaStream();
-        updateVoiceButtons();
-      }};
-      recorder.onstop = function () {{
-        voice.recording = false;
-        updateVoiceButtons();
-        const usedMime = recorder.mimeType || mime || "audio/webm";
-        const blob = new win.Blob(voice.chunks, {{ type: usedMime }});
-        voice.chunks = [];
-        stopMediaStream();
-        if (!blob.size) {{
-          showToast("Recording was empty — try again.", true);
-          return;
-        }}
-        blobToDataUrl(blob).then(function (dataUrl) {{
-          if (!dataUrl) {{
-            showToast("Could not encode recording.", true);
-            return;
-          }}
-          embedAudioInPage(dataUrl, usedMime.split(";")[0] || "audio/webm");
-          showToast("Recording embedded — click Save to persist.");
-        }}).catch(function (err) {{
-          showToast((err && err.message) || "Failed to embed recording", true);
-        }});
-      }};
-      try {{
-        recorder.start(1000);
-        voice.recording = true;
-        updateVoiceButtons();
-        showToast("Recording… click Stop record when done");
-      }} catch (e2) {{
-        stopMediaStream();
-        voice.recording = false;
-        updateVoiceButtons();
-        showToast("Could not start recording: " + (e2 && e2.message ? e2.message : e2), true);
-      }}
-    }}).catch(function (err) {{
-      const name = (err && err.name) || "";
-      if (name === "NotAllowedError" || name === "PermissionDeniedError") {{
-        showToast("Mic permission denied — allow microphone for this site.", true);
-      }} else if (name === "NotFoundError") {{
-        showToast("No microphone found.", true);
-      }} else {{
-        showToast("Mic error: " + (err && err.message ? err.message : name || err), true);
-      }}
-    }});
+    updateVoiceButtons();
   }}
 
   function escHtml(s) {{
@@ -1288,8 +1444,8 @@ def inject_floating_chrome(
         <button type="button" class="lt-hl-b" id="lt-hl-b" title="Highlight blue">Hl</button>
         <input type="color" id="lt-text-color" value="#1565c0" title="Text color" />
         <button type="button" id="lt-fmt-ul" title="Bullet list">• List</button>
-        <button type="button" id="lt-btn-voice" title="Dictate into the page (Web Speech)">Voice to text</button>
-        <button type="button" id="lt-btn-record" title="Record audio and embed player on this page">Record</button>
+        <button type="button" id="lt-btn-voice" title="Dictate into the page (Web Speech)">🎤 Voice</button>
+        <button type="button" id="lt-btn-record" title="Record audio and embed player on this page">⏺ Record</button>
         <label style="font-size:0.75rem;color:#666;margin-left:0.35rem">Reminder
           <input type="datetime-local" id="lt-page-reminder" />
         </label>
@@ -1328,11 +1484,7 @@ def inject_floating_chrome(
       execFmt("foreColor", e.target.value);
     }};
     doc.getElementById("lt-fmt-ul").onclick = function () {{ insertBullet(); }};
-    const voiceBtn = doc.getElementById("lt-btn-voice");
-    if (voiceBtn) voiceBtn.onclick = function () {{ toggleVoiceToText(); }};
-    const recBtn = doc.getElementById("lt-btn-record");
-    if (recBtn) recBtn.onclick = function () {{ toggleRecording(); }};
-    updateVoiceButtons();
+    bindVoiceButtons();
     doc.getElementById("lt-btn-save").onclick = function () {{ persistViaBridge(false); }};
     doc.getElementById("lt-btn-save-close").onclick = function () {{ persistViaBridge(true); }};
     if (titleEl) titleEl.oninput = function () {{ markDirty(); }};

@@ -3375,7 +3375,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.29a · Notes voice+embed")
+        st.caption("v2026.09.29b · Notes mic parent-realm")
 
         from src.notes_ui import render_sidebar_add_note_button
 

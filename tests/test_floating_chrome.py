@@ -10,6 +10,25 @@ def test_floating_chrome_module_exports():
     assert callable(fc._bridge_widgets)
 
 
+def test_parent_voice_runtime_has_mic_and_speech():
+    """Voice must run in parent realm with microphone allow + Web Speech + MediaRecorder."""
+    src = fc._PARENT_VOICE_JS
+    assert "SpeechRecognition" in src or "webkitSpeechRecognition" in src
+    assert "MediaRecorder" in src
+    assert "getUserMedia" in src
+    assert "__ltToggleVoiceToText" in src
+    assert "__ltToggleRecording" in src
+    assert "microphone" in src
+    # Inject path must patch iframe allow + install parent script
+    import inspect
+
+    inject_src = inspect.getsource(fc.inject_floating_chrome)
+    assert "allow" in inject_src and "microphone" in inject_src
+    assert "_ltVoiceSrc" in inject_src or "_PARENT_VOICE_JS" in inject_src
+    assert "bindVoiceButtons" in inject_src
+    assert "__ltToggleVoiceToText" in inject_src
+
+
 def test_notes_ui_open_panel_sets_session(monkeypatch):
     class _SS(dict):
         pass
