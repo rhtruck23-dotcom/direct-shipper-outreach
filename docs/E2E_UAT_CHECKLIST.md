@@ -5,7 +5,7 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 | Field | Fill in |
 |--------|---------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Version to confirm** | **v2026.09.30a · Horizontal leads tabs** — caption under **LogixTrek Outreach** in the left sidebar |
+| **Version to confirm** | **v2026.09.30b · Visible leads tabs** — caption under **LogixTrek Outreach** in the left sidebar |
 | **Tester name** | _______________________________ |
 | **Date** | _______________ |
 
@@ -13,11 +13,11 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 
 ## Cloud smoke — 15 key lines (do these first)
 
-After deploy, confirm the sidebar caption shows **v2026.09.30a**. Then click through:
+After deploy, confirm the sidebar caption shows **v2026.09.30b**. Then click through:
 
 1. **Login** — Super Admin email + PIN → sidebar shows your name / role.
-2. **Version** — caption reads `v2026.09.30a · Horizontal leads tabs`.
-3. **Nav shape** — Shipper = Find Shippers + Leads List; Carrier = Find Carriers + Leads List; Lead for X = Project Setup + Find Leads + Leads List. Pipeline/Inbox are **horizontal tabs** under each Leads List (default **List**).
+2. **Version** — caption reads `v2026.09.30b · Visible leads tabs`.
+3. **Nav shape** — Shipper = Find Shippers + Leads List; Carrier = Find Carriers + Leads List; Lead for X = Project Setup + Find Leads + Leads List. Pipeline/Inbox are **broad List | Pipeline | Inbox buttons** under each Leads List (default **List**).
 4. **Notes FAB** — click 📝 (bottom-right). Three panes: Notebooks | section tabs + Pages | left-aligned page canvas. Typing stays left (not centered).
 5. **Notes edit + Save** — type in a page → **Save** → toast “OneNote saved”; reopen FAB and confirm text stuck. **🎤 Voice** (Web Speech) + **⏺ Record** embed `<audio controls>` on the page.
 6. **Sidebar Add Note** — **📝 Add Note** opens the same panel.
@@ -35,7 +35,7 @@ After deploy, confirm the sidebar caption shows **v2026.09.30a**. Then click thr
 
 ---
 
-## Automation status (v2026.09.30a)
+## Automation status (v2026.09.30b)
 
 Many cases below are **covered by automated pytest** (mocked SMTP / Places / LLM / IMAP). Mark them **Skip** for human UAT unless you want a live click-through. Keep the **Human-only** list short.
 
@@ -402,7 +402,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 
 ---
 
-## F. Shipper — Pipeline & Inbox (Leads List horizontal tabs)
+## F. Shipper — Pipeline & Inbox (Leads List List|Pipeline|Inbox buttons)
 
 ### T-050 Pipeline activate selected
 **Precondition:** Leads with emails; DNC not selected. LIVE preferably OFF.

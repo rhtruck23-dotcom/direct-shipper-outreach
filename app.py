@@ -109,7 +109,7 @@ st.markdown(
   }
 
   .block-container {
-    padding-top: 1.25rem;
+    padding-top: 1.75rem;
     max-width: 1280px;
   }
 
@@ -208,6 +208,29 @@ st.markdown(
   }
   div[data-baseweb="tab-border"] {
     display: none !important;
+  }
+
+  /* Leads hub List|Pipeline|Inbox — broad segmented bar (not tiny radio underlines) */
+  .lt-leads-tabbar-spacer {
+    height: 0.55rem;
+    margin: 0;
+    padding: 0;
+  }
+  div[class*="st-key-shipper_leads_tab_btn_"],
+  div[class*="st-key-carrier_leads_tab_btn_"],
+  div[class*="st-key-x_leads_tab_btn_"] {
+    margin-top: 0.15rem !important;
+    margin-bottom: 1rem !important;
+  }
+  div[class*="st-key-shipper_leads_tab_btn_"] button,
+  div[class*="st-key-carrier_leads_tab_btn_"] button,
+  div[class*="st-key-x_leads_tab_btn_"] button {
+    min-height: 2.9rem !important;
+    padding: 0.65rem 1.1rem !important;
+    font-size: 1.08rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.02em !important;
+    border-radius: 12px !important;
   }
 
   /* Inputs / select / text area glass */
@@ -911,9 +934,9 @@ def _style_status_column(df: pd.DataFrame):
 
 
 _LEADS_TAB_KEYS = {
-    "shipper": ("shipper_leads_tab", "shipper_leads_tab_radio"),
-    "carrier": ("carrier_leads_tab", "carrier_leads_tab_radio"),
-    "lead_x": ("x_leads_tab", "x_leads_tab_radio"),
+    "shipper": "shipper_leads_tab",
+    "carrier": "carrier_leads_tab",
+    "lead_x": "x_leads_tab",
 }
 _LEADS_TAB_OPTIONS = ("List", "Pipeline", "Inbox")
 
@@ -922,12 +945,10 @@ def _apply_leads_tab(group: str | None, tab: str | None) -> None:
     """Persist horizontal List|Pipeline|Inbox selection for a funnel hub."""
     if not group or not tab or tab not in _LEADS_TAB_OPTIONS:
         return
-    keys = _LEADS_TAB_KEYS.get(group)
-    if not keys:
+    state_key = _LEADS_TAB_KEYS.get(group)
+    if not state_key:
         return
-    state_key, radio_key = keys
     st.session_state[state_key] = tab
-    st.session_state[radio_key] = tab
 
 
 def _goto_page(
@@ -959,22 +980,29 @@ def _render_leads_hub(
     inbox_fn,
 ) -> None:
     """Horizontal List | Pipeline | Inbox inside each funnel's Leads List page."""
-    state_key, radio_key = _LEADS_TAB_KEYS[funnel]
-    desired = st.session_state.get(state_key, "List")
-    if desired not in _LEADS_TAB_OPTIONS:
-        desired = "List"
-        st.session_state[state_key] = desired
-    # Deep links set radio_key before widget exists; keep state_key in sync after click.
-    if radio_key not in st.session_state:
-        st.session_state[radio_key] = desired
-    choice = st.radio(
-        "Leads view",
-        list(_LEADS_TAB_OPTIONS),
-        horizontal=True,
-        key=radio_key,
-        label_visibility="collapsed",
-    )
-    st.session_state[state_key] = choice
+    state_key = _LEADS_TAB_KEYS[funnel]
+    choice = st.session_state.get(state_key, "List")
+    if choice not in _LEADS_TAB_OPTIONS:
+        choice = "List"
+        st.session_state[state_key] = choice
+
+    # Broad button row — readable labels (st.radio horizontal collapsed to faint underlines).
+    st.markdown('<div class="lt-leads-tabbar-spacer"></div>', unsafe_allow_html=True)
+    cols = st.columns(len(_LEADS_TAB_OPTIONS), gap="small")
+    for col, label in zip(cols, _LEADS_TAB_OPTIONS):
+        with col:
+            clicked = st.button(
+                label,
+                key=f"{state_key}_btn_{label}",
+                type="primary" if label == choice else "secondary",
+                use_container_width=True,
+                help=f"Show {label.lower()} view",
+            )
+            if clicked and label != choice:
+                st.session_state[state_key] = label
+                st.rerun()
+
+    choice = st.session_state.get(state_key, "List")
     if choice == "Pipeline":
         pipeline_fn()
     elif choice == "Inbox":
@@ -3456,7 +3484,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.30a · Horizontal leads tabs")
+        st.caption("v2026.09.30b · Visible leads tabs")
 
         from src.notes_ui import render_sidebar_add_note_button
 
