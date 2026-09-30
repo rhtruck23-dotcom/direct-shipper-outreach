@@ -177,6 +177,9 @@ def page_x_projects():
     if not (can(user, "x_projects", "update") or is_super_admin(user)):
         st.info("Read-only — ask Super Admin to edit scope.")
         st.markdown(f"**Scope**\n\n{project.get('scope') or '_(empty)_'}")
+        st.divider()
+        if can(user, "x_templates", "read") or is_super_admin(user):
+            page_x_templates()
         return
 
     e1, e2 = st.columns(2)
@@ -219,7 +222,14 @@ def page_x_projects():
         st.success("Saved.")
         st.rerun()
     if b2.button("Regenerate templates from scope", key="x_regen_hint"):
-        st.info("Open **Lead for X → Templates** and click **Generate from Project Scope (LLM)**.")
+        st.info("Scroll to **Templates** below and click **Generate from Project Scope (LLM)**.")
+
+    # Templates live on Project Setup (no separate sidebar page)
+    st.divider()
+    if can(user, "x_templates", "read") or is_super_admin(user):
+        page_x_templates()
+    elif can(user, "x_projects", "read"):
+        st.caption("Templates: ask Super Admin for template access, or use Pipeline previews.")
 
 
 # ---------------------------------------------------------------------------
@@ -765,7 +775,7 @@ def page_x_inbox():
 
 
 def page_x_templates():
-    st.title("Lead for X — Templates")
+    st.subheader("Email templates")
     user = _user()
     if not can(user, "x_templates", "read"):
         st.error("No access.")

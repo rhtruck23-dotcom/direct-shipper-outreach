@@ -30,6 +30,8 @@ TEAM_JSON = DATA_DIR / "team_rbac.json"
 
 ACTIONS = ("create", "read", "update", "delete")
 
+# Pipeline / Inbox fold into each funnel's Leads List (horizontal tabs).
+# Templates fold into Project Setup. legacy_pages keep bookmarks / deep links working.
 MODULES: dict[str, dict[str, Any]] = {
     "dashboard": {
         "label": "Dashboard",
@@ -44,20 +46,27 @@ MODULES: dict[str, dict[str, Any]] = {
         "default_actions": ["create", "read", "update", "delete"],
     },
     "find_leads": {
-        "label": "Find Leads",
-        "page": "Find Leads",
+        "label": "Find Shippers",
+        "page": "Find Shippers",
+        "legacy_pages": ["Find Leads"],
         "super_only": False,
         "default_actions": ["create", "read", "update"],
     },
     "pipeline": {
         "label": "Pipeline & Outreach",
-        "page": "Pipeline & Outreach",
+        "page": None,  # Leads List → Pipeline tab
+        "folds_into": "Leads List",
+        "leads_tab": "Pipeline",
+        "legacy_pages": ["Pipeline & Outreach"],
         "super_only": False,
         "default_actions": ["create", "read", "update"],
     },
     "inbox": {
         "label": "Inbox Bot",
-        "page": "Inbox Bot",
+        "page": None,  # Leads List → Inbox tab
+        "folds_into": "Leads List",
+        "leads_tab": "Inbox",
+        "legacy_pages": ["Inbox Bot"],
         "super_only": False,
         "default_actions": ["create", "read", "update"],
     },
@@ -75,13 +84,19 @@ MODULES: dict[str, dict[str, Any]] = {
     },
     "carrier_pipeline": {
         "label": "Carrier Pipeline",
-        "page": "Carrier Pipeline",
+        "page": None,
+        "folds_into": "Carrier Leads",
+        "leads_tab": "Pipeline",
+        "legacy_pages": ["Carrier Pipeline"],
         "super_only": False,
         "default_actions": ["create", "read", "update"],
     },
     "carrier_inbox": {
         "label": "Carrier Inbox",
-        "page": "Carrier Inbox",
+        "page": None,
+        "folds_into": "Carrier Leads",
+        "leads_tab": "Inbox",
+        "legacy_pages": ["Carrier Inbox"],
         "super_only": False,
         "default_actions": ["create", "read", "update"],
     },
@@ -105,19 +120,27 @@ MODULES: dict[str, dict[str, Any]] = {
     },
     "x_pipeline": {
         "label": "X Pipeline",
-        "page": "X Pipeline",
+        "page": None,
+        "folds_into": "X Leads List",
+        "leads_tab": "Pipeline",
+        "legacy_pages": ["X Pipeline"],
         "super_only": False,
         "default_actions": ["create", "read", "update"],
     },
     "x_inbox": {
         "label": "X Inbox",
-        "page": "X Inbox",
+        "page": None,
+        "folds_into": "X Leads List",
+        "leads_tab": "Inbox",
+        "legacy_pages": ["X Inbox"],
         "super_only": False,
         "default_actions": ["create", "read", "update"],
     },
     "x_templates": {
         "label": "X Templates",
-        "page": "X Templates",
+        "page": None,  # hosted on Project Setup
+        "folds_into": "Project Setup",
+        "legacy_pages": ["X Templates"],
         "super_only": False,
         "default_actions": ["create", "read", "update"],
     },
@@ -573,6 +596,57 @@ def module_for_page(page_label: str) -> Optional[str]:
     for mid, meta in MODULES.items():
         if meta.get("page") == page_label:
             return mid
+        if page_label in (meta.get("legacy_pages") or []):
+            return mid
+    return None
+
+
+def resolve_nav_page(page_label: str) -> tuple[str, Optional[str], Optional[str]]:
+    """Map bookmarks / deep links to (nav_page, nav_group, leads_tab).
+
+    leads_tab is List | Pipeline | Inbox when folding into a Leads List hub.
+    """
+    if not page_label:
+        return page_label, None, None
+    for mid, meta in MODULES.items():
+        if meta.get("page") == page_label:
+            group = _nav_group_for_page(page_label)
+            return page_label, group, None
+        legacy = meta.get("legacy_pages") or []
+        if page_label in legacy or page_label == meta.get("label"):
+            folds = meta.get("folds_into")
+            if folds:
+                tab = meta.get("leads_tab")
+                return folds, _nav_group_for_page(folds), tab
+            page = meta.get("page")
+            if page:
+                return page, _nav_group_for_page(page), None
+    # Already a current page name
+    if any(meta.get("page") == page_label for meta in MODULES.values()):
+        return page_label, _nav_group_for_page(page_label), None
+    return page_label, None, None
+
+
+def _nav_group_for_page(page_label: str) -> Optional[str]:
+    shipper = {"Find Shippers", "Leads List", "Find Leads", "Pipeline & Outreach", "Inbox Bot"}
+    carrier = {"Find Carriers", "Carrier Leads", "Carrier Pipeline", "Carrier Inbox"}
+    lead_x = {
+        "Project Setup",
+        "X Find Leads",
+        "X Leads List",
+        "X Pipeline",
+        "X Inbox",
+        "X Templates",
+    }
+    settings = {"Org Setup", "Cloud Hosting", "Help"}
+    if page_label in shipper:
+        return "shipper"
+    if page_label in carrier:
+        return "carrier"
+    if page_label in lead_x:
+        return "lead_x"
+    if page_label in settings:
+        return "settings"
     return None
 
 
@@ -591,14 +665,17 @@ def can(user: Optional[dict], module_id: str, action: str = "read") -> bool:
 
 
 def allowed_pages(user: Optional[dict]) -> list[str]:
+    """Sidebar / router pages. Folded modules grant their hub page instead."""
     pages: list[str] = []
+    seen: set[str] = set()
     for mid, meta in MODULES.items():
-        page = meta.get("page")
-        if not page:
+        if not can(user, mid, "read"):
             continue
-        if can(user, mid, "read"):
-            pages.append(page)
-    # stable order matching MODULES definition
+        target = meta.get("page") or meta.get("folds_into")
+        if not target or target in seen:
+            continue
+        pages.append(target)
+        seen.add(target)
     return pages
 
 

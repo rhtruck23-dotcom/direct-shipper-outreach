@@ -75,9 +75,15 @@ def test_assign_leads():
 def test_module_registry_has_pages():
     pages = {m["page"] for m in rbac.MODULES.values() if m.get("page")}
     assert "Dashboard" in pages
-    assert "Find Leads" in pages
+    assert "Find Shippers" in pages
+    assert "Pipeline & Outreach" not in pages  # folded into Leads List
     assert "team_admin" in rbac.MODULES
     assert rbac.MODULES["team_admin"]["super_only"] is True
+    resolved, group, tab = rbac.resolve_nav_page("Pipeline & Outreach")
+    assert resolved == "Leads List"
+    assert group == "shipper"
+    assert tab == "Pipeline"
+    assert rbac.resolve_nav_page("Find Leads")[0] == "Find Shippers"
 
 
 def test_update_and_delete_user(tmp_path, monkeypatch):

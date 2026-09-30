@@ -179,10 +179,11 @@ def test_rbac_lead_x_modules_for_super_and_manager(tmp_path, monkeypatch):
     monkeypatch.setattr(rbac, "TEAM_JSON", tmp_path / "team.json")
     pages = {m["page"] for m in rbac.MODULES.values() if m.get("page")}
     assert "Project Setup" in pages
-    assert "X Pipeline" in pages
-    assert "X Templates" in pages
-    # Shipper / Carrier untouched
-    assert "Find Leads" in pages
+    assert "X Leads List" in pages
+    assert "X Pipeline" not in pages  # folded into X Leads List
+    assert "X Templates" not in pages  # hosted on Project Setup
+    # Shipper / Carrier untouched (renamed Find Shippers)
+    assert "Find Shippers" in pages
     assert "Carrier Leads" in pages
 
     state = rbac._blank_state()
@@ -199,7 +200,12 @@ def test_rbac_lead_x_modules_for_super_and_manager(tmp_path, monkeypatch):
     allowed = rbac.allowed_pages(pub)
     assert "Project Setup" in allowed
     assert "X Find Leads" in allowed
-    assert "X Inbox" in allowed
+    assert "X Leads List" in allowed
+    assert "X Inbox" not in allowed
+    resolved, group, tab = rbac.resolve_nav_page("X Inbox")
+    assert resolved == "X Leads List"
+    assert group == "lead_x"
+    assert tab == "Inbox"
 
 
 def test_classify_reply_sentiment_extends_bot():

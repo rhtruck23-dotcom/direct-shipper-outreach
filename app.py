@@ -44,10 +44,10 @@ from src.project_x.pages import (
     page_x_leads_list,
     page_x_pipeline,
     page_x_projects,
-    page_x_templates,
 )
 from src.rbac import (
     ACTIONS,
+    resolve_nav_page,
     MODULES,
     ROLE_PRESETS,
     allowed_pages,
@@ -910,18 +910,104 @@ def _style_status_column(df: pd.DataFrame):
     return df.style.map(paint, subset=["Stage"])
 
 
-def _goto_page(page: str, *, group: str | None = None) -> None:
+_LEADS_TAB_KEYS = {
+    "shipper": ("shipper_leads_tab", "shipper_leads_tab_radio"),
+    "carrier": ("carrier_leads_tab", "carrier_leads_tab_radio"),
+    "lead_x": ("x_leads_tab", "x_leads_tab_radio"),
+}
+_LEADS_TAB_OPTIONS = ("List", "Pipeline", "Inbox")
+
+
+def _apply_leads_tab(group: str | None, tab: str | None) -> None:
+    """Persist horizontal List|Pipeline|Inbox selection for a funnel hub."""
+    if not group or not tab or tab not in _LEADS_TAB_OPTIONS:
+        return
+    keys = _LEADS_TAB_KEYS.get(group)
+    if not keys:
+        return
+    state_key, radio_key = keys
+    st.session_state[state_key] = tab
+    st.session_state[radio_key] = tab
+
+
+def _goto_page(
+    page: str, *, group: str | None = None, leads_tab: str | None = None
+) -> None:
+    resolved, resolved_group, resolved_tab = resolve_nav_page(page)
+    if leads_tab:
+        resolved_tab = leads_tab
+    use_group = group if group is not None else resolved_group
     prev = st.session_state.get("nav_page")
-    st.session_state.nav_page = page
-    if group is not None:
-        st.session_state.nav_group = group
-    if prev != page:
+    st.session_state.nav_page = resolved
+    if use_group is not None:
+        st.session_state.nav_group = use_group
+    _apply_leads_tab(use_group, resolved_tab)
+    if prev != resolved:
         # Drop one-shot Notes open flags so page switches don't reopen overlay / lag
         st.session_state.pop("onenote_client_open", None)
         st.session_state.pop("notes_panel_open", None)
         st.session_state.pop("selected_note_id", None)
         st.session_state["_lt_nav_epoch"] = int(st.session_state.get("_lt_nav_epoch") or 0) + 1
     st.rerun()
+
+
+def _render_leads_hub(
+    *,
+    funnel: str,
+    list_fn,
+    pipeline_fn,
+    inbox_fn,
+) -> None:
+    """Horizontal List | Pipeline | Inbox inside each funnel's Leads List page."""
+    state_key, radio_key = _LEADS_TAB_KEYS[funnel]
+    desired = st.session_state.get(state_key, "List")
+    if desired not in _LEADS_TAB_OPTIONS:
+        desired = "List"
+        st.session_state[state_key] = desired
+    # Deep links set radio_key before widget exists; keep state_key in sync after click.
+    if radio_key not in st.session_state:
+        st.session_state[radio_key] = desired
+    choice = st.radio(
+        "Leads view",
+        list(_LEADS_TAB_OPTIONS),
+        horizontal=True,
+        key=radio_key,
+        label_visibility="collapsed",
+    )
+    st.session_state[state_key] = choice
+    if choice == "Pipeline":
+        pipeline_fn()
+    elif choice == "Inbox":
+        inbox_fn()
+    else:
+        list_fn()
+
+
+def page_shipper_leads_hub():
+    _render_leads_hub(
+        funnel="shipper",
+        list_fn=page_leads_list,
+        pipeline_fn=page_pipeline,
+        inbox_fn=page_inbox,
+    )
+
+
+def page_carrier_leads_hub():
+    _render_leads_hub(
+        funnel="carrier",
+        list_fn=page_carrier_leads,
+        pipeline_fn=page_carrier_pipeline,
+        inbox_fn=page_carrier_inbox,
+    )
+
+
+def page_x_leads_hub():
+    _render_leads_hub(
+        funnel="lead_x",
+        list_fn=page_x_leads_list,
+        pipeline_fn=page_x_pipeline,
+        inbox_fn=page_x_inbox,
+    )
 
 
 def _open_lead_from_task(task: dict) -> None:
@@ -1144,17 +1230,17 @@ def page_dashboard():
         if _clickable_metric_tile(
             "Shipper active", ship_active, key="dash_camp_ship", help_text="Open shipper Pipeline"
         ):
-            _goto_page("Pipeline & Outreach", group="shipper")
+            _goto_page("Leads List", group="shipper", leads_tab="Pipeline")
     with ca2:
         if _clickable_metric_tile(
             "Carrier active", car_active, key="dash_camp_car", help_text="Open carrier Pipeline"
         ):
-            _goto_page("Carrier Pipeline", group="carrier")
+            _goto_page("Carrier Leads", group="carrier", leads_tab="Pipeline")
     with ca3:
         if _clickable_metric_tile(
             "Lead for X active", x_active_n, key="dash_camp_x", help_text="Open Lead for X Pipeline"
         ):
-            _goto_page("X Pipeline", group="lead_x")
+            _goto_page("X Leads List", group="lead_x", leads_tab="Pipeline")
 
     st.caption(f"Do Not Contact locked: {len(dnc)}")
 
@@ -2245,10 +2331,10 @@ def page_org_setup():
 
 
 def page_find_leads():
-    st.title("Find & Vet Direct Shippers")
+    st.title("Find Shippers")
     user = _current_user()
     if not can(user, "find_leads", "read"):
-        st.error("No access to Find Leads.")
+        st.error("No access to Find Shippers.")
         return
     st.caption(
         "Enter **State** (e.g. VA) — leave Zip blank for statewide multi-city Places pull. "
@@ -2256,7 +2342,10 @@ def page_find_leads():
         "Website enrichment fills emails when public; you top up blanks before Pipeline."
     )
     if not can(user, "find_leads", "create") and not is_super_admin(user):
-        st.warning("Read-only: ask Super Admin for Find Leads create access, or work assigned leads in Pipeline.")
+        st.warning(
+            "Read-only: ask Super Admin for Find Shippers create access, "
+            "or work assigned leads in Leads List → Pipeline."
+        )
     company = _company()
 
     tab_paste, tab_vet, tab_paca, tab_import, tab_manual, tab_limits = st.tabs(
@@ -3233,31 +3322,31 @@ def page_help():
     st.markdown(
         """
 ### Shipper funnel
-1. **Easiest:** **Shipper → Find Leads → Paste dump** — copy LinkedIn/Excel/email text → Parse → filter → **Save + Activate**.  
-2. Or **Find & Vet** by state (Places) / **USDA PACA** CSV.  
-3. **Pipeline** → Start (emails on days 0 / 4 / 9 / 16).  
-4. **Inbox Bot** for replies; you close rates and loads.  
-5. **Leads List** is your memory — color = stage; red = never contact again.
+1. **Find Shippers** — paste dump / Find & Vet / PACA / CSV → **Save + Activate**.  
+2. **Leads List** → horizontal **List** | **Pipeline** | **Inbox**.  
+3. **Pipeline** tab → Start (emails on days 0 / 4 / 9 / 16).  
+4. **Inbox** tab for replies; you close rates and loads.  
+5. **List** tab is your memory — color = stage; red = never contact again.
 
 ### Carrier funnel (lease-on under LogixTrek MC)
 1. **Find Carriers** — import PDF/Excel/CSV, or pull FMCSA demo / QCMobile MC lookups.  
-2. Add emails → **Carrier Pipeline** → Activate → Start (same 0 / 4 / 9 / 16 cadence).  
+2. **Leads List** → **Pipeline** tab → Activate → Start (same 0 / 4 / 9 / 16 cadence).  
 3. Pitch: owner-operator under our MC with path toward ~$40k gross.  
-4. **Carrier Inbox** for replies; mark **Hired** when they lease on.  
+4. **Inbox** tab for replies; mark **Hired** when they lease on.  
 5. Data lives in Google Sheet tab `carrier_leads` (separate from shippers).
 
 ### Lead for X (any buyer/seller project)
-1. **Project Setup** — create a project (e.g. *Shrimp buyers*), set type **buyer** or **seller**, paste **Project Scope**.  
-2. **Templates** → **Generate from Project Scope (LLM)** (Gemini if key set, else rule-based).  
-3. **Find Leads** — paste dump or CSV into the active project.  
+1. **Project Setup** — create a project, paste **Project Scope**, generate/edit **Templates** on the same page.  
+2. **Find Leads** — paste dump or CSV into the active project.  
+3. **Leads List** → **List** | **Pipeline** | **Inbox** tabs.  
 4. **Pipeline** → Select all → Activate → **Start** (days 0 / 4 / 9 / 16).  
 5. **Inbox** — paste replies; bot uses Project Scope for framing.  
 6. Storage: local `data/x_*.json` or Sheet tabs `x_projects` / `x_leads`.
 
 ### Email templates
 - **Shipper** and **Carrier** templates: **Settings → Org Setup → Email templates**  
-- **Lead for X** templates: **Lead for X → Templates**  
-- Also previewed inside each funnel’s Pipeline page.
+- **Lead for X** templates: **Lead for X → Project Setup** (Templates section)  
+- Also previewed inside each funnel’s Pipeline tab.
 
 Email opens the door. **Phone within 2 hours** of a positive reply closes the account / lease-on / deal.
 """
@@ -3280,30 +3369,28 @@ def main():
         return
 
     shipper_pages = [
-        p
-        for p in ("Find Leads", "Leads List", "Pipeline & Outreach", "Inbox Bot")
-        if p in pages_available
+        p for p in ("Find Shippers", "Leads List") if p in pages_available
     ]
     carrier_pages = [
-        p
-        for p in ("Find Carriers", "Carrier Leads", "Carrier Pipeline", "Carrier Inbox")
-        if p in pages_available
+        p for p in ("Find Carriers", "Carrier Leads") if p in pages_available
     ]
     lead_x_pages = [
         p
-        for p in (
-            "Project Setup",
-            "X Find Leads",
-            "X Leads List",
-            "X Pipeline",
-            "X Inbox",
-            "X Templates",
-        )
+        for p in ("Project Setup", "X Find Leads", "X Leads List")
         if p in pages_available
     ]
     settings_pages = [
         p for p in ("Org Setup", "Cloud Hosting", "Help") if p in pages_available
     ]
+
+    # Map old bookmarks / session values → hub page + horizontal tab
+    raw_page = st.session_state.get("nav_page") or pages_available[0]
+    resolved, resolved_group, resolved_tab = resolve_nav_page(raw_page)
+    if resolved != raw_page or resolved_tab:
+        st.session_state.nav_page = resolved
+        if resolved_group:
+            st.session_state.nav_group = resolved_group
+        _apply_leads_tab(resolved_group, resolved_tab)
 
     if st.session_state.get("nav_page") not in pages_available:
         st.session_state.nav_page = pages_available[0]
@@ -3319,19 +3406,8 @@ def main():
     elif cur in settings_pages:
         st.session_state.nav_group = "settings"
 
-    def _goto(page: str, group: str | None = None):
-        prev = st.session_state.get("nav_page")
-        st.session_state.nav_page = page
-        if group is not None:
-            st.session_state.nav_group = group
-        if prev != page:
-            st.session_state.pop("onenote_client_open", None)
-            st.session_state.pop("notes_panel_open", None)
-            st.session_state.pop("selected_note_id", None)
-            st.session_state["_lt_nav_epoch"] = int(
-                st.session_state.get("_lt_nav_epoch") or 0
-            ) + 1
-        st.rerun()
+    def _goto(page: str, group: str | None = None, leads_tab: str | None = None):
+        _goto_page(page, group=group, leads_tab=leads_tab)
 
     def _nav_mark(kind: str):
         # Empty marker only — never put a visible label here (that caused duplicate text).
@@ -3371,11 +3447,16 @@ def main():
                     type="primary" if selected else "secondary",
                     use_container_width=True,
                 ):
-                    _goto(label, group=group_id)
+                    hub_tab = (
+                        "List"
+                        if label in ("Leads List", "Carrier Leads", "X Leads List")
+                        else None
+                    )
+                    _goto(label, group=group_id, leads_tab=hub_tab)
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.29b · Notes mic parent-realm")
+        st.caption("v2026.09.30a · Horizontal leads tabs")
 
         from src.notes_ui import render_sidebar_add_note_button
 
@@ -3398,10 +3479,8 @@ def main():
             title="Shipper",
             pages=shipper_pages,
             short_map={
-                "Find Leads": "Find Leads",
+                "Find Shippers": "Find Shippers",
                 "Leads List": "Leads List",
-                "Pipeline & Outreach": "Pipeline",
-                "Inbox Bot": "Inbox Bot",
             },
         )
         _nav_group_block(
@@ -3410,9 +3489,7 @@ def main():
             pages=carrier_pages,
             short_map={
                 "Find Carriers": "Find Carriers",
-                "Carrier Leads": "Carrier Leads",
-                "Carrier Pipeline": "Pipeline",
-                "Carrier Inbox": "Inbox",
+                "Carrier Leads": "Leads List",
             },
         )
         _nav_group_block(
@@ -3423,9 +3500,6 @@ def main():
                 "Project Setup": "Project Setup",
                 "X Find Leads": "Find Leads",
                 "X Leads List": "Leads List",
-                "X Pipeline": "Pipeline",
-                "X Inbox": "Inbox",
-                "X Templates": "Templates",
             },
         )
         _nav_group_block(
@@ -3459,20 +3533,13 @@ def main():
     page = st.session_state.nav_page
     pages = {
         "Dashboard": page_dashboard,
-        "Leads List": page_leads_list,
-        "Find Leads": page_find_leads,
-        "Pipeline & Outreach": page_pipeline,
-        "Inbox Bot": page_inbox,
-        "Carrier Leads": page_carrier_leads,
+        "Leads List": page_shipper_leads_hub,
+        "Find Shippers": page_find_leads,
+        "Carrier Leads": page_carrier_leads_hub,
         "Find Carriers": page_find_carriers,
-        "Carrier Pipeline": page_carrier_pipeline,
-        "Carrier Inbox": page_carrier_inbox,
         "Project Setup": page_x_projects,
         "X Find Leads": page_x_find_leads,
-        "X Leads List": page_x_leads_list,
-        "X Pipeline": page_x_pipeline,
-        "X Inbox": page_x_inbox,
-        "X Templates": page_x_templates,
+        "X Leads List": page_x_leads_hub,
         "Org Setup": page_org_setup,
         "Cloud Hosting": page_cloud,
         "Help": page_help,

@@ -184,7 +184,9 @@ def test_rbac_carrier_modules_and_recruiter(tmp_path, monkeypatch):
     )
     pub = rbac.authenticate("recruit@logixtrek.com", "hire1")
     assert pub is not None
-    assert "Carrier Pipeline" in rbac.allowed_pages(pub)
+    assert "Carrier Leads" in rbac.allowed_pages(pub)
+    assert "Carrier Pipeline" not in rbac.allowed_pages(pub)
+    assert "Find Shippers" not in rbac.allowed_pages(pub)
     assert "Find Leads" not in rbac.allowed_pages(pub)
     assert "Org Setup" not in rbac.allowed_pages(pub)
 
@@ -230,6 +232,8 @@ def test_carrier_deal_stage_progression():
 
 def test_shipper_modules_still_present():
     pages = {m["page"] for m in rbac.MODULES.values() if m.get("page")}
-    assert "Find Leads" in pages
-    assert "Pipeline & Outreach" in pages
+    assert "Find Shippers" in pages
+    assert "Leads List" in pages
+    assert "Pipeline & Outreach" not in pages  # horizontal tab under Leads List
     assert "Carrier Leads" in pages
+    assert rbac.MODULES["pipeline"]["folds_into"] == "Leads List"

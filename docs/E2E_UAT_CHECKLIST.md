@@ -5,7 +5,7 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 | Field | Fill in |
 |--------|---------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Version to confirm** | **v2026.09.29b · Notes mic parent-realm** — caption under **LogixTrek Outreach** in the left sidebar |
+| **Version to confirm** | **v2026.09.30a · Horizontal leads tabs** — caption under **LogixTrek Outreach** in the left sidebar |
 | **Tester name** | _______________________________ |
 | **Date** | _______________ |
 
@@ -13,29 +13,29 @@ Print this page (or fill digitally). Mark each case **Pass**, **Fail**, or **Ski
 
 ## Cloud smoke — 15 key lines (do these first)
 
-After deploy, confirm the sidebar caption shows **v2026.09.29b**. Then click through:
+After deploy, confirm the sidebar caption shows **v2026.09.30a**. Then click through:
 
 1. **Login** — Super Admin email + PIN → sidebar shows your name / role.
-2. **Version** — caption reads `v2026.09.29b · Notes mic parent-realm`.
-3. **Notes FAB** — click 📝 (bottom-right). Three panes: Notebooks | section tabs + Pages | left-aligned page canvas. Typing stays left (not centered).
-4. **Notes edit + Save** — type in a page → **Save** → toast “OneNote saved”; reopen FAB and confirm text stuck. **🎤 Voice** (Web Speech) + **⏺ Record** embed `<audio controls>` on the page.
-5. **Sidebar Add Note** — **📝 Add Note** opens the same panel.
-6. **Jump-top** — scroll down a long page → ↑ appears → click scrolls to top.
-7. **Page switch** — move Shipper → Carrier → Dashboard; main area should match the selected page (no previous-page residue / sticky Notes overlay).
-8. **Dry-run send** — **Send LIVE emails** OFF. Pipeline / due send still “sends” as dry-run (no real mail).
-9. **DNC** — mark a lead Do Not Contact → bot / agent / campaign skip it.
-10. **Today capacity** — Dashboard shows Capacity / Sent / Remaining (soft cap ± Gmail pool).
-11. **Multi-Gmail** — Org Setup → Gmail send pool: 2–3 App Passwords, caps 200 (see `docs/MULTI_GMAIL_UAT.md`). Live test only to yourself.
-12. **Autopilot dry-run** — Autopilot ON, LIVE OFF → **Run agent now** once; read summary; no real mail. (Autopilot stays OFF by default.)
-13. **Inbox Bot** — paste a rate/pricing reply → escalate creates **owner notify + high-priority task**. Paste OOO / thanks → no escalate spam.
-14. **Spanish** — Pipeline preview **Convert to Spanish**; Inbox paste Spanish → **Convert to English**; edit before send.
+2. **Version** — caption reads `v2026.09.30a · Horizontal leads tabs`.
+3. **Nav shape** — Shipper = Find Shippers + Leads List; Carrier = Find Carriers + Leads List; Lead for X = Project Setup + Find Leads + Leads List. Pipeline/Inbox are **horizontal tabs** under each Leads List (default **List**).
+4. **Notes FAB** — click 📝 (bottom-right). Three panes: Notebooks | section tabs + Pages | left-aligned page canvas. Typing stays left (not centered).
+5. **Notes edit + Save** — type in a page → **Save** → toast “OneNote saved”; reopen FAB and confirm text stuck. **🎤 Voice** (Web Speech) + **⏺ Record** embed `<audio controls>` on the page.
+6. **Sidebar Add Note** — **📝 Add Note** opens the same panel.
+7. **Jump-top** — scroll down a long page → ↑ appears → click scrolls to top.
+8. **Page switch** — move Shipper → Carrier → Dashboard; main area should match the selected page (no previous-page residue / sticky Notes overlay).
+9. **Dry-run send** — **Send LIVE emails** OFF. Pipeline / due send still “sends” as dry-run (no real mail).
+10. **DNC** — mark a lead Do Not Contact → bot / agent / campaign skip it.
+11. **Today capacity** — Dashboard shows Capacity / Sent / Remaining (soft cap ± Gmail pool).
+12. **Multi-Gmail** — Org Setup → Gmail send pool: 2–3 App Passwords, caps 200 (see `docs/MULTI_GMAIL_UAT.md`). Live test only to yourself.
+13. **Autopilot dry-run** — Autopilot ON, LIVE OFF → **Run agent now** once; read summary; no real mail. (Autopilot stays OFF by default.)
+14. **Inbox** — Leads List → Inbox tab; paste a rate/pricing reply → escalate. Paste OOO / thanks → no escalate spam.
 15. **Sign out** — sidebar **Sign out** returns to login.
 
 **Safety:** keep **Send LIVE emails** OFF until Multi-Gmail / live steps. IMAP poll stays **OFF** unless App Passwords verified (`imap_poll_enabled`).
 
 ---
 
-## Automation status (v2026.09.29b)
+## Automation status (v2026.09.30a)
 
 Many cases below are **covered by automated pytest** (mocked SMTP / Places / LLM / IMAP). Mark them **Skip** for human UAT unless you want a live click-through. Keep the **Human-only** list short.
 
@@ -147,7 +147,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 **Precondition:** A nav group is open (e.g. Shipper).
 **Steps:**
 1. Look at parent buttons (Dashboard, Shipper, Carrier, Lead for X, Settings).
-2. Look at child buttons under an open group (Find Leads, Pipeline, etc.).
+2. Look at child buttons under an open group (Find Shippers / Leads List, etc.).
 **Expected:** Parents look **blue-ish**; child items look **orange-ish** / indented with a circle bullet. Selected page is clearly highlighted.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
@@ -156,8 +156,9 @@ Everything else in this checklist is optional UI confirmation; failures should b
 ### T-012 All major pages reachable
 **Precondition:** Super Admin signed in.
 **Steps:**
-1. Open each: Dashboard; Shipper → Find Leads, Leads List, Pipeline, Inbox Bot; Carrier → Find Carriers, Carrier Leads, Pipeline, Inbox; Lead for X → Project Setup, Templates, Find Leads, Leads List, Pipeline, Inbox; Settings → Org Setup, Cloud Hosting, Help.
-**Expected:** Every page opens without a blank/error crash. Titles match the menu.
+1. Open each: Dashboard; Shipper → Find Shippers, Leads List (horizontal List | Pipeline | Inbox); Carrier → Find Carriers, Leads List (same three tabs); Lead for X → Project Setup (includes Templates), Find Leads, Leads List (same three tabs); Settings → Org Setup, Cloud Hosting, Help.
+2. Dashboard **Shipper/Carrier/Lead for X active** tiles open the matching **Leads List → Pipeline** tab.
+**Expected:** Every page opens without a blank/error crash. Pipeline/Inbox are not separate sidebar children.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:** (list any page that failed)  
 **Screenshot:** (filename)
@@ -222,9 +223,9 @@ Everything else in this checklist is optional UI confirmation; failures should b
 ### T-024 Clickable campaign tiles
 **Precondition:** Dashboard open.
 **Steps:**
-1. Click **Shipper active** tile → confirm Pipeline (or shipper funnel) opens.
-2. Click **Carrier active** → Carrier Pipeline.
-3. Click **Lead for X active** → X Pipeline.
+1. Click **Shipper active** tile → confirm **Leads List → Pipeline** tab opens.
+2. Click **Carrier active** → **Carrier Leads List → Pipeline**.
+3. Click **Lead for X active** → **X Leads List → Pipeline**.
 **Expected:** Each tile navigates to the related funnel page without crash.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**  
@@ -289,7 +290,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 ## D. Shipper — Find Leads
 
 ### T-030 Paste dump → parse → save
-**Precondition:** Shipper → Find Leads. Have a short paste with company + email (fake test data OK).
+**Precondition:** Shipper → Find Shippers. Have a short paste with company + email (fake test data OK).
 **Steps:**
 1. Open **Paste dump** (or similar) tab.
 2. Paste 1–3 sample contacts with emails.
@@ -401,12 +402,12 @@ Everything else in this checklist is optional UI confirmation; failures should b
 
 ---
 
-## F. Shipper — Pipeline & Inbox
+## F. Shipper — Pipeline & Inbox (Leads List horizontal tabs)
 
 ### T-050 Pipeline activate selected
 **Precondition:** Leads with emails; DNC not selected. LIVE preferably OFF.
 **Steps:**
-1. Open **Shipper → Pipeline**.
+1. Open **Shipper → Leads List → Pipeline** tab.
 2. Filter by State if helpful.
 3. Check **Select** on 1–2 leads (or Select all carefully).
 4. Click **Activate selected**.
@@ -438,7 +439,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 ### T-053 Inbox Bot — safe reply · *logic auto*
 **Precondition:** A shipper lead with email.
 **Steps:**
-1. Open **Inbox Bot**.
+1. Open **Shipper → Leads List → Inbox** tab.
 2. Confirm **Paste from Gmail** expander + Open Gmail / mailto helpers.
 3. Select the lead.
 4. Paste a friendly reply (e.g. “Thanks, interested — call me next week.”).
@@ -499,7 +500,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 ### T-062 Carrier Pipeline activate + dry-run Start
 **Precondition:** Carrier with email; LIVE OFF.
 **Steps:**
-1. Open **Carrier Pipeline**.
+1. Open **Carrier → Leads List → Pipeline** tab.
 2. Select lead(s) → **Activate** → **Start** (due emails).
 **Expected:** Dry-run lease-on emails process (days 0/4/9/16 cadence). No crash.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
@@ -509,7 +510,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 ### T-063 Carrier Inbox
 **Precondition:** Carrier lead with email.
 **Steps:**
-1. Open **Carrier Inbox**.
+1. Open **Carrier → Leads List → Inbox** tab.
 2. Paste a reply → **Process with Carrier Bot**.
 **Expected:** Bot handles opt-out / interest; escalates pay / lease terms to you.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
@@ -534,7 +535,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 ### T-071 Templates generate from scope
 **Precondition:** Active project with scope.
 **Steps:**
-1. Open **Lead for X → Templates**.
+1. Open **Lead for X → Project Setup** (Templates section on same page).
 2. Click **Generate from Project Scope (LLM)** (or equivalent).
 3. Preview emails 1–4.
 **Expected:** Templates generate (LLM or rules fallback). Preview readable and on-scope.
@@ -556,7 +557,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 ### T-073 X Pipeline activate + dry-run Start
 **Precondition:** X leads with emails; LIVE OFF.
 **Steps:**
-1. Open **X Pipeline**.
+1. Open **Lead for X → Leads List → Pipeline** tab.
 2. Select → Activate → Start due emails.
 **Expected:** Dry-run sequence runs for the active project. Previews OK.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
@@ -566,7 +567,7 @@ Everything else in this checklist is optional UI confirmation; failures should b
 ### T-074 X Inbox
 **Precondition:** X lead with email; active project.
 **Steps:**
-1. Open **X Inbox**.
+1. Open **Lead for X → Leads List → Inbox** tab.
 2. Paste a reply → process.
 **Expected:** Bot uses project scope framing; safe vs escalate behavior is clear.
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
