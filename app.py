@@ -3494,7 +3494,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.30f · Notes save-close")
+        st.caption("v2026.09.30g · Notes close sticky")
 
         from src.notes_ui import render_sidebar_add_note_button
 

@@ -30,6 +30,14 @@ def open_note_panel(note_id: str | None = None) -> None:
             st.session_state["onenote_nb_id"] = note.get("notebook_id") or ""
 
 
+def _clear_panel_open_flags() -> None:
+    """Drop every server flag that would force the floating panel open on hydrate."""
+    st.session_state["notes_panel_open"] = False
+    st.session_state["onenote_client_open"] = False
+    st.session_state.pop("selected_note_id", None)
+    st.session_state.pop("_onenote_qp_save", None)
+
+
 def render_sidebar_add_note_button() -> None:
     """Sidebar entry — one Streamlit rerun to hydrate tree; no extra iframe."""
     if st.button("📝 Add Note", key="sidebar_add_note", use_container_width=True):
@@ -102,8 +110,8 @@ def render_floating_add_note(
     try:
         qp = st.query_params
         if str(qp.get("onenote_save", "") or "") in ("1", "true", "yes"):
+            # Queue save only — do NOT force panel open (close_after must stay closed).
             st.session_state["_onenote_qp_save"] = True
-            st.session_state["onenote_client_open"] = True
     except Exception:
         pass
 
@@ -161,6 +169,7 @@ def render_floating_add_note(
     do_save = bool(save_clicked and payload_ready) or bool(
         st.session_state.pop("_onenote_qp_save", False)
     )
+    force_closed = False
     if do_save:
         payload = _read_save_payload()
         if not payload:
@@ -184,10 +193,9 @@ def render_floating_add_note(
             _invalidate_tree_cache()
             st.session_state["onenote_save_payload"] = ""
             if close_after:
-                st.session_state["notes_panel_open"] = False
-                st.session_state["onenote_client_open"] = False
-                st.session_state.pop("selected_note_id", None)
-                # Belt-and-suspenders: ensure floating shell closes after save ack
+                _clear_panel_open_flags()
+                force_closed = True
+                # Sticky client flag + close — must run before / with chrome hydrate
                 try:
                     import streamlit.components.v1 as _c
 
@@ -196,6 +204,7 @@ def render_floating_add_note(
 (function () {
   try {
     window.parent.sessionStorage.removeItem("lt_onenote_payload");
+    window.parent.sessionStorage.setItem("lt_onenote_user_closed", "1");
     window.parent.sessionStorage.setItem("lt_onenote_keep_open", "0");
   } catch (e) {}
   try {
@@ -223,8 +232,7 @@ def render_floating_add_note(
                     pass
             else:
                 # Keep panel open via sessionStorage, not sticky Streamlit flags
-                st.session_state["onenote_client_open"] = False
-                st.session_state["notes_panel_open"] = False
+                _clear_panel_open_flags()
                 try:
                     import streamlit.components.v1 as _c
 
@@ -232,6 +240,7 @@ def render_floating_add_note(
                         """<script>
 try {
   window.parent.sessionStorage.removeItem("lt_onenote_payload");
+  window.parent.sessionStorage.removeItem("lt_onenote_user_closed");
   window.parent.sessionStorage.setItem("lt_onenote_keep_open", "1");
 } catch (e) {}
 </script>""",
@@ -245,12 +254,23 @@ try {
     tree = _cached_tree()
     focus = str(st.session_state.pop("selected_note_id", "") or "")
     # One-shot open flags — never leave sticky across page nav (caused lag + stale overlay)
-    auto_open = bool(
-        st.session_state.pop("onenote_client_open", False)
-        or st.session_state.pop("notes_panel_open", False)
-        or focus
+    auto_open = False
+    if not force_closed:
+        auto_open = bool(
+            st.session_state.pop("onenote_client_open", False)
+            or st.session_state.pop("notes_panel_open", False)
+            or focus
+        )
+    else:
+        st.session_state.pop("onenote_client_open", None)
+        st.session_state.pop("notes_panel_open", None)
+        focus = ""
+    inject_floating_chrome(
+        tree=tree,
+        focus_page_id=focus,
+        auto_open=auto_open,
+        force_closed=force_closed,
     )
-    inject_floating_chrome(tree=tree, focus_page_id=focus, auto_open=auto_open)
 
 
 def render_notes_panel(

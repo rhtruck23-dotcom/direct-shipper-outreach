@@ -37,19 +37,42 @@ def test_onenote_is_floating_draggable_window():
 
 
 def test_save_and_close_closes_panel_client_side():
-    """Save & close must closePanel after bridge click; Save alone must not."""
+    """Save & close must closePanel optimistically; sticky user_closed blocks hydrate reopen."""
     import inspect
 
     inject_src = inspect.getsource(fc.inject_floating_chrome)
     assert 'persistViaBridge(true)' in inject_src or "persistViaBridge(true)" in inject_src
     assert "persistViaBridge(false)" in inject_src
     assert "lt-btn-save-close" in inject_src
-    # After bridge click with closeAfter, must hide shell (same as ×)
+    # Optimistic close + sticky flag so leftover lt-open cannot survive Streamlit rerun
     assert "closePanel()" in inject_src
     assert "Saved — closing" in inject_src
+    assert "lt_onenote_user_closed" in inject_src
+    assert "FORCE_CLOSED" in inject_src
+    assert "force_closed" in inject_src
     notes_src = inspect.getsource(notes_ui.render_floating_add_note)
     assert "__ltCloseOneNote" in notes_src
-    assert 'close_after' in notes_src or "close_after" in notes_src
+    assert "close_after" in notes_src
+    assert "force_closed" in notes_src
+    assert "lt_onenote_user_closed" in notes_src
+    assert "_clear_panel_open_flags" in notes_src
+    # × close / shell must also sticky-close
+    assert "lt_onenote_user_closed" in fc._SHELL_HTML
+
+
+def test_clear_panel_open_flags(monkeypatch):
+    ss = {
+        "notes_panel_open": True,
+        "onenote_client_open": True,
+        "selected_note_id": "note_x",
+        "_onenote_qp_save": True,
+    }
+    monkeypatch.setattr(notes_ui.st, "session_state", ss)
+    notes_ui._clear_panel_open_flags()
+    assert ss["notes_panel_open"] is False
+    assert ss["onenote_client_open"] is False
+    assert "selected_note_id" not in ss
+    assert "_onenote_qp_save" not in ss
 
 
 def test_parent_voice_runtime_has_mic_and_speech():

@@ -306,6 +306,7 @@ _SHELL_HTML = """
   const win = window.parent;
   if (doc.getElementById("lt-note-fab") && doc.getElementById("lt-onenote-overlay")) {
     win.__ltOpenOneNote = win.__ltOpenOneNote || function () {
+      try { win.sessionStorage.removeItem("lt_onenote_user_closed"); } catch (e) {}
       const o = doc.getElementById("lt-onenote-overlay");
       if (!o) return;
       o.classList.add("lt-open");
@@ -316,6 +317,25 @@ _SHELL_HTML = """
         try { win.__ltRenderOneNote(); } catch (e) {}
       }
     };
+    win.__ltCloseOneNote = win.__ltCloseOneNote || function () {
+      try {
+        win.sessionStorage.setItem("lt_onenote_user_closed", "1");
+        win.sessionStorage.setItem("lt_onenote_keep_open", "0");
+      } catch (e) {}
+      const o = doc.getElementById("lt-onenote-overlay");
+      if (o) {
+        o.classList.remove("lt-open");
+        o.classList.remove("lt-minimized");
+      }
+      const chip = doc.getElementById("lt-onenote-chip");
+      if (chip) chip.classList.remove("lt-show");
+    };
+    try {
+      if (win.sessionStorage.getItem("lt_onenote_user_closed") === "1") {
+        win.__ltCloseOneNote();
+        return;
+      }
+    } catch (e) {}
     return;
   }
   if (!doc.getElementById("lt-floating-chrome-css")) {
@@ -563,6 +583,10 @@ _SHELL_HTML = """
   }
 
   function openPanel() {
+    try {
+      win.sessionStorage.removeItem("lt_onenote_user_closed");
+      win.sessionStorage.removeItem("lt_onenote_keep_open");
+    } catch (e) {}
     const overlay = doc.getElementById("lt-onenote-overlay");
     if (!overlay) return;
     overlay.classList.add("lt-open");
@@ -575,6 +599,10 @@ _SHELL_HTML = """
     }
   }
   function closePanel() {
+    try {
+      win.sessionStorage.setItem("lt_onenote_user_closed", "1");
+      win.sessionStorage.setItem("lt_onenote_keep_open", "0");
+    } catch (e) {}
     const overlay = doc.getElementById("lt-onenote-overlay");
     if (overlay) {
       overlay.classList.remove("lt-open");
@@ -653,7 +681,9 @@ _SHELL_HTML = """
   win.__ltCloseOneNote = closePanel;
   win.__ltMinimizeOneNote = minimizePanel;
   try {
-    if (win.sessionStorage.getItem("lt_onenote_keep_open") === "1") {
+    if (win.sessionStorage.getItem("lt_onenote_user_closed") === "1") {
+      closePanel();
+    } else if (win.sessionStorage.getItem("lt_onenote_keep_open") === "1") {
       win.sessionStorage.removeItem("lt_onenote_keep_open");
       openPanel();
     }
@@ -726,6 +756,7 @@ def inject_floating_chrome(
     tree: Optional[dict[str, Any]] = None,
     focus_page_id: str = "",
     auto_open: bool = False,
+    force_closed: bool = False,
 ) -> None:
     """
     Inject fixed FABs + full OneNote clone panel once per app render.
@@ -736,6 +767,7 @@ def inject_floating_chrome(
     tree: {notebooks, sections, pages} from notes.export_tree_for_client()
     focus_page_id: select this page when auto_open
     auto_open: open panel immediately (e.g. sidebar / dashboard reminder)
+    force_closed: Save & close / server ack — sticky-close across this hydrate
     """
     # Mark shell as done so a stray early inject_notes_shell() is a no-op
     st.session_state["_lt_notes_shell_done"] = True
@@ -745,6 +777,7 @@ def inject_floating_chrome(
     tree_json = json.dumps(tree, ensure_ascii=False)
     focus_json = json.dumps(str(focus_page_id or ""))
     auto_json = "true" if auto_open else "false"
+    force_closed_json = "true" if force_closed else "false"
     voice_js_literal = json.dumps(_PARENT_VOICE_JS)
 
     html = f"""
@@ -755,6 +788,7 @@ def inject_floating_chrome(
   const TREE = {tree_json};
   const FOCUS_PAGE = {focus_json};
   const AUTO_OPEN = {auto_json};
+  const FORCE_CLOSED = {force_closed_json};
   const _ltVoiceSrc = {voice_js_literal};
   const doc = window.parent.document;
   const win = window.parent;
@@ -1129,10 +1163,24 @@ def inject_floating_chrome(
   function persistViaBridge(closeAfter) {{
     const snap = buildSnapshot(closeAfter);
     const payload = JSON.stringify(snap);
+    // Sticky close BEFORE bridge click — hydrate must not reopen if iframe dies mid-timeout.
     try {{
       win.sessionStorage.setItem("lt_onenote_payload", payload);
-      win.sessionStorage.setItem("lt_onenote_keep_open", closeAfter ? "0" : "1");
+      if (closeAfter) {{
+        win.sessionStorage.setItem("lt_onenote_user_closed", "1");
+        win.sessionStorage.setItem("lt_onenote_keep_open", "0");
+      }} else {{
+        win.sessionStorage.removeItem("lt_onenote_user_closed");
+        win.sessionStorage.setItem("lt_onenote_keep_open", "1");
+      }}
     }} catch (e) {{}}
+    // Optimistic close immediately (do not wait on setTimeout / Streamlit round-trip).
+    if (closeAfter) {{
+      state.dirty = false;
+      const stEl0 = doc.getElementById("lt-onenote-status");
+      if (stEl0) stEl0.textContent = "Saved — closing";
+      closePanel();
+    }}
     const ta = findPayloadTextareaNearMarker();
     if (ta) {{
       setNativeValue(ta, payload);
@@ -1154,13 +1202,12 @@ def inject_floating_chrome(
       btn.style.pointerEvents = "auto";
       win.setTimeout(function () {{
         btn.click();
-        // Bridge click queued Streamlit save — close shell immediately for Save & close
-        // (do not wait on round-trip; overlay would keep lt-open across reruns otherwise).
         state.dirty = false;
         const stEl = doc.getElementById("lt-onenote-status");
         if (stEl) stEl.textContent = closeAfter ? "Saved — closing" : "Saving…";
         if (closeAfter) {{
           try {{
+            win.sessionStorage.setItem("lt_onenote_user_closed", "1");
             win.sessionStorage.setItem("lt_onenote_keep_open", "0");
             win.sessionStorage.removeItem("lt_onenote_payload");
           }} catch (e) {{}}
@@ -1874,6 +1921,10 @@ def inject_floating_chrome(
   }}
 
   function openPanel() {{
+    try {{
+      win.sessionStorage.removeItem("lt_onenote_user_closed");
+      win.sessionStorage.removeItem("lt_onenote_keep_open");
+    }} catch (e) {{}}
     const overlay = doc.getElementById("lt-onenote-overlay");
     if (!overlay) return;
     overlay.classList.add("lt-open");
@@ -1886,6 +1937,10 @@ def inject_floating_chrome(
   }}
   function closePanel() {{
     flushEditorToState();
+    try {{
+      win.sessionStorage.setItem("lt_onenote_user_closed", "1");
+      win.sessionStorage.setItem("lt_onenote_keep_open", "0");
+    }} catch (e) {{}}
     const overlay = doc.getElementById("lt-onenote-overlay");
     if (overlay) {{
       overlay.classList.remove("lt-open");
@@ -2018,8 +2073,26 @@ def inject_floating_chrome(
     const editorEl = doc.getElementById("lt-onenote-editor");
     if (editorEl) editorEl.dataset.hydrated = "1";
 
-    if (AUTO_OPEN || FOCUS_PAGE) {{
+    function hasUserClosed() {{
+      try {{
+        return win.sessionStorage.getItem("lt_onenote_user_closed") === "1";
+      }} catch (e) {{
+        return false;
+      }}
+    }}
+
+    // Priority: FORCE_CLOSED (save-close ack) > intentional AUTO_OPEN/FOCUS > sticky user_closed > keep_open.
+    // Sticky user_closed force-strips leftover lt-open on the persistent parent overlay across reruns.
+    if (FORCE_CLOSED) {{
+      try {{
+        win.sessionStorage.setItem("lt_onenote_user_closed", "1");
+        win.sessionStorage.setItem("lt_onenote_keep_open", "0");
+      }} catch (e) {{}}
+      closePanel();
+    }} else if (AUTO_OPEN || FOCUS_PAGE) {{
       openPanel();
+    }} else if (hasUserClosed()) {{
+      closePanel();
     }} else {{
       try {{
         if (win.sessionStorage.getItem("lt_onenote_keep_open") === "1") {{
@@ -2030,7 +2103,12 @@ def inject_floating_chrome(
     }}
 
     const openOverlay = doc.getElementById("lt-onenote-overlay");
-    if (openOverlay && openOverlay.classList.contains("lt-open")) {{
+    if (
+      openOverlay &&
+      openOverlay.classList.contains("lt-open") &&
+      !FORCE_CLOSED &&
+      !hasUserClosed()
+    ) {{
       try {{ renderAll(); }} catch (e) {{}}
     }}
   }}
