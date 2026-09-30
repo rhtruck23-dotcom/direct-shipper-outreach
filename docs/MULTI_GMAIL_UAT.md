@@ -1,12 +1,12 @@
-# Multi-Gmail send pool UAT (v2026.09.27a)
+# Multi-Gmail send pool UAT (v2026.09.30d)
 
 Click through this checklist after deploy. **Do not commit real App Passwords.**
 
 ## Goal
 
-Send ~400+/day via multiple Gmail accounts (soft ~200/day each). Example accounts:
-`heronmb3@gmail.com`, `rhtruck23@gmail.com` (+ more). With 3 × 200 ≈ 600/day pool capacity;
-set **Autopilot daily target** to ~400 if you want a slower intentional pace.
+Send ~400+/day via multiple Gmail accounts (soft max **200/day** each for now). Example accounts:
+`heronmb3@gmail.com`, `rhtruck23@gmail.com` (+ more). With 3 × 200 ≈ 600/day pool capacity
+(example only — add more accounts anytime). Set **Autopilot daily target** to ~400 if you want a slower intentional pace.
 
 | Leads | Pace | Calendar days |
 |------:|-----:|--------------:|
@@ -21,18 +21,24 @@ set **Autopilot daily target** to ~400 if you want a slower intentional pace.
 
 ---
 
-## 1) Add 3 Gmails to the pool
+## 1) Add Gmails to the pool (start with 3; unlimited allowed)
 
 1. Open **Dashboard** or **Org Setup → Company & SMTP**.
 2. Scroll to **Gmail send pool**.
 3. For each account (App Password from Google Account → Security → 2-Step → App passwords):
    - Gmail address (e.g. `heronmb3@gmail.com`)
    - App password (16 characters — placeholder in docs only: `xxxx xxxx xxxx xxxx`)
-   - Daily cap **200**
-   - Click **Add mailbox**
-4. Repeat for `rhtruck23@gmail.com` and a third Gmail.
-5. Confirm each shows **ON · pw✓** and `0/200 today`.
-6. Confirm **Remaining today** shows **600/600** (or 200 × N).
+   - Daily cap **200** (max for now)
+   - Click **Add mailbox** (starts **activated** in the send pool)
+4. Repeat for `rhtruck23@gmail.com` and a third Gmail (or as many as you need).
+5. Confirm each shows **in pool · pw✓** and `0/200 today`.
+6. Confirm **Remaining today** shows **600/600** for 3 accounts (or 200 × N active).
+
+### Activate / Retract
+
+1. Click **Retract** on one mailbox — status becomes **retracted**; live send must not use it.
+2. Click **Activate in send pool** — status becomes **in pool**; round-robin includes it again.
+3. Confirm the row is still there after Retract (only **Delete** removes it).
 
 ---
 
@@ -78,7 +84,8 @@ set **Autopilot daily target** to ~400 if you want a slower intentional pace.
 
 ## Done when
 
-- [ ] 3 Gmails in pool, cap 200 each, enabled
+- [ ] ≥3 Gmails in pool (or more), cap 200 each, activated
+- [ ] Retract / Activate works without deleting the row
 - [ ] Live test rotates and logs mailbox
 - [ ] Autopilot ON + target/cap set for intended daily volume
 - [ ] DNC never emailed; dry-run does not burn caps

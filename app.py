@@ -707,9 +707,10 @@ def _email_setup_card(*, key_prefix: str, show_credential_fields: bool = True) -
 
 
 def _gmail_pool_section(*, key_prefix: str) -> None:
-    """Multi-Gmail send pool: add/enable/delete mailboxes + today's usage."""
+    """Multi-Gmail send pool: add/activate/retract/delete mailboxes + today's usage."""
     from src.mailboxes import (
         DEFAULT_DAILY_CAP,
+        MAX_DAILY_CAP,
         add_mailbox,
         delete_mailbox,
         set_mailbox_enabled,
@@ -720,9 +721,11 @@ def _gmail_pool_section(*, key_prefix: str) -> None:
 
     st.markdown("### Gmail send pool")
     st.caption(
-        "Autopilot rotates across these accounts silently. Soft cap ~200/day per Gmail "
-        "(3 accounts ≈ 600/day). Counters reset on the America/Chicago calendar day. "
-        "Dry-runs do not count against the cap."
+        "Add as many Gmails as you want (no hard limit). Typical starter is **3** "
+        f"accounts × **{DEFAULT_DAILY_CAP}/day** ≈ **{3 * DEFAULT_DAILY_CAP}/day** — "
+        "example only, not a max. Use **Activate in send pool** / **Retract** to put a "
+        "mailbox into round-robin or pull it out without deleting. Counters reset on the "
+        "America/Chicago calendar day. Dry-runs do not count against the cap."
     )
 
     usage = today_usage()
@@ -730,30 +733,36 @@ def _gmail_pool_section(*, key_prefix: str) -> None:
     total_cap = sum(
         r["cap"] for r in usage if r.get("enabled") and r.get("has_password")
     )
+    active_n = sum(1 for r in usage if r.get("enabled") and r.get("has_password"))
     m1, m2, m3 = st.columns(3)
-    m1.metric("Pool accounts", len(usage))
+    m1.metric("Mailboxes", f"{active_n} active / {len(usage)} total")
     m2.metric("Sent today (pool)", sum(r["sent"] for r in usage if r.get("has_password")))
     m3.metric("Remaining today", f"{remaining}/{total_cap or 0}")
 
     if usage:
         for row in usage:
-            cols = st.columns([3, 2, 1, 1, 1])
-            status = "ON" if row.get("enabled") else "OFF"
+            cols = st.columns([3, 2, 1.4, 1, 1])
+            status = "in pool" if row.get("enabled") else "retracted"
             pw = "pw✓" if row.get("has_password") else "no pw"
             cols[0].write(f"**{row.get('email') or row.get('id')}** · {status} · {pw}")
             cols[1].caption(f"{row.get('sent', 0)}/{row.get('cap', DEFAULT_DAILY_CAP)} today")
             mid = row.get("id") or ""
             if cols[2].button(
-                "Disable" if row.get("enabled") else "Enable",
+                "Retract" if row.get("enabled") else "Activate in send pool",
                 key=f"{key_prefix}_mb_tog_{mid}",
+                help=(
+                    "Pull this mailbox out of round-robin (keeps the row)."
+                    if row.get("enabled")
+                    else "Put this mailbox into the live send pool."
+                ),
             ):
                 set_mailbox_enabled(mid, not bool(row.get("enabled")))
                 st.rerun()
             new_cap = cols[3].number_input(
                 "Cap",
                 min_value=1,
-                max_value=500,
-                value=int(row.get("cap") or DEFAULT_DAILY_CAP),
+                max_value=MAX_DAILY_CAP,
+                value=min(MAX_DAILY_CAP, int(row.get("cap") or DEFAULT_DAILY_CAP)),
                 key=f"{key_prefix}_mb_cap_{mid}",
                 label_visibility="collapsed",
             )
@@ -765,12 +774,16 @@ def _gmail_pool_section(*, key_prefix: str) -> None:
                 st.rerun()
     else:
         st.info(
-            "No pool mailboxes yet. Add Gmail addresses + App Passwords below "
-            "(e.g. heronmb3@gmail.com, rhtruck23@gmail.com)."
+            "No pool mailboxes yet. Add Gmail + App Password below "
+            "(e.g. start with 3 accounts for ~600/day). You can add more anytime."
         )
 
     with st.form(f"{key_prefix}_mb_add"):
         st.markdown("#### Add Gmail to pool")
+        st.caption(
+            f"New rows start **activated** in the send pool (daily cap default "
+            f"{DEFAULT_DAILY_CAP}, max {MAX_DAILY_CAP}). Retract anytime to pause."
+        )
         a1, a2, a3 = st.columns([3, 3, 1])
         new_email = a1.text_input(
             "Gmail address",
@@ -788,7 +801,7 @@ def _gmail_pool_section(*, key_prefix: str) -> None:
         new_cap = a3.number_input(
             "Daily cap",
             min_value=1,
-            max_value=500,
+            max_value=MAX_DAILY_CAP,
             value=DEFAULT_DAILY_CAP,
             key=f"{key_prefix}_mb_new_cap",
         )
@@ -801,7 +814,9 @@ def _gmail_pool_section(*, key_prefix: str) -> None:
                 st.error("Paste the 16-character Gmail App Password.")
             else:
                 add_mailbox(email, pw, daily_cap=int(new_cap), enabled=True)
-                st.success(f"Added {email} (cap {int(new_cap)}/day).")
+                st.success(
+                    f"Added {email} — activated in send pool (cap {int(new_cap)}/day)."
+                )
                 st.rerun()
 
 
@@ -3479,7 +3494,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.30c · Leads list header cleanup")
+        st.caption("v2026.09.30d · Gmail pool activate")
 
         from src.notes_ui import render_sidebar_add_note_button
 

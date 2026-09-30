@@ -5,7 +5,7 @@ Practical step-by-step for a **~30–45 min** first-pass UAT. Mark **Pass / Fail
 | Field | Fill in |
 |--------|---------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Version (sidebar caption)** | **v2026.09.30c · Leads list header cleanup** |
+| **Version (sidebar caption)** | **v2026.09.30d · Gmail pool activate** |
 | **Git commit (expected)** | `d8bf80e` |
 | **Tester** | _______________________________ |
 | **Date** | _______________ |
@@ -22,7 +22,7 @@ Practical step-by-step for a **~30–45 min** first-pass UAT. Mark **Pass / Fail
 
 **Header cleanup (this build):** Leads List views have **no** under-title blurb and **no** cloud/local banner under the title. Sidebar still shows Cloud DB / Local DB + Dry run / LIVE EMAIL at the bottom.
 
-**Notes voice lineage:** Mic fix shipped in **v2026.09.29b** (parent-realm Web Speech + Record; iframe `allow=microphone`). Current caption is **v2026.09.30c**; voice should still work.
+**Notes voice lineage:** Mic fix shipped in **v2026.09.29b** (parent-realm Web Speech + Record; iframe `allow=microphone`). Current caption is **v2026.09.30d**; voice should still work.
 
 ---
 
@@ -98,7 +98,7 @@ Work top to bottom. The **★ Top 10** cases are the must-run set (~20–25 min)
 **Steps:**
 1. Look under **LogixTrek Outreach** in the left sidebar.
 
-**Expected:** Exact caption: `v2026.09.30c · Leads list header cleanup`.
+**Expected:** Exact caption: `v2026.09.30d · Gmail pool activate`.
 
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:** (paste exact text if different)
@@ -286,10 +286,10 @@ Work top to bottom. The **★ Top 10** cases are the must-run set (~20–25 min)
 **Steps:**
 1. **Settings → Org Setup**.
 2. Confirm **Send LIVE emails** OFF / dry-run.
-3. Glance at **Gmail send pool** (do not add passwords unless intentional).
+3. Glance at **Gmail send pool** — caption mentions unlimited adds + Activate/Retract; soft max 200/day (3×200≈600 example).
 4. Confirm Dashboard status strip / sidebar still Dry run.
 
-**Expected:** LIVE remains OFF for first pass. Pool UI present for later live UAT.
+**Expected:** LIVE remains OFF for first pass. Pool UI present for later live UAT (`docs/MULTI_GMAIL_UAT.md`).
 
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:**

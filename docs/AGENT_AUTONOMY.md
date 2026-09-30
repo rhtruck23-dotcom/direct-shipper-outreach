@@ -13,7 +13,7 @@ Open **Org Setup → Company & SMTP**:
 
 ## Multi-Gmail send pool + shared caps
 
-Add several Gmail + App Password rows under **Gmail send pool** (Org Setup). Default **daily_cap = 200** per account. Live sends round-robin across enabled mailboxes; when all are at cap, sending soft-stops until the next America/Chicago day. Dry-runs do **not** count.
+Add as many Gmail + App Password rows as you want under **Gmail send pool** (Org Setup) — no hard mailbox limit. Soft default / max **daily_cap = 200** per account for now. Typical starter: **3 × 200 ≈ 600/day** (example, not a hard pool max). Live sends round-robin across **activated** mailboxes; use **Retract** to pull one out of the pool without deleting. When all active accounts are at cap, sending soft-stops until the next America/Chicago day. Dry-runs do **not** count.
 
 When **Autopilot** and **Send LIVE emails** are both ON:
 
@@ -21,7 +21,7 @@ When **Autopilot** and **Send LIVE emails** are both ON:
 - Dashboard shows **Today capacity / Sent / Remaining** and a clear next-day resume message when exhausted.
 - Optional **Prepare 4000-lead week plan** estimates days/weeks from current throughput.
 
-- 3 accounts × 200 ≈ **600/day** pool capacity
+- 3 accounts × 200 ≈ **600/day** pool capacity (illustrative)
 - Optional **Autopilot daily target** (e.g. 400) so the agent stops earlier even if the pool still has room
 - **4000 leads** @ ~500/day ≈ **8 days**; @ ~600/day ≈ **7 days**
 

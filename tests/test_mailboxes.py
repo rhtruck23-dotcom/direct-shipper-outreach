@@ -52,6 +52,47 @@ def test_pick_mailbox_round_robin(tmp_path, monkeypatch):
     assert fourth["id"] == "a"
 
 
+def test_pick_mailbox_skips_retracted(tmp_path, monkeypatch):
+    """Retracted (enabled=False) mailboxes stay stored but leave the send pool."""
+    _seed_pool(
+        tmp_path,
+        monkeypatch,
+        [
+            {
+                "id": "a",
+                "email": "a@gmail.com",
+                "smtp_password": "pw-a",
+                "daily_cap": 200,
+                "enabled": True,
+            },
+            {
+                "id": "b",
+                "email": "b@gmail.com",
+                "smtp_password": "pw-b",
+                "daily_cap": 200,
+                "enabled": True,
+            },
+        ],
+    )
+    assert mailboxes.set_mailbox_enabled("a", False)["enabled"] is False
+    ids = {mailboxes.pick_mailbox()["id"] for _ in range(4)}
+    assert ids == {"b"}
+    assert all(r["id"] != "a" or not r["enabled"] for r in mailboxes.today_usage())
+    # Re-activate into pool
+    assert mailboxes.set_mailbox_enabled("a", True)["enabled"] is True
+    ids2 = {mailboxes.pick_mailbox()["id"] for _ in range(6)}
+    assert ids2 == {"a", "b"}
+
+
+def test_default_and_max_daily_cap_is_200():
+    assert mailboxes.DEFAULT_DAILY_CAP == 200
+    assert mailboxes.MAX_DAILY_CAP == 200
+    n = mailboxes._normalize({"email": "x@g.com", "daily_cap": 999, "enabled": True})
+    assert n["daily_cap"] == 200
+    blank = mailboxes._blank_mailbox()
+    assert blank["daily_cap"] == 200
+
+
 def test_pick_mailbox_skips_at_cap(tmp_path, monkeypatch):
     _seed_pool(
         tmp_path,

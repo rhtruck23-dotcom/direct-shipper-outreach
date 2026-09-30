@@ -22,6 +22,8 @@ MAILBOXES_JSON = DATA_DIR / "mailboxes.json"
 SEND_COUNTS_JSON = DATA_DIR / "mailbox_send_counts.json"
 
 DEFAULT_DAILY_CAP = 200
+# Soft max for now (UI + normalize). Raise later if needed — not a hard pool size limit.
+MAX_DAILY_CAP = 200
 DEFAULT_SMTP_HOST = "smtp.gmail.com"
 DEFAULT_SMTP_PORT = 587
 COUNT_TZ = ZoneInfo("America/Chicago")
@@ -74,7 +76,9 @@ def _normalize(raw: dict) -> dict[str, Any]:
     mb["smtp_user"] = str(mb.get("smtp_user") or mb["email"] or "").strip()
     mb["smtp_password"] = str(mb.get("smtp_password") or "").strip()
     try:
-        mb["daily_cap"] = max(1, int(mb.get("daily_cap") or DEFAULT_DAILY_CAP))
+        mb["daily_cap"] = max(
+            1, min(MAX_DAILY_CAP, int(mb.get("daily_cap") or DEFAULT_DAILY_CAP))
+        )
     except Exception:
         mb["daily_cap"] = DEFAULT_DAILY_CAP
     mb["enabled"] = str(mb.get("enabled")).lower() in ("1", "true", "yes", "on")
@@ -351,7 +355,9 @@ def add_mailbox(
     for existing in mbs:
         if (existing.get("email") or "").lower() == email:
             existing["smtp_password"] = pw or existing.get("smtp_password") or ""
-            existing["daily_cap"] = max(1, int(daily_cap or DEFAULT_DAILY_CAP))
+            existing["daily_cap"] = max(
+                1, min(MAX_DAILY_CAP, int(daily_cap or DEFAULT_DAILY_CAP))
+            )
             existing["smtp_host"] = smtp_host or DEFAULT_SMTP_HOST
             existing["smtp_port"] = int(smtp_port or DEFAULT_SMTP_PORT)
             existing["smtp_user"] = email
@@ -366,7 +372,9 @@ def add_mailbox(
             "smtp_port": int(smtp_port or DEFAULT_SMTP_PORT),
             "smtp_user": email,
             "smtp_password": pw,
-            "daily_cap": max(1, int(daily_cap or DEFAULT_DAILY_CAP)),
+            "daily_cap": max(
+                1, min(MAX_DAILY_CAP, int(daily_cap or DEFAULT_DAILY_CAP))
+            ),
             "enabled": bool(enabled),
         }
     )
