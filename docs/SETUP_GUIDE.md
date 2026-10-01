@@ -41,9 +41,9 @@ Copy `.env.example` to `.env` and fill Twilio + your cell. Otherwise you only ge
 
 ## 3. Daily workflow
 1. Find Leads → search or import → add emails → Save
-2. Pipeline → select → Activate → Start
-3. When someone replies → Inbox Bot → paste reply → Process
-4. When bot says ESCALATE → call them yourself and close the deal
+2. Pipeline → select → Activate → Start (LIVE send uses the Gmail pool; Reply-To = that mailbox)
+3. When someone replies in Gmail → **Dashboard → Check inbox for replies** (or enable Org Setup **IMAP poll** for light auto-check). Fallback: Inbox Bot → paste reply → Process
+4. When bot / task says ESCALATE → call them yourself and close the deal
 
 ## 4. Gemini AI Studio (optional)
 See `docs/GEMINI_AI_STUDIO.md` for a prompt pack if you want to run pieces there too.

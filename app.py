@@ -1245,6 +1245,129 @@ def page_dashboard():
     if fail_today:
         st.warning(f"{fail_today} send failure(s) logged today — check outbound log / SMTP.")
 
+    # ---- Reply inbox poll (IMAP → match lead emails) ----
+    st.subheader("Lead replies")
+    st.caption(
+        "Replies land in Gmail first (Reply-To = the pool mailbox that sent). "
+        "The app discovers them via IMAP poll — or paste in Inbox Bot as fallback."
+    )
+    ib1, ib2 = st.columns([2, 3])
+    if ib1.button("Check inbox for replies", type="primary", key="dash_check_inbox"):
+        from src.imap_inbox import check_inbox_for_replies, format_check_summary
+
+        with st.spinner("Polling Gmail pool (read-only IMAP)…"):
+            chk = check_inbox_for_replies(company, force=True)
+        st.session_state["last_inbox_check"] = {
+            "applied": chk.applied,
+            "summary": format_check_summary(chk),
+            "matches": [
+                {
+                    "funnel": m.funnel,
+                    "email": m.lead_email,
+                    "company": m.company_name,
+                    "lead_key": m.lead_key,
+                    "subject": m.message.subject,
+                    "applied": m.applied,
+                    "skipped": m.skipped_reason,
+                }
+                for m in chk.matches
+                if m.applied or m.skipped_reason == "dnc"
+            ],
+            "errors": list(chk.errors),
+            "flash": (
+                "error"
+                if chk.errors and not chk.applied
+                else ("success" if chk.applied else "info")
+            ),
+        }
+        st.rerun()
+
+    last_chk = st.session_state.get("last_inbox_check") or {}
+    flash = last_chk.pop("flash", None) if isinstance(last_chk, dict) else None
+    # pop mutates session copy — clear flash so it shows once
+    if flash and "last_inbox_check" in st.session_state:
+        st.session_state["last_inbox_check"] = {
+            k: v for k, v in st.session_state["last_inbox_check"].items() if k != "flash"
+        }
+    if flash == "error":
+        for e in (last_chk.get("errors") or [])[:5]:
+            st.warning(e)
+    elif flash == "success":
+        st.success(last_chk.get("summary") or "Matched replies recorded.")
+    elif flash == "info" and last_chk.get("summary"):
+        st.info(last_chk.get("summary"))
+
+    if last_chk.get("summary"):
+        ib2.caption(last_chk["summary"])
+    imap_on = bool(company.get("imap_poll_enabled"))
+    auto_on_flag = bool(company.get("autonomy_autopilot"))
+    if imap_on or auto_on_flag:
+        ib2.caption(
+            "Light auto-poll ON "
+            f"({'IMAP toggle' if imap_on else ''}"
+            f"{' + ' if imap_on and auto_on_flag else ''}"
+            f"{'Autopilot' if auto_on_flag else ''})."
+        )
+    else:
+        ib2.caption(
+            "Auto-poll off — use the button anytime, or enable "
+            "**IMAP poll** / Autopilot in Org Setup."
+        )
+
+    # One light auto-poll per session when IMAP toggle or Autopilot is on
+    try:
+        from src.imap_inbox import check_inbox_for_replies, format_check_summary, should_auto_poll
+
+        if should_auto_poll(company) and not st.session_state.get("_inbox_auto_polled_session"):
+            st.session_state["_inbox_auto_polled_session"] = True
+            chk = check_inbox_for_replies(company, force=False)
+            if chk.applied:
+                st.session_state["last_inbox_check"] = {
+                    "applied": chk.applied,
+                    "summary": format_check_summary(chk),
+                    "matches": [
+                        {
+                            "funnel": m.funnel,
+                            "email": m.lead_email,
+                            "company": m.company_name,
+                            "lead_key": m.lead_key,
+                            "subject": m.message.subject,
+                            "applied": m.applied,
+                            "skipped": m.skipped_reason,
+                        }
+                        for m in chk.matches
+                        if m.applied
+                    ],
+                    "errors": list(chk.errors),
+                }
+                st.info(f"Auto inbox poll: {format_check_summary(chk)}")
+    except Exception:
+        pass
+
+    applied_matches = [
+        m for m in (last_chk.get("matches") or []) if m.get("applied")
+    ]
+    if applied_matches:
+        with st.expander(
+            f"Matched replies ({len(applied_matches)})",
+            expanded=True,
+        ):
+            for m in applied_matches[:15]:
+                cols = st.columns([4, 1, 1])
+                label = f"{m.get('company') or m.get('email')} · {m.get('subject') or '(no subject)'}"
+                if cols[0].button(label, key=f"dash_reply_{m.get('lead_key')}_{m.get('email')}"):
+                    funnel = m.get("funnel") or "shipper"
+                    if funnel == "carrier":
+                        _goto_page("Carrier Inbox", group="carrier")
+                    elif funnel == "lead_x":
+                        _goto_page("X Inbox", group="lead_x")
+                    else:
+                        _goto_page("Inbox Bot", group="shipper")
+                cols[1].caption(m.get("funnel") or "")
+                cols[2].caption(m.get("email") or "")
+            if st.button("Open Inbox Bot", key="dash_open_inbox_hub"):
+                _goto_page("Inbox Bot", group="shipper")
+
     # ---- Campaigns (active counts) ----
     st.subheader("Campaigns")
     ship_active = len(active)
@@ -2233,10 +2356,23 @@ def page_org_setup():
                 "When Autopilot + LIVE are both ON, campaign due-emails and the agent share the same daily budget."
             )
             imap_poll_enabled = st.toggle(
-                "IMAP poll (read-only INBOX)",
+                "IMAP poll — discover lead replies from Gmail",
                 value=bool(company.get("imap_poll_enabled")),
-                help="OFF by default. When ON, Inbox can poll recent mail using pool App Passwords "
-                "(read-only). Prefer Paste from Gmail until App Passwords are confirmed.",
+                help=(
+                    "OFF by default. When ON, Dashboard / Autopilot can poll the activated "
+                    "Gmail send-pool inboxes (read-only IMAP + App Passwords), match From: "
+                    "to known lead emails, append to conversation, and create a Dashboard task. "
+                    "Replies always arrive in Gmail first — the app discovers them via poll "
+                    "(or Inbox Bot paste as fallback). Enable only after App Passwords work for LIVE send."
+                ),
+            )
+            st.caption(
+                "**How reply discovery works:** LIVE send uses From/Reply-To = the pool mailbox, "
+                "so the lead's reply lands in that Gmail. Click **Dashboard → Check inbox for replies** "
+                "anytime (works even when this toggle is off). Turn this toggle **ON** for light "
+                "auto-poll when you open the Dashboard (also runs when Autopilot is on). "
+                "IMAP is read-only and only matches emails already in your lead lists; DNC is honored. "
+                "Paste-from-Gmail in Inbox Bot remains the fallback."
             )
             cse_key = st.text_input(
                 "Google Custom Search API key",
@@ -3104,8 +3240,10 @@ def page_inbox():
         st.error("No access to Inbox Bot.")
         return
     st.caption(
-        "Paste a reply from Gmail (or optional IMAP poll). "
-        "Bot auto-handles routine replies; escalates rates/contracts/loads to you."
+        "Replies arrive in Gmail first (Reply-To = the pool mailbox). "
+        "Prefer **Dashboard → Check inbox for replies** (IMAP). "
+        "Paste below remains the fallback. Bot auto-handles routine replies; "
+        "escalates rates/contracts/loads to you."
     )
     if not is_super_admin(user):
         st.info("You only process replies for leads assigned to you.")
@@ -3116,43 +3254,55 @@ def page_inbox():
         st.warning("Add leads first.")
         return
 
-    # ---- Paste from Gmail / mailto helper (no IMAP required) ----
-    from src.imap_inbox import gmail_web_inbox_url, imap_poll_enabled, mailto_compose_link
+    # ---- Paste from Gmail / mailto helper (fallback when IMAP off) ----
+    from src.imap_inbox import (
+        check_inbox_for_replies,
+        format_check_summary,
+        gmail_web_inbox_url,
+        imap_poll_enabled,
+        mailto_compose_link,
+    )
 
-    with st.expander("Paste from Gmail (recommended when IMAP is off)", expanded=True):
+    with st.expander(
+        "Paste from Gmail (fallback if IMAP is off or a message was missed)",
+        expanded=not imap_poll_enabled(company),
+    ):
         st.markdown(
             "1. Open Gmail → copy the shipper's reply text.\n"
             "2. Select the matching lead below.\n"
             "3. Paste into **Paste their reply** → **Process with Logistics Bot**.\n"
-            "4. Optional: use **Open in Gmail** / **mailto** to reply personally after an escalation."
+            "4. Optional: use **Open in Gmail** / **mailto** to reply personally after an escalation.\n\n"
+            "Happy path: **Dashboard → Check inbox for replies** so IMAP matches From: to this lead."
         )
         g1, g2 = st.columns(2)
         gmail_url = gmail_web_inbox_url(company.get("my_email") or "")
         g1.link_button("Open Gmail inbox", gmail_url, use_container_width=True)
         # mailto for selected lead appears after selectbox
 
-    if imap_poll_enabled(company):
-        st.info("IMAP poll is ON (read-only). Use **Poll recent inbox** below or keep pasting.")
-        if st.button("Poll recent inbox (read-only)", key="ship_imap_poll"):
-            from src.imap_inbox import poll_recent_inbox
-
-            with st.spinner("Polling IMAP…"):
-                pr = poll_recent_inbox(company)
-            if pr.errors:
-                for e in pr.errors:
-                    st.warning(e)
-            if pr.messages:
-                st.success(f"Fetched {len(pr.messages)} message(s) from {pr.mailboxes_polled} mailbox(es).")
-                for m in pr.messages[:8]:
-                    with st.expander(f"{m.from_addr} — {m.subject or '(no subject)'}"):
-                        st.code(m.body[:2000] or "(empty)")
-            else:
-                st.caption("No recent messages (or poll disabled / empty).")
-    else:
+    if st.button("Check inbox for replies (IMAP)", key="ship_imap_poll"):
+        with st.spinner("Polling IMAP…"):
+            chk = check_inbox_for_replies(company, force=True)
+        if chk.errors:
+            for e in chk.errors[:5]:
+                st.warning(e)
+        st.success(format_check_summary(chk))
+        applied = [m for m in chk.matches if m.applied]
+        if applied:
+            for m in applied[:8]:
+                with st.expander(
+                    f"{m.company_name or m.lead_email} — {m.message.subject or '(no subject)'}"
+                ):
+                    st.code((m.message.body or "")[:2000] or "(empty)")
+            st.rerun()
+        elif not chk.errors:
+            st.caption("No new matched replies (unknown From: addresses are ignored).")
+    elif not imap_poll_enabled(company):
         st.caption(
-            "IMAP poll is **off** (default). Paste from Gmail above. "
-            "Enable `imap_poll_enabled` in Org Setup only after App Passwords are confirmed."
+            "IMAP auto-poll is **off** (default). Use the button above anytime, or enable "
+            "**IMAP poll — discover lead replies from Gmail** in Org Setup after App Passwords work."
         )
+    else:
+        st.info("IMAP poll is ON — Dashboard also auto-checks when you open it.")
 
     labels = {
         f"{l.get('company_name')} <{l.get('email')}> [{stage_label(l.get('status'))}]": l
@@ -3499,7 +3649,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.30h · Spanish convert fix")
+        st.caption("v2026.09.30i · Reply inbox poll")
 
         from src.notes_ui import render_sidebar_add_note_button
 

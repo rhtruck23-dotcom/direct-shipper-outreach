@@ -27,13 +27,24 @@ When **Autopilot** and **Send LIVE emails** are both ON:
 
 See [MULTI_GMAIL_UAT.md](MULTI_GMAIL_UAT.md) for the click-through checklist. Never commit real App Passwords.
 
-## Inbox without IMAP (default)
+## Inbox: replies land in Gmail first
+
+LIVE send uses **From / Reply-To = the pool mailbox** that sent the email, so when a lead replies from the same contact address, the message arrives in that Gmail inbox — not inside the app automatically.
+
+**How the app learns about replies:**
+
+1. Add Gmail accounts + App Passwords to the **Gmail send pool** (Org Setup) and send LIVE as usual.
+2. When a lead replies, open **Dashboard → Check inbox for replies** (read-only IMAP). The app matches `From:` to known shipper / carrier / Lead-for-X emails, appends the message to the conversation, sets status to responded, and creates a high-priority Dashboard task.
+3. Optional: turn on **IMAP poll — discover lead replies from Gmail** in Org Setup (default **OFF**) for a light auto-poll when you open the Dashboard (also runs when Autopilot is on).
+4. Fallback: **Inbox Bot → Paste from Gmail** if IMAP is off or a message was missed.
+5. Only known lead emails are matched; Do Not Contact is honored; IMAP stays read-only (no mark-all-read).
 
 IMAP poll defaults **OFF** (`imap_poll_enabled = false`).
 
-- **Inbox Bot** → expander **Paste from Gmail**: copy reply from Gmail → paste → Process.
+- **Dashboard** → **Check inbox for replies** (happy path when App Passwords work).
+- **Inbox Bot** → expander **Paste from Gmail**: copy reply → paste → Process.
 - **mailto** deep-link + **Open Gmail inbox** for personal replies after escalations.
-- Optional read-only IMAP poll (pool App Passwords) behind Org Setup toggle — enable only after passwords are confirmed. Unit-tested with mocks.
+- Unit-tested with mocked IMAP (`tests/test_imap_reply_poll.py`).
 
 ## Run agent / Auto-pilot
 

@@ -82,6 +82,16 @@ Send ~400+/day via multiple Gmail accounts (soft max **200/day** each for now). 
 
 ---
 
+## 6) Lead reply discovery (IMAP)
+
+1. Send a LIVE test so From/Reply-To is a **pool mailbox**.
+2. Have the lead reply from the **same contact email** (or send yourself a test From: that address into the pool inbox).
+3. Dashboard → **Check inbox for replies** — expect matched count, lead status → responded, and a high-priority task.
+4. Optional: Org Setup → enable **IMAP poll — discover lead replies from Gmail** for light auto-poll on Dashboard open / Autopilot.
+5. Paste-from-Gmail in Inbox Bot remains the fallback.
+
+---
+
 ## Done when
 
 - [ ] ≥3 Gmails in pool (or more), cap 200 each, activated
@@ -89,3 +99,4 @@ Send ~400+/day via multiple Gmail accounts (soft max **200/day** each for now). 
 - [ ] Live test rotates and logs mailbox
 - [ ] Autopilot ON + target/cap set for intended daily volume
 - [ ] DNC never emailed; dry-run does not burn caps
+- [ ] Check inbox for replies matches known lead From: addresses

@@ -332,7 +332,7 @@ Keep **LIVE OFF** and **Autopilot OFF** until Part B–C are green.
 | L-04 | Live Places / Gemini Find & Vet | Needs API keys |
 | L-05 | Live LLM template generate (Lead for X) | Needs key |
 | L-06 | Cloud Sheet connection test | Streamlit Cloud secrets |
-| L-07 | Enable `imap_poll_enabled` once | Only after App Passwords verified |
+| L-07 | Enable IMAP poll toggle once + Dashboard **Check inbox for replies** | Only after App Passwords verified; confirm matched lead + task |
 
 ---
 
