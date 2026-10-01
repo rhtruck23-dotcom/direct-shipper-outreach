@@ -185,6 +185,14 @@ def _store_original(key_prefix: str, subject: str, body: str) -> None:
     st.session_state[f"{key_prefix}_lang_orig_body"] = body
 
 
+def _read_widget_text(key: Optional[str], fallback: Optional[str] = None) -> str:
+    if key and key in st.session_state:
+        return str(st.session_state.get(key) or "")
+    if fallback is not None:
+        return str(fallback or "")
+    return ""
+
+
 def render_email_lang_toolbar(  # pragma: no cover
     *,
     key_prefix: str,
@@ -203,74 +211,88 @@ def render_email_lang_toolbar(  # pragma: no cover
     Writes translated text into `subject_key` / `body_key` session state (widget keys)
     when provided; otherwise stores under `{key_prefix}_translated_*`.
 
+    Uses button ``on_click`` callbacks so widget keys are updated *before* the next
+    run instantiates subject/body inputs (avoids StreamlitWidgetAlreadyInstantiatedError).
+
     Returns {"changed": bool, "subject": str, "body": str, "provider": str}.
     """
+    flash = st.session_state.pop(f"{key_prefix}_lang_flash", None)
+    if flash:
+        kind, msg = flash if isinstance(flash, tuple) else ("success", str(flash))
+        if kind == "warning":
+            st.warning(msg)
+        elif kind == "info":
+            st.info(msg)
+        else:
+            st.success(msg)
+
     cols = st.columns([1, 1, 2] if (show_to_spanish and show_to_english) else [1, 3])
-    changed = False
-    out_subj = ""
-    out_body = ""
-    provider = ""
+    out_subj = str(st.session_state.get(f"{key_prefix}_last_subj") or "")
+    out_body = str(st.session_state.get(f"{key_prefix}_last_body") or "")
+    provider = str(st.session_state.get(f"{key_prefix}_lang_via") or "")
+    changed = bool(st.session_state.pop(f"{key_prefix}_lang_changed", False))
 
-    def _current_subject() -> str:
-        if subject_value is not None:
-            return subject_value
-        if subject_key and subject_key in st.session_state:
-            return str(st.session_state.get(subject_key) or "")
-        return str(st.session_state.get(f"{key_prefix}_translated_subj") or "")
+    def _make_apply(target: str):
+        def _cb() -> None:
+            cur_s = _read_widget_text(subject_key, subject_value)
+            if not cur_s and subject_key is None:
+                cur_s = str(st.session_state.get(f"{key_prefix}_translated_subj") or "")
+            cur_b = _read_widget_text(body_key, body_value)
+            if not cur_b and body_key is None:
+                cur_b = str(st.session_state.get(f"{key_prefix}_translated_body") or "")
+            if not (cur_s.strip() or cur_b.strip()):
+                st.session_state[f"{key_prefix}_lang_flash"] = (
+                    "warning",
+                    "Nothing to translate — enter subject/body first.",
+                )
+                return
+            _store_original(key_prefix, cur_s, cur_b)
+            new_s, new_b, result = translate_email_pair(
+                cur_s, cur_b, target_lang=target, company=company
+            )
+            if subject_key:
+                st.session_state[subject_key] = new_s
+            else:
+                st.session_state[f"{key_prefix}_translated_subj"] = new_s
+            if body_key:
+                st.session_state[body_key] = new_b
+            else:
+                st.session_state[f"{key_prefix}_translated_body"] = new_b
+            st.session_state[f"{key_prefix}_lang_via"] = result.provider
+            st.session_state[f"{key_prefix}_lang_target"] = target
+            st.session_state[f"{key_prefix}_last_subj"] = new_s
+            st.session_state[f"{key_prefix}_last_body"] = new_b
+            st.session_state[f"{key_prefix}_lang_changed"] = True
+            label = LANG_LABELS.get(target, target)
+            if result.provider == "rules":
+                st.session_state[f"{key_prefix}_lang_flash"] = (
+                    "info",
+                    f"Translated to {label} via rules fallback (LLM unavailable).",
+                )
+            else:
+                st.session_state[f"{key_prefix}_lang_flash"] = (
+                    "success",
+                    f"Converted to {label} (via {result.provider}). Edit before send.",
+                )
 
-    def _current_body() -> str:
-        if body_value is not None:
-            return body_value
-        if body_key and body_key in st.session_state:
-            return str(st.session_state.get(body_key) or "")
-        return str(st.session_state.get(f"{key_prefix}_translated_body") or "")
-
-    def _apply(target: str) -> None:
-        nonlocal changed, out_subj, out_body, provider
-        cur_s = _current_subject()
-        cur_b = _current_body()
-        if not (cur_s.strip() or cur_b.strip()):
-            st.warning("Nothing to translate — enter subject/body first.")
-            return
-        _store_original(key_prefix, cur_s, cur_b)
-        new_s, new_b, result = translate_email_pair(
-            cur_s, cur_b, target_lang=target, company=company
-        )
-        out_subj, out_body, provider = new_s, new_b, result.provider
-        if subject_key:
-            st.session_state[subject_key] = new_s
-        else:
-            st.session_state[f"{key_prefix}_translated_subj"] = new_s
-        if body_key:
-            st.session_state[body_key] = new_b
-        else:
-            st.session_state[f"{key_prefix}_translated_body"] = new_b
-        st.session_state[f"{key_prefix}_lang_via"] = result.provider
-        st.session_state[f"{key_prefix}_lang_target"] = target
-        changed = True
-        label = LANG_LABELS.get(target, target)
-        if result.provider == "rules":
-            st.info(f"Translated to {label} via rules fallback (LLM unavailable).")
-        else:
-            st.success(f"Converted to {label} (via {result.provider}). Edit before send.")
-        st.rerun()
+        return _cb
 
     idx = 0
     if show_to_spanish:
-        if cols[idx].button(
+        cols[idx].button(
             "🇪🇸 Convert to Spanish",
             key=f"{key_prefix}_to_es",
             help="Translate subject/body to natural business Spanish (LLM failover).",
-        ):
-            _apply("es")
+            on_click=_make_apply("es"),
+        )
         idx += 1
     if show_to_english:
-        if cols[idx].button(
+        cols[idx].button(
             "🇬🇧 Convert to English",
             key=f"{key_prefix}_to_en",
             help="Translate Spanish (or other) text to English.",
-        ):
-            _apply("en")
+            on_click=_make_apply("en"),
+        )
 
     via = st.session_state.get(f"{key_prefix}_lang_via")
     if via:
@@ -302,24 +324,38 @@ def render_inbound_translate(  # pragma: no cover
     inbound_value: Optional[str] = None,
 ) -> None:
     """Convert pasted inbound reply to English (in-place on the text_area key)."""
-    if st.button(
-        "🇬🇧 Convert to English",
-        key=f"{key_prefix}_inbound_en",
-        help="Translate a Spanish (or other) inbound reply to English.",
-    ):
-        cur = (
-            inbound_value
-            if inbound_value is not None
-            else str(st.session_state.get(inbound_key) or "")
-        )
+
+    def _on_en() -> None:
+        cur = _read_widget_text(inbound_key, inbound_value)
         if not cur.strip():
-            st.warning("Paste their reply first.")
+            st.session_state[f"{key_prefix}_inbound_flash"] = (
+                "warning",
+                "Paste their reply first.",
+            )
             return
         st.session_state[f"{key_prefix}_inbound_orig"] = cur
         result = translate_text(cur, target_lang="en", company=company, is_email=True)
         st.session_state[inbound_key] = result.text or cur
         st.session_state[f"{key_prefix}_inbound_via"] = result.provider
-        st.rerun()
+        st.session_state[f"{key_prefix}_inbound_flash"] = (
+            "success",
+            f"Converted to English (via {result.provider}).",
+        )
+
+    flash = st.session_state.pop(f"{key_prefix}_inbound_flash", None)
+    if flash:
+        kind, msg = flash if isinstance(flash, tuple) else ("success", str(flash))
+        if kind == "warning":
+            st.warning(msg)
+        else:
+            st.success(msg)
+
+    st.button(
+        "🇬🇧 Convert to English",
+        key=f"{key_prefix}_inbound_en",
+        help="Translate a Spanish (or other) inbound reply to English.",
+        on_click=_on_en,
+    )
 
     orig = st.session_state.get(f"{key_prefix}_inbound_orig")
     if orig:
@@ -338,29 +374,44 @@ def render_preview_translate(  # pragma: no cover
     For read-only email previews (st.code): Convert to Spanish and show
     editable side-by-side / replace draft the user can copy or tweak.
     """
+    # Apply pending translation before editor widgets (avoids AlreadyInstantiated).
+    pending = st.session_state.pop(f"{key_prefix}_prev_pending", None)
+    if isinstance(pending, dict):
+        st.session_state[f"{key_prefix}_prev_subj"] = pending.get("subject") or ""
+        st.session_state[f"{key_prefix}_prev_body"] = pending.get("body") or ""
+        st.session_state[f"{key_prefix}_prev_via"] = pending.get("via") or ""
+        st.session_state[f"{key_prefix}_prev_orig_subj"] = pending.get("orig_subj") or subject
+        st.session_state[f"{key_prefix}_prev_orig_body"] = pending.get("orig_body") or body
+
     st.markdown(f"**{subject}**")
     st.code(body)
+
+    def _make_prev(target: str):
+        def _cb() -> None:
+            new_s, new_b, result = translate_email_pair(
+                subject, body, target_lang=target, company=company
+            )
+            st.session_state[f"{key_prefix}_prev_pending"] = {
+                "subject": new_s,
+                "body": new_b,
+                "via": result.provider,
+                "orig_subj": subject,
+                "orig_body": body,
+            }
+
+        return _cb
+
     c1, c2 = st.columns(2)
-    if c1.button("🇪🇸 Convert to Spanish", key=f"{key_prefix}_prev_es"):
-        new_s, new_b, result = translate_email_pair(
-            subject, body, target_lang="es", company=company
-        )
-        st.session_state[f"{key_prefix}_prev_subj"] = new_s
-        st.session_state[f"{key_prefix}_prev_body"] = new_b
-        st.session_state[f"{key_prefix}_prev_via"] = result.provider
-        st.session_state[f"{key_prefix}_prev_orig_subj"] = subject
-        st.session_state[f"{key_prefix}_prev_orig_body"] = body
-        st.rerun()
-    if c2.button("🇬🇧 Convert to English", key=f"{key_prefix}_prev_en"):
-        new_s, new_b, result = translate_email_pair(
-            subject, body, target_lang="en", company=company
-        )
-        st.session_state[f"{key_prefix}_prev_subj"] = new_s
-        st.session_state[f"{key_prefix}_prev_body"] = new_b
-        st.session_state[f"{key_prefix}_prev_via"] = result.provider
-        st.session_state[f"{key_prefix}_prev_orig_subj"] = subject
-        st.session_state[f"{key_prefix}_prev_orig_body"] = body
-        st.rerun()
+    c1.button(
+        "🇪🇸 Convert to Spanish",
+        key=f"{key_prefix}_prev_es",
+        on_click=_make_prev("es"),
+    )
+    c2.button(
+        "🇬🇧 Convert to English",
+        key=f"{key_prefix}_prev_en",
+        on_click=_make_prev("en"),
+    )
 
     tr_body = st.session_state.get(f"{key_prefix}_prev_body")
     if tr_body is not None:

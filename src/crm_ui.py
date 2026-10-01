@@ -139,32 +139,36 @@ def render_lead_crm_panel(
             st.warning("Write a note first.")
 
     # ---- One-off email ----
+    # Keys scoped by funnel + lead so List/Pipeline/Inbox / shipper/carrier/x never collide.
+    oo_kp = f"{funnel}_oneoff_{lid}"
+    oo_subj_key = f"{oo_kp}_subj"
+    oo_body_key = f"{oo_kp}_body"
+    oo_lang_key = f"{oo_kp}_lang"
     st.markdown("#### Send one-off email")
     live = bool(company.get("send_live_emails"))
     st.caption(
         f"Uses the same emailer as Pipeline · "
         f"{'🟢 LIVE' if live else '🟡 dry-run (safe)'} — independent of the 4-step sequence."
     )
-    e1, e2 = st.columns(2)
-    oo_subj = e1.text_input("Subject", key=f"{kp}_oo_subj")
-    oo_body = e2.text_area("Body", height=100, key=f"{kp}_oo_body")
+    oo_subj = st.text_input("Subject", key=oo_subj_key)
+    oo_body = st.text_area("Body", height=120, key=oo_body_key)
     from src.translate import render_email_lang_toolbar
 
     render_email_lang_toolbar(
-        key_prefix=f"{kp}_oo_lang",
+        key_prefix=oo_lang_key,
         company=company,
-        subject_key=f"{kp}_oo_subj",
-        body_key=f"{kp}_oo_body",
+        subject_key=oo_subj_key,
+        body_key=oo_body_key,
         show_to_spanish=True,
         show_to_english=True,
         side_by_side=True,
         subject_value=oo_subj,
         body_value=oo_body,
     )
-    # Re-read after possible translate rewrite into session_state
-    oo_subj = str(st.session_state.get(f"{kp}_oo_subj") or oo_subj or "")
-    oo_body = str(st.session_state.get(f"{kp}_oo_body") or oo_body or "")
-    if st.button("Send one-off", key=f"{kp}_oo_send"):
+    # Re-read after possible translate rewrite into session_state (on_click → next run)
+    oo_subj = str(st.session_state.get(oo_subj_key) or oo_subj or "")
+    oo_body = str(st.session_state.get(oo_body_key) or oo_body or "")
+    if st.button("Send one-off", key=f"{oo_kp}_send"):
         if not (lead.get("email") or "").strip():
             st.error("Lead has no email.")
         elif not oo_subj.strip() or not oo_body.strip():

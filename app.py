@@ -994,7 +994,11 @@ def _render_leads_hub(
     pipeline_fn,
     inbox_fn,
 ) -> None:
-    """Horizontal List | Pipeline | Inbox inside each funnel's Leads List page."""
+    """Horizontal List | Pipeline | Inbox inside each funnel's Leads List page.
+
+    Only one tab body is mounted per run (never List+Pipeline+Inbox together),
+    so CRM / translate widget keys cannot collide across hub tabs.
+    """
     state_key = _LEADS_TAB_KEYS[funnel]
     choice = st.session_state.get(state_key, "List")
     if choice not in _LEADS_TAB_OPTIONS:
@@ -1017,6 +1021,7 @@ def _render_leads_hub(
                 st.session_state[state_key] = label
                 st.rerun()
 
+    # Mount exactly one view — do not call the other two (hidden widgets still register keys).
     choice = st.session_state.get(state_key, "List")
     if choice == "Pipeline":
         pipeline_fn()
@@ -3494,7 +3499,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.30g · Notes close sticky")
+        st.caption("v2026.09.30h · Spanish convert fix")
 
         from src.notes_ui import render_sidebar_add_note_button
 
