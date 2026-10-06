@@ -97,14 +97,12 @@ def _placer_bridge_widgets() -> bool:
     )
 
 
-def _sync_placer_sliders(x: float, y_from_top: float) -> None:
-    """Keep pending coords + X/Y sliders aligned with overlay placement."""
+def _sync_pending_click(x: float, y_from_top: float) -> None:
+    """Store last preview click for caption only — never broadcasts onto fields."""
     px = float(max(0.0, min(0.95, x)))
     py = float(max(0.0, min(0.95, y_from_top)))
     st.session_state["esign_pending_x"] = px
     st.session_state["esign_pending_y"] = py
-    st.session_state["esign_x"] = int(round(px * 100))
-    st.session_state["esign_y"] = int(round(py * 100))
 
 
 def _field_rect_snapshot(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -259,7 +257,7 @@ def _consume_placer_action(*, page_index: int) -> None:
                         f[k] = prev[k]
 
     if "pending_xy" in effects:
-        _sync_placer_sliders(*effects["pending_xy"])
+        _sync_pending_click(*effects["pending_xy"])
     if effects.get("edit_field_id"):
         st.session_state["esign_edit_field_id"] = effects["edit_field_id"]
     deleted = effects.get("deleted_id")
@@ -888,7 +886,7 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         except Exception as exc:
             st.error(
                 f"Preview render failed ({exc}). "
-                "Use the Place field sliders on the right, or try another PDF."
+                "Try another PDF, or reload the page."
             )
             png, iw, ih = b"", 0, 0
         fields = list(st.session_state.get(_session_fields_key()) or [])
@@ -904,89 +902,30 @@ def _compose_tab(*, user: dict, company: dict) -> None:
             except Exception as exc:
                 st.error(
                     f"Interactive preview failed ({exc}). "
-                    "Showing static page image — use Place field sliders."
+                    "Showing static page image — reload to place fields."
                 )
                 st.image(png, use_container_width=True)
         else:
             st.warning(
-                "No page preview available. Place fields with the sliders on the right."
+                "No page preview available. Reload or try another PDF to place fields."
             )
 
     with right:
-        st.markdown("#### Place field")
-        pending_x = float(st.session_state.get("esign_pending_x") or 0.1)
-        pending_y = float(st.session_state.get("esign_pending_y") or 0.2)
-        st.caption(
-            f"Preview click position: **{pending_x:.0%}** from left, "
-            f"**{pending_y:.0%}** from top (page {page_idx + 1})"
-        )
-        ftype = st.radio(
-            "Field type",
-            ["text", "date", "sign"],
-            horizontal=True,
-            format_func=lambda t: {
-                "text": "Add text",
-                "date": "Add date",
-                "sign": "Add Sign",
-            }[t],
-            key="esign_ftype",
-        )
-        if pages <= 1:
-            page_i = st.number_input(
-                "Page (1-based)",
-                min_value=1,
-                max_value=max(1, pages),
-                value=1,
-                key="esign_page",
-            )
-            page_idx = int(page_i) - 1
-        label = st.text_input(
-            "Field label",
-            value={"text": "Text", "date": "Date", "sign": "Sign"}[ftype],
-            key="esign_label",
-            help="Use labels like company_name, contact_name, email, date for CRM auto-prefill.",
-        )
-        typewriter = ""
-        color = "#111827"
-        if ftype == "text":
-            typewriter = st.text_area(
-                "Typewriter text",
-                value="",
-                key="esign_typewriter",
-                height=68,
-                help="Optional typed content shown on the preview and prefilled in the PDF.",
-            )
-            color = st.color_picker(
-                "Text color",
-                value="#111827",
-                key="esign_text_color",
-            )
-        def_x = int(round(pending_x * 100))
-        def_y = int(round(pending_y * 100))
-        x = st.slider("X from left (%)", 0, 90, min(90, def_x), key="esign_x") / 100.0
-        y = st.slider("Y from top (%)", 0, 90, min(90, def_y), key="esign_y") / 100.0
-        w = st.slider("Width (%)", 5, 90, 28, key="esign_w") / 100.0
-        h = st.slider("Height (%)", 2, 20, 4, key="esign_h") / 100.0
-
-        if st.button("Place field", type="primary", use_container_width=True):
-            fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
-            fields.append(
-                esign.new_field(
-                    field_type=ftype,
-                    page=int(page_i) - 1,
-                    x=x,
-                    y_from_top=y,
-                    w=w,
-                    h=h,
-                    label=label,
-                    value=typewriter if ftype == "text" else "",
-                    color=color if ftype == "text" else "#111827",
-                )
-            )
-            st.session_state[_session_fields_key()] = fields
-            st.rerun()
-
         fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
+        pending_x = st.session_state.get("esign_pending_x")
+        pending_y = st.session_state.get("esign_pending_y")
+        st.markdown("#### Fields")
+        st.caption(
+            "Right-click the preview → **Add text / date / sign** at that spot. "
+            "Drag to move · corner to resize · **Edit** for typewriter/color. "
+            "Each field keeps its own page and coordinates."
+        )
+        if pending_x is not None and pending_y is not None:
+            st.caption(
+                f"Last click: **{float(pending_x):.0%}** left, "
+                f"**{float(pending_y):.0%}** top (page {page_idx + 1}) — "
+                "right-click there to add."
+            )
 
         edit_id = str(st.session_state.get("esign_edit_field_id") or "")
         edit_field = next((f for f in fields if f.get("id") == edit_id), None)
@@ -1001,6 +940,7 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                 "Label",
                 value=str(edit_field.get("label") or ""),
                 key=f"esign_edit_label_{edit_id}",
+                help="Use labels like company_name, contact_name, email, date for CRM auto-prefill.",
             )
             new_value = st.text_area(
                 "Typewriter text",
@@ -1037,7 +977,7 @@ def _compose_tab(*, user: dict, company: dict) -> None:
 
         st.markdown(f"#### Placed fields ({len(fields)})")
         if not fields:
-            st.caption("No fields yet.")
+            st.caption("No fields yet — right-click the preview to add.")
         else:
             for idx, f in enumerate(fields):
                 c1, c2, c3 = st.columns([3.2, 1, 1])

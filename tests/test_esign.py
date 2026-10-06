@@ -163,8 +163,11 @@ def test_consume_placer_update_writes_y_from_top():
         updated = ss["esign_compose_fields"][0]
         assert abs(float(updated["y_from_top"]) - 0.65) < 1e-6
         assert abs(float(updated["x"]) - 0.12) < 1e-6
-        assert int(ss["esign_y"]) == 65
+        # Pending click caption only — must NOT write widget slider keys
         assert abs(float(ss["esign_pending_y"]) - 0.65) < 1e-6
+        assert abs(float(ss["esign_pending_x"]) - 0.12) < 1e-6
+        assert "esign_x" not in ss
+        assert "esign_y" not in ss
         assert reruns, "expected st.rerun after update"
     finally:
         st.session_state = original_ss  # type: ignore[misc]
@@ -189,6 +192,91 @@ def test_placer_js_commits_drag_without_dom_rebuild():
     assert 'action: "add"' in src
     assert "Edit text" in src
     assert "__ltEsignPlacerGen" in src
+
+
+def test_six_distinct_fields_survive_sequential_adds():
+    """
+    Collapse regression (v2026.10.06h): 6 fields at distinct page/x/y via the
+    same apply_placer_message add path used after removing Place-field sliders
+    must keep unique geometry after every subsequent add.
+    """
+    from src import esign_ui
+
+    # p1 y=0.15,0.35,0.55,0.75 and p2 y=0.25,0.60 — all distinct
+    planned = [
+        (0, 0.12, 0.15),
+        (0, 0.12, 0.35),
+        (0, 0.12, 0.55),
+        (0, 0.12, 0.75),
+        (1, 0.18, 0.25),
+        (1, 0.18, 0.60),
+    ]
+    fields: list = []
+    snapshots: list = []
+    for i, (page, x, y) in enumerate(planned):
+        before = esign_ui._field_rect_snapshot(fields)
+        fields, effects = esign_ui.apply_placer_message(
+            fields,
+            {
+                "action": "add",
+                "type": "text" if i % 2 == 0 else "sign",
+                "page": page,
+                "x": x,
+                "y_from_top": y,
+                "w": 0.28,
+                "h": 0.04,
+                "label": f"F{i}",
+            },
+            page_index=page,
+        )
+        assert len(fields) == i + 1
+        assert effects.get("pending_xy") == (x, y)
+        # Prior fields unchanged
+        after_prior = esign_ui._field_rect_snapshot(fields)[:i]
+        assert after_prior == before
+        snapshots.append(esign_ui._field_rect_snapshot(fields))
+
+    final = esign_ui._field_rect_snapshot(fields)
+    assert len(final) == 6
+    coords = [(r["page"], r["x"], r["y_from_top"]) for r in final]
+    assert len(set(coords)) == 6, f"coords collapsed: {coords}"
+    for r, (page, x, y) in zip(final, planned):
+        assert int(r["page"]) == page
+        assert abs(float(r["x"]) - x) < 1e-9
+        assert abs(float(r["y_from_top"]) - y) < 1e-9
+    # First snapshot of field 0 must match final field 0 (never rewritten)
+    assert snapshots[0][0] == final[0]
+    assert snapshots[3][:4] == final[:4]
+
+    # No field stuck at the old Place-field slider default 0.10/0.20 unless planned
+    for r in final:
+        if abs(r["x"] - 0.10) < 1e-9 and abs(r["y_from_top"] - 0.20) < 1e-9:
+            raise AssertionError(f"unexpected 10/20 default collapse: {r}")
+
+
+def test_no_slider_place_field_path_in_compose_ui():
+    """v2026.10.06h: Place field / esign_x|y|w|h sliders must be gone entirely."""
+    import inspect
+
+    from src import esign_ui
+
+    compose = inspect.getsource(esign_ui._compose_tab)
+    assert "Place field" not in compose
+    assert 'key="esign_x"' not in compose
+    assert 'key="esign_y"' not in compose
+    assert 'key="esign_w"' not in compose
+    assert 'key="esign_h"' not in compose
+    assert "st.slider" not in compose
+    # Sync helper must not write slider widget keys
+    sync = inspect.getsource(esign_ui._sync_pending_click)
+    assert 'esign_x' not in sync
+    assert 'esign_y' not in sync
+    assert "esign_pending_x" in sync
+    # No leftover alias that still broadcasts slider keys
+    src = inspect.getsource(esign_ui)
+    assert "_sync_placer_sliders" not in src
+    assert 'st.session_state["esign_x"]' not in src
+    assert 'st.session_state["esign_y"]' not in src
 
 
 def test_apply_placer_add_preserves_existing_rects():
