@@ -97,6 +97,16 @@ def _placer_bridge_widgets() -> bool:
     )
 
 
+def _sync_placer_sliders(x: float, y_from_top: float) -> None:
+    """Keep pending coords + X/Y sliders aligned with overlay placement."""
+    px = float(max(0.0, min(0.95, x)))
+    py = float(max(0.0, min(0.95, y_from_top)))
+    st.session_state["esign_pending_x"] = px
+    st.session_state["esign_pending_y"] = py
+    st.session_state["esign_x"] = int(round(px * 100))
+    st.session_state["esign_y"] = int(round(py * 100))
+
+
 def _consume_placer_action(*, page_index: int) -> None:
     raw = str(st.session_state.get("esign_placer_payload") or "").strip()
     if not raw:
@@ -125,6 +135,10 @@ def _consume_placer_action(*, page_index: int) -> None:
                 label=str(msg.get("label") or ""),
             )
         )
+        _sync_placer_sliders(
+            float(msg.get("x") or 0.1),
+            float(msg.get("y_from_top") or 0.15),
+        )
     elif action == "update":
         fid = str(msg.get("id") or "")
         for f in fields:
@@ -137,6 +151,12 @@ def _consume_placer_action(*, page_index: int) -> None:
                     f["w"] = float(msg["w"])
                 if "h" in msg:
                     f["h"] = float(msg["h"])
+                # Drag/resize must refresh sliders so Download uses same coords
+                # the blue overlay shows (not stale Place-field defaults).
+                _sync_placer_sliders(
+                    float(f.get("x") or 0.1),
+                    float(f.get("y_from_top") or 0.15),
+                )
                 break
     elif action == "delete":
         fid = str(msg.get("id") or "")
@@ -144,10 +164,7 @@ def _consume_placer_action(*, page_index: int) -> None:
     elif action == "click":
         px = float(msg.get("x") or 0.1)
         py = float(msg.get("y_from_top") or 0.15)
-        st.session_state["esign_pending_x"] = px
-        st.session_state["esign_pending_y"] = py
-        st.session_state["esign_x"] = int(round(px * 100))
-        st.session_state["esign_y"] = int(round(py * 100))
+        _sync_placer_sliders(px, py)
         st.session_state["esign_placer_payload"] = ""
         st.rerun()
 
@@ -174,7 +191,7 @@ def _render_field_placer(
 
     html = f"""
 <div id="lt-esign-root" style="font-family:system-ui,sans-serif;max-width:100%;">
-  <div id="lt-esign-stage" style="position:relative;width:100%;user-select:none;">
+  <div id="lt-esign-stage" style="position:relative;width:100%;user-select:none;touch-action:none;">
     <img id="lt-esign-img" src="data:image/png;base64,{b64}"
          style="width:100%;height:auto;display:block;border:1px solid #cbd5e1;border-radius:8px;" />
     <div id="lt-esign-overlay" style="position:absolute;left:0;top:0;width:100%;height:100%;"></div>
@@ -199,6 +216,8 @@ def _render_field_placer(
   const img = document.getElementById("lt-esign-img");
   let pending = null;
   let drag = null;
+  let suppressClick = false;
+  let pushTimer = null;
 
   function parentDoc() {{
     try {{ return window.parent.document; }} catch (e) {{ return document; }}
@@ -209,7 +228,8 @@ def _render_field_placer(
     const doc = parentDoc();
     const areas = Array.from(doc.querySelectorAll("textarea"));
     const ta = areas.find(function (t) {{
-      const lab = (t.getAttribute("aria-label") || "") + (t.id || "");
+      const lab = (t.getAttribute("aria-label") || "") + (t.id || "") +
+        (t.getAttribute("data-testid") || "");
       return lab.indexOf("lt_esign_placer_payload") >= 0 || lab.indexOf("esign_placer") >= 0;
     }}) || areas[areas.length - 1];
     if (!ta) return;
@@ -217,20 +237,36 @@ def _render_field_placer(
       const tracker = ta._valueTracker;
       if (tracker) tracker.setValue("");
     }} catch (e) {{}}
-    const desc = Object.getOwnPropertyDescriptor(
-      window.parent.HTMLTextAreaElement.prototype, "value"
-    );
+    let desc = null;
+    try {{
+      desc = Object.getOwnPropertyDescriptor(
+        window.parent.HTMLTextAreaElement.prototype, "value"
+      );
+    }} catch (e) {{}}
     if (desc && desc.set) desc.set.call(ta, payload); else ta.value = payload;
     ta.dispatchEvent(new Event("input", {{ bubbles: true }}));
+    ta.dispatchEvent(new Event("change", {{ bubbles: true }}));
     const buttons = Array.from(doc.querySelectorAll("button"));
     const btn = buttons.find(function (b) {{
-      return (b.innerText || "").trim() === "lt_esign_placer_apply";
+      return (b.innerText || b.textContent || "").trim() === "lt_esign_placer_apply";
     }});
-    if (btn) setTimeout(function () {{ btn.click(); }}, 50);
+    if (btn) {{
+      if (pushTimer) clearTimeout(pushTimer);
+      pushTimer = setTimeout(function () {{ btn.click(); }}, 40);
+    }}
+  }}
+
+  function syncOverlayToImage() {{
+    if (!img.clientWidth || !img.clientHeight) return;
+    overlay.style.left = img.offsetLeft + "px";
+    overlay.style.top = img.offsetTop + "px";
+    overlay.style.width = img.clientWidth + "px";
+    overlay.style.height = img.clientHeight + "px";
   }}
 
   function fracFromEvent(ev) {{
     const r = overlay.getBoundingClientRect();
+    if (!r.width || !r.height) return {{ x: 0.1, y_from_top: 0.15 }};
     const x = Math.max(0, Math.min(0.95, (ev.clientX - r.left) / r.width));
     const y = Math.max(0, Math.min(0.95, (ev.clientY - r.top) / r.height));
     return {{ x: x, y_from_top: y }};
@@ -242,7 +278,85 @@ def _render_field_placer(
     return "#2563eb";
   }}
 
+  function applyBoxStyle(box, f) {{
+    box.style.left = (f.x * 100) + "%";
+    box.style.top = (f.y_from_top * 100) + "%";
+    box.style.width = (f.w * 100) + "%";
+    box.style.height = (f.h * 100) + "%";
+  }}
+
+  function commitDrag() {{
+    if (!drag) return;
+    const f = fields.find(function (x) {{ return x.id === drag.id; }});
+    const moved = drag.moved;
+    drag = null;
+    if (!f || !moved) return;
+    suppressClick = true;
+    setTimeout(function () {{ suppressClick = false; }}, 120);
+    pushAction({{
+      action: "update",
+      id: f.id,
+      x: f.x,
+      y_from_top: f.y_from_top,
+      w: f.w,
+      h: f.h
+    }});
+  }}
+
+  function onDragMove(ev) {{
+    if (!drag) return;
+    const r = overlay.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const dx = (ev.clientX - drag.sx) / r.width;
+    const dy = (ev.clientY - drag.sy) / r.height;
+    if (Math.abs(dx) > 0.002 || Math.abs(dy) > 0.002) drag.moved = true;
+    const f = fields.find(function (x) {{ return x.id === drag.id; }});
+    if (!f) return;
+    if (drag.mode === "move") {{
+      f.x = Math.max(0, Math.min(0.95, drag.ox + dx));
+      f.y_from_top = Math.max(0, Math.min(0.95, drag.oy + dy));
+    }} else {{
+      f.w = Math.max(0.05, Math.min(0.9, drag.ow + dx));
+      f.h = Math.max(0.02, Math.min(0.2, drag.oh + dy));
+    }}
+    // In-place style update — do NOT rebuild DOM mid-drag (loses pointer capture
+    // and can drop mouseup before coords are written to session_state).
+    const box = overlay.querySelector('.lt-esign-field[data-id="' + f.id + '"]');
+    if (box) applyBoxStyle(box, f);
+  }}
+
+  function bindGlobal(type, fn) {{
+    document.addEventListener(type, fn, true);
+    window.addEventListener(type, fn, true);
+    try {{
+      window.parent.document.addEventListener(type, fn, true);
+      window.parent.addEventListener(type, fn, true);
+    }} catch (e) {{}}
+  }}
+
+  bindGlobal("pointermove", onDragMove);
+  bindGlobal("pointerup", commitDrag);
+  bindGlobal("pointercancel", commitDrag);
+  // Fallback for environments without PointerEvent
+  bindGlobal("mousemove", onDragMove);
+  bindGlobal("mouseup", commitDrag);
+
+  function startDrag(ev, f, mode) {{
+    ev.preventDefault();
+    ev.stopPropagation();
+    drag = {{
+      id: f.id, mode: mode, sx: ev.clientX, sy: ev.clientY,
+      ox: f.x, oy: f.y_from_top, ow: f.w, oh: f.h, moved: false
+    }};
+    try {{
+      if (ev.currentTarget && ev.pointerId != null) {{
+        ev.currentTarget.setPointerCapture(ev.pointerId);
+      }}
+    }} catch (e) {{}}
+  }}
+
   function renderFields() {{
+    syncOverlayToImage();
     overlay.innerHTML = "";
     fields.forEach(function (f) {{
       const box = document.createElement("div");
@@ -251,9 +365,8 @@ def _render_field_placer(
       const col = typeColor(f.type);
       box.style.cssText =
         "position:absolute;box-sizing:border-box;border:2px solid " + col + ";" +
-        "background:rgba(37,99,235,0.08);border-radius:4px;cursor:move;" +
-        "left:" + (f.x * 100) + "%;top:" + (f.y_from_top * 100) + "%;" +
-        "width:" + (f.w * 100) + "%;height:" + (f.h * 100) + "%;";
+        "background:rgba(37,99,235,0.08);border-radius:4px;cursor:move;touch-action:none;";
+      applyBoxStyle(box, f);
       const lbl = document.createElement("span");
       lbl.textContent = f.label || f.type || "Field";
       lbl.style.cssText =
@@ -264,18 +377,14 @@ def _render_field_placer(
       handle.className = "lt-esign-resize";
       handle.style.cssText =
         "position:absolute;right:-4px;bottom:-4px;width:10px;height:10px;" +
-        "background:" + col + ";border-radius:2px;cursor:nwse-resize;";
+        "background:" + col + ";border-radius:2px;cursor:nwse-resize;touch-action:none;";
       box.appendChild(handle);
-      box.addEventListener("mousedown", function (ev) {{
+      box.addEventListener("pointerdown", function (ev) {{
         if (ev.target === handle) return;
-        ev.stopPropagation();
-        drag = {{ id: f.id, mode: "move", sx: ev.clientX, sy: ev.clientY,
-          ox: f.x, oy: f.y_from_top, ow: f.w, oh: f.h }};
+        startDrag(ev, f, "move");
       }});
-      handle.addEventListener("mousedown", function (ev) {{
-        ev.stopPropagation();
-        drag = {{ id: f.id, mode: "resize", sx: ev.clientX, sy: ev.clientY,
-          ox: f.x, oy: f.y_from_top, ow: f.w, oh: f.h }};
+      handle.addEventListener("pointerdown", function (ev) {{
+        startDrag(ev, f, "resize");
       }});
       box.addEventListener("contextmenu", function (ev) {{
         ev.preventDefault();
@@ -286,10 +395,11 @@ def _render_field_placer(
     }});
     if (pending) {{
       const dot = document.createElement("div");
+      const py = pending.y_from_top != null ? pending.y_from_top : pending.y;
       dot.style.cssText =
         "position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;" +
         "background:#dc2626;border-radius:50%;border:2px solid #fff;" +
-        "left:" + (pending.x * 100) + "%;top:" + (pending.y * 100) + "%;";
+        "left:" + (pending.x * 100) + "%;top:" + (py * 100) + "%;";
       overlay.appendChild(dot);
     }}
   }}
@@ -331,7 +441,7 @@ def _render_field_placer(
   }}
 
   overlay.addEventListener("click", function (ev) {{
-    if (drag) return;
+    if (drag || suppressClick) return;
     const pos = fracFromEvent(ev);
     pending = pos;
     renderFields();
@@ -346,40 +456,8 @@ def _render_field_placer(
     showMenu(ev, pos);
   }});
 
-  document.addEventListener("mousemove", function (ev) {{
-    if (!drag) return;
-    const r = overlay.getBoundingClientRect();
-    const dx = (ev.clientX - drag.sx) / r.width;
-    const dy = (ev.clientY - drag.sy) / r.height;
-    const f = fields.find(function (x) {{ return x.id === drag.id; }});
-    if (!f) return;
-    if (drag.mode === "move") {{
-      f.x = Math.max(0, Math.min(0.95, drag.ox + dx));
-      f.y_from_top = Math.max(0, Math.min(0.95, drag.oy + dy));
-    }} else {{
-      f.w = Math.max(0.05, Math.min(0.9, drag.ow + dx));
-      f.h = Math.max(0.02, Math.min(0.2, drag.oh + dy));
-    }}
-    renderFields();
-  }});
-
-  document.addEventListener("mouseup", function () {{
-    if (!drag) return;
-    const f = fields.find(function (x) {{ return x.id === drag.id; }});
-    drag = null;
-    if (f) {{
-      pushAction({{
-        action: "update",
-        id: f.id,
-        x: f.x,
-        y_from_top: f.y_from_top,
-        w: f.w,
-        h: f.h
-      }});
-    }}
-  }});
-
   img.onload = function () {{ renderFields(); }};
+  window.addEventListener("resize", function () {{ syncOverlayToImage(); }});
   if (img.complete) renderFields();
 }})();
 </script>

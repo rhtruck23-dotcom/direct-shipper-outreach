@@ -260,6 +260,30 @@ def _rect_from_norm(
     return llx, lly, urx, ury
 
 
+def acroform_field_rects(pdf_bytes: bytes) -> dict[str, tuple[float, float, float, float]]:
+    """
+    Read AcroForm widget /Rect values as (llx, lly, urx, ury) keyed by field name.
+    Used by tests to assert placement survives build/download.
+    """
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    out: dict[str, tuple[float, float, float, float]] = {}
+    for page in reader.pages:
+        annots = page.get("/Annots")
+        if not annots:
+            continue
+        for ref in annots:
+            annot = ref.get_object()
+            name = annot.get("/T")
+            rect = annot.get("/Rect")
+            if name is None or rect is None:
+                continue
+            vals = [float(rect[i]) for i in range(4)]
+            out[str(name)] = (vals[0], vals[1], vals[2], vals[3])
+    return out
+
+
 def build_fillable_pdf(original_pdf: bytes, fields: list[dict[str, Any]]) -> bytes:
     """
     Clone original PDF and overlay AcroForm text widgets only.

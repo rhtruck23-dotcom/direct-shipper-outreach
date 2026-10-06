@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 
 from pypdf import PageObject, PdfReader, PdfWriter
 
@@ -60,6 +61,129 @@ def test_rect_from_norm_bottom_left():
     assert abs(urx - 30) < 0.01
     assert abs(ury - 200) < 0.01
     assert abs(lly - 180) < 0.01
+
+
+def test_mid_page_field_rect_survives_download():
+    """
+    Regression (v2026.10.06f): field at y_from_top≈0.6 must land mid-page in
+    the downloaded AcroForm PDF — not near the top (stale y≈0.2 bug).
+    """
+    page_w, page_h = 612.0, 792.0
+    pdf = _blank_pdf(pages=3, width=page_w, height=page_h)
+    y_mid = 0.60
+    field = esign.new_field(
+        field_type="text",
+        label="Applicant",
+        page=2,
+        x=0.10,
+        y_from_top=y_mid,
+        w=0.28,
+        h=0.04,
+    )
+    out = esign.build_fillable_pdf(pdf, [field])
+    rects = esign.acroform_field_rects(out)
+    assert field["name"] in rects
+    llx, lly, urx, ury = rects[field["name"]]
+
+    expected = esign._rect_from_norm(
+        page_w=page_w,
+        page_h=page_h,
+        x=0.10,
+        y_from_top=y_mid,
+        w=0.28,
+        h=0.04,
+    )
+    for a, b in zip((llx, lly, urx, ury), expected):
+        assert abs(a - b) < 1.0
+
+    # Mid-page from top → PDF ury well below page top (not the y=0.2 "top jump")
+    topish_ury = page_h - (0.20 * page_h)  # ~633.6 if bug used y=0.2
+    assert ury < page_h * 0.55, f"field too near page top: ury={ury}"
+    assert abs(ury - topish_ury) > 50, "rect looks like stale y=0.20 placement"
+    # From-top fraction recovered from PDF coords
+    y_recovered = (page_h - ury) / page_h
+    assert abs(y_recovered - y_mid) < 0.02
+
+    # Also verify via PyMuPDF when available
+    try:
+        import fitz
+    except ImportError:
+        return
+    doc = fitz.open(stream=out, filetype="pdf")
+    try:
+        page = doc.load_page(2)
+        widgets = list(page.widgets() or [])
+        assert widgets, "PyMuPDF found no widgets on page 3"
+        w = next(x for x in widgets if x.field_name == field["name"])
+        # MuPDF rect: y0 top-ish depending on version — use y1 (bottom) vs mediabox
+        r = w.rect
+        # Distance from page top to widget top should be ~0.6 * page_h
+        from_top = r.y0  # PyMuPDF uses top-left origin
+        assert abs(from_top / page_h - y_mid) < 0.05, (
+            f"PyMuPDF widget from_top={from_top / page_h:.3f}, expected ~{y_mid}"
+        )
+    finally:
+        doc.close()
+
+
+def test_consume_placer_update_writes_y_from_top():
+    """Bridge update action must mutate session field coords (drag persist)."""
+    from src import esign_ui
+    import streamlit as st
+
+    class _SS(dict):
+        pass
+
+    ss = _SS()
+    field = esign.new_field(
+        field_type="text", label="Text", page=0, x=0.1, y_from_top=0.20
+    )
+    ss["esign_compose_fields"] = [field]
+    ss["esign_placer_payload"] = json.dumps(
+        {
+            "action": "update",
+            "id": field["id"],
+            "x": 0.12,
+            "y_from_top": 0.65,
+            "w": 0.28,
+            "h": 0.04,
+        }
+    )
+    original_ss = st.session_state
+    original_rerun = st.rerun
+    reruns = []
+
+    def _fake_rerun():
+        reruns.append(1)
+
+    try:
+        st.session_state = ss  # type: ignore[misc]
+        st.rerun = _fake_rerun  # type: ignore[method-assign]
+        esign_ui._consume_placer_action(page_index=0)
+        updated = ss["esign_compose_fields"][0]
+        assert abs(float(updated["y_from_top"]) - 0.65) < 1e-6
+        assert abs(float(updated["x"]) - 0.12) < 1e-6
+        assert int(ss["esign_y"]) == 65
+        assert abs(float(ss["esign_pending_y"]) - 0.65) < 1e-6
+        assert reruns, "expected st.rerun after update"
+    finally:
+        st.session_state = original_ss  # type: ignore[misc]
+        st.rerun = original_rerun  # type: ignore[method-assign]
+
+
+def test_placer_js_commits_drag_without_dom_rebuild():
+    """Overlay JS must push update on pointerup and avoid mid-drag innerHTML wipe."""
+    import inspect
+
+    from src import esign_ui
+
+    src = inspect.getsource(esign_ui._render_field_placer)
+    assert 'action: "update"' in src
+    assert "commitDrag" in src
+    assert "setPointerCapture" in src
+    assert "suppressClick" in src
+    # Regression: rebuilding overlay.innerHTML on every mousemove dropped mouseup
+    assert "In-place style update" in src
 
 
 def test_create_complete_signing_roundtrip(tmp_path, monkeypatch):
