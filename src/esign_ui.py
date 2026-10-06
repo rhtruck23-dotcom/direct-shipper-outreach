@@ -55,24 +55,33 @@ def _pdf_preview_pages(
     st.image(png, use_container_width=True)
 
 
+# CSS must target stElementContainer only — never bare
+# `stVerticalBlock > div:has(#marker)`, which also matches stTabs and
+# blanks the whole Compose UI (left:-8000px on the tabs root).
+_ESIGN_BRIDGE_HIDE_CSS = """
+<style>
+  div[data-testid="stElementContainer"]:has(#lt-esign-bridge-marker),
+  div[data-testid="stElementContainer"]:has(#lt-esign-bridge-marker)
+    + div[data-testid="stElementContainer"],
+  div[data-testid="stElementContainer"]:has(#lt-esign-bridge-marker)
+    + div[data-testid="stElementContainer"]
+    + div[data-testid="stElementContainer"] {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    opacity: 0 !important;
+    left: -10000px !important;
+    pointer-events: none !important;
+  }
+</style>
+"""
+
+
 def _placer_bridge_widgets() -> bool:
     """Hidden bridge: JS writes JSON actions → Apply button triggers Python."""
     st.markdown(
-        """
-<style>
-  div[data-testid="stVerticalBlock"] > div:has(#lt-esign-bridge-marker),
-  div[data-testid="stVerticalBlock"] > div:has(#lt-esign-bridge-marker) + div,
-  div[data-testid="stVerticalBlock"] > div:has(#lt-esign-bridge-marker) + div + div {
-    position: absolute !important;
-    width: 2px !important;
-    height: 2px !important;
-    overflow: hidden !important;
-    opacity: 0.02 !important;
-    left: -8000px !important;
-  }
-</style>
-<div id="lt-esign-bridge-marker"></div>
-""",
+        _ESIGN_BRIDGE_HIDE_CSS + '<div id="lt-esign-bridge-marker"></div>',
         unsafe_allow_html=True,
     )
     st.text_area(
@@ -607,16 +616,30 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         try:
             png, iw, ih = _pdf_page_image(pdf_bytes, page_idx)
         except Exception as exc:
-            st.error(f"Preview render failed: {exc}")
+            st.error(
+                f"Preview render failed ({exc}). "
+                "Use the Place field sliders on the right, or try another PDF."
+            )
             png, iw, ih = b"", 0, 0
         fields = list(st.session_state.get(_session_fields_key()) or [])
         if png:
-            _render_field_placer(
-                png_bytes=png,
-                img_w=iw,
-                img_h=ih,
-                page_index=page_idx,
-                fields=fields,
+            try:
+                _render_field_placer(
+                    png_bytes=png,
+                    img_w=iw,
+                    img_h=ih,
+                    page_index=page_idx,
+                    fields=fields,
+                )
+            except Exception as exc:
+                st.error(
+                    f"Interactive preview failed ({exc}). "
+                    "Showing static page image — use Place field sliders."
+                )
+                st.image(png, use_container_width=True)
+        else:
+            st.warning(
+                "No page preview available. Place fields with the sliders on the right."
             )
 
     with right:

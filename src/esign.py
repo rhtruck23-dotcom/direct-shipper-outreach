@@ -172,8 +172,16 @@ def render_pdf_page_png(
     """
     Rasterize one PDF page to PNG (for Streamlit preview — avoids iframe PDF embed).
     Returns (png_bytes, pixel_width, pixel_height).
+    Raises ImportError if pymupdf is missing; other render failures propagate.
     """
-    import fitz
+    if not pdf_bytes:
+        raise ValueError("empty PDF bytes")
+    try:
+        import fitz  # PyMuPDF
+    except ImportError as exc:  # pragma: no cover - env-dependent
+        raise ImportError(
+            "pymupdf is required for PDF page preview (pip install pymupdf)"
+        ) from exc
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
@@ -182,7 +190,10 @@ def render_pdf_page_png(
         page = doc.load_page(page_index)
         mat = fitz.Matrix(float(zoom), float(zoom))
         pix = page.get_pixmap(matrix=mat, alpha=False)
-        return pix.tobytes("png"), int(pix.width), int(pix.height)
+        png = pix.tobytes("png")
+        if not png:
+            raise RuntimeError("PyMuPDF returned empty PNG")
+        return png, int(pix.width), int(pix.height)
     finally:
         doc.close()
 

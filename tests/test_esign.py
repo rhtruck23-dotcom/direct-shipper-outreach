@@ -104,6 +104,37 @@ def test_render_pdf_page_png():
     assert iw > 0 and ih > 0
 
 
+def test_render_pdf_page_png_rejects_empty_and_bad_page():
+    import pytest
+
+    with pytest.raises(ValueError, match="empty"):
+        esign.render_pdf_page_png(b"", 0)
+    pdf = _blank_pdf(pages=1)
+    with pytest.raises(IndexError):
+        esign.render_pdf_page_png(pdf, 5)
+
+
+def test_render_pdf_page_png_multipage_fixture():
+    """Real multi-page PDF bytes → each page yields a non-empty PNG."""
+    pdf = _blank_pdf(pages=3, width=612, height=792)
+    assert esign.pdf_page_count(pdf) == 3
+    for i in range(3):
+        png, iw, ih = esign.render_pdf_page_png(pdf, i, zoom=1.0)
+        assert png[:8] == b"\x89PNG\r\n\x1a\n"
+        assert len(png) > 100
+        assert iw >= 600 and ih >= 700
+
+
+def test_bridge_hide_css_targets_element_container_not_tabs():
+    """Regression: bare stVerticalBlock>:has(marker) blanked stTabs (v2026.10.06c)."""
+    from src import esign_ui
+
+    css = esign_ui._ESIGN_BRIDGE_HIDE_CSS
+    assert "stElementContainer" in css
+    assert "stVerticalBlock" not in css
+    assert "#lt-esign-bridge-marker" in css
+
+
 def test_pixel_norm_roundtrip():
     pdf = _blank_pdf(width=612, height=792)
     _, iw, ih = esign.render_pdf_page_png(pdf, 0, zoom=1.0)
