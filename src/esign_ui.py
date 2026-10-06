@@ -58,6 +58,8 @@ def _pdf_preview_pages(
 # CSS must target stElementContainer only — never bare
 # `stVerticalBlock > div:has(#marker)`, which also matches stTabs and
 # blanks the whole Compose UI (left:-8000px on the tabs root).
+# CRITICAL: do NOT set pointer-events:none — iframe JS must programmatically
+# click lt_esign_placer_apply (same pattern as OneNote floating bridge).
 _ESIGN_BRIDGE_HIDE_CSS = """
 <style>
   div[data-testid="stElementContainer"]:has(#lt-esign-bridge-marker),
@@ -67,12 +69,13 @@ _ESIGN_BRIDGE_HIDE_CSS = """
     + div[data-testid="stElementContainer"]
     + div[data-testid="stElementContainer"] {
     position: absolute !important;
-    width: 1px !important;
-    height: 1px !important;
+    width: 2px !important;
+    height: 2px !important;
     overflow: hidden !important;
-    opacity: 0 !important;
-    left: -10000px !important;
-    pointer-events: none !important;
+    opacity: 0.02 !important;
+    left: -8000px !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
 </style>
 """
@@ -98,11 +101,50 @@ def _placer_bridge_widgets() -> bool:
 
 
 def _sync_pending_click(x: float, y_from_top: float) -> None:
-    """Store last preview click for caption only — never broadcasts onto fields."""
+    """Store last preview click — used by fallback Add buttons, never sliders."""
     px = float(max(0.0, min(0.95, x)))
     py = float(max(0.0, min(0.95, y_from_top)))
     st.session_state["esign_pending_x"] = px
     st.session_state["esign_pending_y"] = py
+
+
+def _pending_place_xy() -> tuple[float, float]:
+    """Last overlay click, or page center when the user has not clicked yet."""
+    if "esign_pending_x" in st.session_state and "esign_pending_y" in st.session_state:
+        return (
+            float(st.session_state["esign_pending_x"]),
+            float(st.session_state["esign_pending_y"]),
+        )
+    return 0.5, 0.5
+
+
+def _add_field_at_pending(ftype: str, *, page_index: int) -> None:
+    """
+    Fallback Add path: place at last preview-click coords (or page center).
+    Uses esign_pending_* only — never widget slider keys.
+    """
+    x, y = _pending_place_xy()
+    labels = {"text": "Text", "date": "Date", "sign": "Sign"}
+    fields = list(st.session_state.get(_session_fields_key()) or [])
+    fields, effects = apply_placer_message(
+        fields,
+        {
+            "action": "add",
+            "type": str(ftype or "text").lower(),
+            "page": int(page_index),
+            "x": x,
+            "y_from_top": y,
+            "w": 0.28,
+            "h": 0.04,
+            "label": labels.get(str(ftype or "text").lower(), "Text"),
+            "value": "",
+            "color": "#111827",
+        },
+        page_index=page_index,
+    )
+    if "pending_xy" in effects:
+        _sync_pending_click(*effects["pending_xy"])
+    st.session_state[_session_fields_key()] = fields
 
 
 def _field_rect_snapshot(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -269,6 +311,49 @@ def _consume_placer_action(*, page_index: int) -> None:
     st.rerun()
 
 
+def _resync_placer_from_session_storage() -> None:
+    """One-shot: pull payload from parent sessionStorage into the bridge textarea."""
+    components.html(
+        """
+<script>
+(function () {
+  const doc = window.parent.document;
+  const win = window.parent;
+  let payload = "";
+  try { payload = win.sessionStorage.getItem("lt_esign_placer_payload") || ""; } catch (e) {}
+  if (!payload || payload.indexOf('"action"') < 0) return;
+  const areas = Array.from(doc.querySelectorAll("textarea"));
+  const ta = areas.find(function (t) {
+    const lab = (t.getAttribute("aria-label") || "") + (t.id || "");
+    return lab.indexOf("lt_esign_placer_payload") >= 0 ||
+      lab.indexOf("esign_placer_payload") >= 0;
+  });
+  if (!ta) return;
+  try {
+    const tracker = ta._valueTracker;
+    if (tracker) tracker.setValue("");
+  } catch (e) {}
+  const desc = Object.getOwnPropertyDescriptor(
+    window.parent.HTMLTextAreaElement.prototype, "value"
+  );
+  if (desc && desc.set) desc.set.call(ta, payload); else ta.value = payload;
+  ta.dispatchEvent(new Event("input", { bubbles: true }));
+  ta.dispatchEvent(new Event("change", { bubbles: true }));
+  const btn = Array.from(doc.querySelectorAll("button")).find(function (b) {
+    return (b.innerText || "").trim() === "lt_esign_placer_apply";
+  });
+  if (btn) {
+    try { btn.style.pointerEvents = "auto"; } catch (e) {}
+    setTimeout(function () { try { btn.click(); } catch (e) {} }, 80);
+  }
+})();
+</script>
+""",
+        height=1,
+        width=1,
+    )
+
+
 def _render_field_placer(
     *,
     png_bytes: bytes,
@@ -324,39 +409,83 @@ def _render_field_placer(
     try {{ return window.parent.document; }} catch (e) {{ return document; }}
   }}
 
-  function pushAction(obj) {{
-    const payload = JSON.stringify(obj);
-    const doc = parentDoc();
+  function findPayloadTextarea(doc) {{
     const areas = Array.from(doc.querySelectorAll("textarea"));
-    const ta = areas.find(function (t) {{
+    const byLabel = areas.find(function (t) {{
       const lab = (t.getAttribute("aria-label") || "") + (t.id || "") +
         (t.getAttribute("data-testid") || "");
-      return lab.indexOf("lt_esign_placer_payload") >= 0 || lab.indexOf("esign_placer") >= 0;
+      return lab.indexOf("lt_esign_placer_payload") >= 0 ||
+        lab.indexOf("esign_placer_payload") >= 0;
     }});
-    if (!ta) return;
+    if (byLabel) return byLabel;
+    const marker = doc.getElementById("lt-esign-bridge-marker");
+    if (marker) {{
+      let root = marker.parentElement;
+      for (let i = 0; i < 8 && root; i++) {{
+        const near = root.querySelectorAll("textarea");
+        if (near.length) return near[0];
+        root = root.parentElement;
+      }}
+    }}
+    return areas.find(function (t) {{
+      const p = t.closest('[data-testid="stTextArea"]');
+      if (!p) return false;
+      return (p.innerText || "").indexOf("lt_esign_placer") >= 0;
+    }}) || null;
+  }}
+
+  function findApplyButton(doc) {{
+    const buttons = Array.from(doc.querySelectorAll("button"));
+    return (
+      buttons.find(function (b) {{
+        return (b.innerText || "").trim() === "lt_esign_placer_apply";
+      }}) ||
+      buttons.find(function (b) {{
+        return (b.textContent || "").indexOf("lt_esign_placer_apply") >= 0;
+      }}) ||
+      null
+    );
+  }}
+
+  function setNativeValue(ta, payload) {{
     try {{
       const tracker = ta._valueTracker;
       if (tracker) tracker.setValue("");
     }} catch (e) {{}}
     let desc = null;
     try {{
-      desc = Object.getOwnPropertyDescriptor(
-        window.parent.HTMLTextAreaElement.prototype, "value"
-      );
+      const proto = window.parent.HTMLTextAreaElement
+        ? window.parent.HTMLTextAreaElement.prototype
+        : HTMLTextAreaElement.prototype;
+      desc = Object.getOwnPropertyDescriptor(proto, "value");
     }} catch (e) {{}}
     if (desc && desc.set) desc.set.call(ta, payload); else ta.value = payload;
     ta.dispatchEvent(new Event("input", {{ bubbles: true }}));
     ta.dispatchEvent(new Event("change", {{ bubbles: true }}));
-    const buttons = Array.from(doc.querySelectorAll("button"));
-    const btn = buttons.find(function (b) {{
-      return (b.innerText || b.textContent || "").trim() === "lt_esign_placer_apply";
-    }});
-    if (btn) {{
-      if (pushTimer) clearTimeout(pushTimer);
-      pushTimer = setTimeout(function () {{
-        try {{ btn.click(); }} catch (e) {{}}
-      }}, 40);
-    }}
+  }}
+
+  function pushAction(obj) {{
+    const payload = JSON.stringify(obj);
+    const doc = parentDoc();
+    const win = (function () {{
+      try {{ return window.parent; }} catch (e) {{ return window; }}
+    }})();
+    try {{ win.sessionStorage.setItem("lt_esign_placer_payload", payload); }} catch (e) {{}}
+    const ta = findPayloadTextarea(doc);
+    if (ta) setNativeValue(ta, payload);
+    const btn = findApplyButton(doc);
+    if (!btn) return;
+    try {{ btn.style.pointerEvents = "auto"; }} catch (e) {{}}
+    if (pushTimer) clearTimeout(pushTimer);
+    // Allow React controlled textarea to flush before Streamlit packages the click.
+    pushTimer = setTimeout(function () {{
+      try {{
+        if (ta && (!ta.value || ta.value.indexOf('"action"') < 0)) {{
+          setNativeValue(ta, payload);
+        }}
+        btn.click();
+      }} catch (e) {{}}
+    }}, 120);
   }}
 
   function syncOverlayToImage() {{
@@ -847,7 +976,18 @@ def _compose_tab(*, user: dict, company: dict) -> None:
     page_idx = page_i - 1
 
     apply_clicked = _placer_bridge_widgets()
-    if apply_clicked:
+    payload_ready = bool(
+        str(st.session_state.get("esign_placer_payload") or "").strip()
+    )
+    if apply_clicked and not payload_ready:
+        # Race: Apply arrived before React flushed textarea — resync once.
+        if not st.session_state.get("_esign_resync_done"):
+            st.session_state["_esign_resync_done"] = True
+            _resync_placer_from_session_storage()
+        else:
+            st.session_state.pop("_esign_resync_done", None)
+    elif apply_clicked or payload_ready:
+        st.session_state.pop("_esign_resync_done", None)
         _consume_placer_action(page_index=page_idx)
 
     with left:
@@ -916,16 +1056,46 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         pending_y = st.session_state.get("esign_pending_y")
         st.markdown("#### Fields")
         st.caption(
-            "Right-click the preview → **Add text / date / sign** at that spot. "
+            "Click the preview to set position, then **Add text / date / sign** "
+            "(right-click menu or buttons below). "
             "Drag to move · corner to resize · **Edit** for typewriter/color. "
             "Each field keeps its own page and coordinates."
         )
         if pending_x is not None and pending_y is not None:
             st.caption(
                 f"Last click: **{float(pending_x):.0%}** left, "
-                f"**{float(pending_y):.0%}** top (page {page_idx + 1}) — "
-                "right-click there to add."
+                f"**{float(pending_y):.0%}** top (page {page_idx + 1})."
             )
+        else:
+            st.caption(
+                "No click yet — Add buttons place at page center until you click the preview."
+            )
+
+        ab1, ab2, ab3 = st.columns(3)
+        with ab1:
+            if st.button(
+                "Add text here",
+                key="esign_add_text_here",
+                use_container_width=True,
+            ):
+                _add_field_at_pending("text", page_index=page_idx)
+                st.rerun()
+        with ab2:
+            if st.button(
+                "Add date here",
+                key="esign_add_date_here",
+                use_container_width=True,
+            ):
+                _add_field_at_pending("date", page_index=page_idx)
+                st.rerun()
+        with ab3:
+            if st.button(
+                "Add sign here",
+                key="esign_add_sign_here",
+                use_container_width=True,
+            ):
+                _add_field_at_pending("sign", page_index=page_idx)
+                st.rerun()
 
         edit_id = str(st.session_state.get("esign_edit_field_id") or "")
         edit_field = next((f for f in fields if f.get("id") == edit_id), None)
@@ -975,9 +1145,13 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                     st.session_state.pop("esign_edit_field_id", None)
                     st.rerun()
 
+        # Re-read after possible Add-button mutation earlier in this run
+        fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
         st.markdown(f"#### Placed fields ({len(fields)})")
         if not fields:
-            st.caption("No fields yet — right-click the preview to add.")
+            st.caption(
+                "No fields yet — right-click the preview or use Add text/date/sign here."
+            )
         else:
             for idx, f in enumerate(fields):
                 c1, c2, c3 = st.columns([3.2, 1, 1])

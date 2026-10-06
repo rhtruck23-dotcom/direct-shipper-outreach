@@ -255,7 +255,7 @@ def test_six_distinct_fields_survive_sequential_adds():
 
 
 def test_no_slider_place_field_path_in_compose_ui():
-    """v2026.10.06h: Place field / esign_x|y|w|h sliders must be gone entirely."""
+    """v2026.10.06h/i: Place field / esign_x|y|w|h sliders must be gone entirely."""
     import inspect
 
     from src import esign_ui
@@ -269,14 +269,17 @@ def test_no_slider_place_field_path_in_compose_ui():
     assert "st.slider" not in compose
     # Sync helper must not write slider widget keys
     sync = inspect.getsource(esign_ui._sync_pending_click)
-    assert 'esign_x' not in sync
-    assert 'esign_y' not in sync
+    assert "esign_x" not in sync
+    assert "esign_y" not in sync
     assert "esign_pending_x" in sync
     # No leftover alias that still broadcasts slider keys
     src = inspect.getsource(esign_ui)
     assert "_sync_placer_sliders" not in src
     assert 'st.session_state["esign_x"]' not in src
     assert 'st.session_state["esign_y"]' not in src
+    add_fn = inspect.getsource(esign_ui._add_field_at_pending)
+    assert "esign_x" not in add_fn
+    assert "esign_pending_x" in add_fn or "_pending_place_xy" in add_fn
 
 
 def test_apply_placer_add_preserves_existing_rects():
@@ -575,6 +578,166 @@ def test_bridge_hide_css_targets_element_container_not_tabs():
     assert "stElementContainer" in css
     assert "stVerticalBlock" not in css
     assert "#lt-esign-bridge-marker" in css
+    # v2026.10.06i: pointer-events:none blocked programmatic Apply click
+    assert "pointer-events" not in css
+    assert "opacity: 0.02" in css
+
+
+def test_apply_placer_menu_add_at_click_03_04():
+    """Right-click Add text at (0.3, 0.4) appends one field with those coords."""
+    from src import esign_ui
+
+    fields: list = []
+    after, effects = esign_ui.apply_placer_message(
+        fields,
+        {
+            "action": "add",
+            "type": "text",
+            "page": 0,
+            "x": 0.3,
+            "y_from_top": 0.4,
+            "w": 0.28,
+            "h": 0.04,
+            "label": "Text",
+        },
+        page_index=0,
+    )
+    assert len(after) == 1
+    assert abs(float(after[0]["x"]) - 0.3) < 1e-9
+    assert abs(float(after[0]["y_from_top"]) - 0.4) < 1e-9
+    assert effects.get("pending_xy") == (0.3, 0.4)
+    # Must not collapse to old slider defaults
+    assert not (
+        abs(float(after[0]["x"]) - 0.1) < 1e-9
+        and abs(float(after[0]["y_from_top"]) - 0.2) < 1e-9
+    )
+
+
+def test_fallback_add_at_pending_click_05_06():
+    """Fallback Add buttons use pending click (0.5, 0.6) — never 0.1/0.2."""
+    from src import esign_ui
+    import streamlit as st
+
+    class _SS(dict):
+        pass
+
+    ss = _SS()
+    ss["esign_compose_fields"] = []
+    ss["esign_pending_x"] = 0.5
+    ss["esign_pending_y"] = 0.6
+    original_ss = st.session_state
+    try:
+        st.session_state = ss  # type: ignore[misc]
+        esign_ui._add_field_at_pending("text", page_index=0)
+        fields = ss["esign_compose_fields"]
+        assert len(fields) == 1
+        assert abs(float(fields[0]["x"]) - 0.5) < 1e-9
+        assert abs(float(fields[0]["y_from_top"]) - 0.6) < 1e-9
+        assert fields[0]["type"] == "text"
+        assert "esign_x" not in ss
+        assert "esign_y" not in ss
+    finally:
+        st.session_state = original_ss  # type: ignore[misc]
+
+
+def test_fallback_sequential_adds_distinct_geometries():
+    """Four Add-here calls at different pending positions → four distinct rects."""
+    from src import esign_ui
+    import streamlit as st
+
+    class _SS(dict):
+        pass
+
+    ss = _SS()
+    ss["esign_compose_fields"] = []
+    original_ss = st.session_state
+    planned = [(0.2, 0.3), (0.4, 0.5), (0.6, 0.7), (0.15, 0.85)]
+    try:
+        st.session_state = ss  # type: ignore[misc]
+        for i, (x, y) in enumerate(planned):
+            ss["esign_pending_x"] = x
+            ss["esign_pending_y"] = y
+            ftype = ("text", "date", "sign", "text")[i]
+            esign_ui._add_field_at_pending(ftype, page_index=0)
+        fields = ss["esign_compose_fields"]
+        assert len(fields) == 4
+        coords = [(float(f["x"]), float(f["y_from_top"])) for f in fields]
+        assert len(set(coords)) == 4
+        for f, (x, y) in zip(fields, planned):
+            assert abs(float(f["x"]) - x) < 1e-9
+            assert abs(float(f["y_from_top"]) - y) < 1e-9
+        # Never the old 10%/20% slider default unless that was the click
+        for f in fields:
+            assert not (
+                abs(float(f["x"]) - 0.1) < 1e-9
+                and abs(float(f["y_from_top"]) - 0.2) < 1e-9
+            )
+    finally:
+        st.session_state = original_ss  # type: ignore[misc]
+
+
+def test_consume_menu_add_grows_field_count_0_to_1():
+    """Instrumented consume: empty list + Add text payload → exactly one field."""
+    from src import esign_ui
+    import streamlit as st
+
+    class _SS(dict):
+        pass
+
+    ss = _SS()
+    ss["esign_compose_fields"] = []
+    ss["esign_placer_payload"] = json.dumps(
+        {
+            "action": "add",
+            "type": "text",
+            "page": 0,
+            "x": 0.3,
+            "y_from_top": 0.4,
+            "w": 0.28,
+            "h": 0.04,
+            "label": "Text",
+        }
+    )
+    original_ss = st.session_state
+    original_rerun = st.rerun
+
+    def _fake_rerun():
+        pass
+
+    try:
+        st.session_state = ss  # type: ignore[misc]
+        st.rerun = _fake_rerun  # type: ignore[method-assign]
+        assert len(ss["esign_compose_fields"]) == 0
+        esign_ui._consume_placer_action(page_index=0)
+        assert len(ss["esign_compose_fields"]) == 1
+        f = ss["esign_compose_fields"][0]
+        assert abs(float(f["x"]) - 0.3) < 1e-9
+        assert abs(float(f["y_from_top"]) - 0.4) < 1e-9
+        assert ss.get("esign_placer_payload") == ""
+    finally:
+        st.session_state = original_ss  # type: ignore[misc]
+        st.rerun = original_rerun  # type: ignore[method-assign]
+
+
+def test_compose_has_fallback_add_buttons_no_sliders():
+    """v2026.10.06i: Add-here buttons present; Place-field sliders stay gone."""
+    import inspect
+
+    from src import esign_ui
+
+    compose = inspect.getsource(esign_ui._compose_tab)
+    assert "Add text here" in compose
+    assert "Add date here" in compose
+    assert "Add sign here" in compose
+    assert "_add_field_at_pending" in compose
+    assert "Place field" not in compose
+    assert 'key="esign_x"' not in compose
+    assert "st.slider" not in compose
+
+    src = inspect.getsource(esign_ui._render_field_placer)
+    assert "pointerEvents = \"auto\"" in src or "pointerEvents = 'auto'" in src
+    assert "lt_esign_placer_payload" in src
+    assert "120" in src  # flush delay before Apply click
 
 
 def test_nudge_esign_page_clamps():
