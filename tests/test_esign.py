@@ -97,6 +97,34 @@ def test_page_count_and_size():
     assert abs(h - 700) < 0.1
 
 
+def test_render_pdf_page_png():
+    pdf = _blank_pdf(width=400, height=600)
+    png, iw, ih = esign.render_pdf_page_png(pdf, 0, zoom=1.0)
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert iw > 0 and ih > 0
+
+
+def test_pixel_norm_roundtrip():
+    pdf = _blank_pdf(width=612, height=792)
+    _, iw, ih = esign.render_pdf_page_png(pdf, 0, zoom=1.0)
+    x, y = 0.12, 0.34
+    px, py = esign.norm_to_pixel(x, y, img_w=iw, img_h=ih)
+    x2, y2 = esign.pixel_to_norm(px, py, img_w=iw, img_h=ih)
+    assert abs(x2 - x) < 0.002
+    assert abs(y2 - y) < 0.002
+    page_w, page_h = esign.pdf_page_size(pdf, 0)
+    llx, lly, urx, ury = esign._rect_from_norm(
+        page_w=page_w,
+        page_h=page_h,
+        x=x,
+        y_from_top=y,
+        w=0.28,
+        h=0.04,
+    )
+    assert llx == x * page_w
+    assert abs(ury - (page_h - y * page_h)) < 0.5
+
+
 def test_match_prefill_for_fields_aliases():
     fields = [
         esign.new_field(field_type="text", label="Company Name"),

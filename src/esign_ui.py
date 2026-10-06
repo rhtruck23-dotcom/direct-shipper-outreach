@@ -4,9 +4,11 @@ Esign Docs Streamlit UI — upload PDF, place AcroForm fields, download / send /
 from __future__ import annotations
 
 import base64
+import json
 from typing import Any, Callable, Optional
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from . import esign
 from .emailer import send_email
@@ -25,7 +27,13 @@ def _qp_get(key: str) -> Optional[str]:
         return None
 
 
+def _pdf_page_image(pdf_bytes: bytes, page_index: int = 0) -> tuple[bytes, int, int]:
+    """Server-side PNG preview (works on Streamlit Cloud; no PDF iframe)."""
+    return esign.render_pdf_page_png(pdf_bytes, page_index)
+
+
 def _pdf_iframe(pdf_bytes: bytes, *, height: int = 720) -> None:
+    """Legacy embed — browsers often block data: PDF iframes on Cloud."""
     b64 = base64.b64encode(pdf_bytes).decode("ascii")
     st.markdown(
         f'<iframe src="data:application/pdf;base64,{b64}" '
@@ -33,6 +41,341 @@ def _pdf_iframe(pdf_bytes: bytes, *, height: int = 720) -> None:
         f'style="border:1px solid #cbd5e1;border-radius:8px;"></iframe>',
         unsafe_allow_html=True,
     )
+
+
+def _pdf_preview_pages(
+    pdf_bytes: bytes,
+    *,
+    page_index: int = 0,
+    total_pages: int = 1,
+) -> None:
+    png, _iw, _ih = _pdf_page_image(pdf_bytes, page_index)
+    if total_pages > 1:
+        st.caption(f"Page {page_index + 1} of {total_pages}")
+    st.image(png, use_container_width=True)
+
+
+def _placer_bridge_widgets() -> bool:
+    """Hidden bridge: JS writes JSON actions → Apply button triggers Python."""
+    st.markdown(
+        """
+<style>
+  div[data-testid="stVerticalBlock"] > div:has(#lt-esign-bridge-marker),
+  div[data-testid="stVerticalBlock"] > div:has(#lt-esign-bridge-marker) + div,
+  div[data-testid="stVerticalBlock"] > div:has(#lt-esign-bridge-marker) + div + div {
+    position: absolute !important;
+    width: 2px !important;
+    height: 2px !important;
+    overflow: hidden !important;
+    opacity: 0.02 !important;
+    left: -8000px !important;
+  }
+</style>
+<div id="lt-esign-bridge-marker"></div>
+""",
+        unsafe_allow_html=True,
+    )
+    st.text_area(
+        "lt_esign_placer_payload",
+        key="esign_placer_payload",
+        height=68,
+        label_visibility="collapsed",
+    )
+    return st.button(
+        "lt_esign_placer_apply",
+        key="esign_placer_apply",
+        help="Internal: apply field placement from preview",
+    )
+
+
+def _consume_placer_action(*, page_index: int) -> None:
+    raw = str(st.session_state.get("esign_placer_payload") or "").strip()
+    if not raw:
+        return
+    try:
+        msg = json.loads(raw)
+    except Exception:
+        st.session_state["esign_placer_payload"] = ""
+        return
+    if not isinstance(msg, dict):
+        st.session_state["esign_placer_payload"] = ""
+        return
+
+    fields = list(st.session_state.get(_session_fields_key()) or [])
+    action = str(msg.get("action") or "")
+    if action == "add":
+        ftype = str(msg.get("type") or "text").lower()
+        fields.append(
+            esign.new_field(
+                field_type=ftype,
+                page=int(msg.get("page", page_index)),
+                x=float(msg.get("x") or 0.1),
+                y_from_top=float(msg.get("y_from_top") or 0.15),
+                w=float(msg.get("w") or 0.28),
+                h=float(msg.get("h") or 0.04),
+                label=str(msg.get("label") or ""),
+            )
+        )
+    elif action == "update":
+        fid = str(msg.get("id") or "")
+        for f in fields:
+            if f.get("id") == fid:
+                if "x" in msg:
+                    f["x"] = float(msg["x"])
+                if "y_from_top" in msg:
+                    f["y_from_top"] = float(msg["y_from_top"])
+                if "w" in msg:
+                    f["w"] = float(msg["w"])
+                if "h" in msg:
+                    f["h"] = float(msg["h"])
+                break
+    elif action == "delete":
+        fid = str(msg.get("id") or "")
+        fields = [f for f in fields if f.get("id") != fid]
+    elif action == "click":
+        px = float(msg.get("x") or 0.1)
+        py = float(msg.get("y_from_top") or 0.15)
+        st.session_state["esign_pending_x"] = px
+        st.session_state["esign_pending_y"] = py
+        st.session_state["esign_x"] = int(round(px * 100))
+        st.session_state["esign_y"] = int(round(py * 100))
+        st.session_state["esign_placer_payload"] = ""
+        st.rerun()
+
+    st.session_state[_session_fields_key()] = fields
+    st.session_state["esign_placer_payload"] = ""
+    st.rerun()
+
+
+def _render_field_placer(
+    *,
+    png_bytes: bytes,
+    img_w: int,
+    img_h: int,
+    page_index: int,
+    fields: list[dict[str, Any]],
+) -> None:
+    """Interactive overlay: click to set position, right-click to add field type."""
+    b64 = base64.b64encode(png_bytes).decode("ascii")
+    on_page = [f for f in fields if int(f.get("page") or 0) == page_index]
+    fields_json = json.dumps(on_page)
+    default_w = 0.28
+    default_h = 0.04
+    frame_h = min(920, max(420, int(img_h * 720 / max(1, img_w)) + 48))
+
+    html = f"""
+<div id="lt-esign-root" style="font-family:system-ui,sans-serif;max-width:100%;">
+  <div id="lt-esign-stage" style="position:relative;width:100%;user-select:none;">
+    <img id="lt-esign-img" src="data:image/png;base64,{b64}"
+         style="width:100%;height:auto;display:block;border:1px solid #cbd5e1;border-radius:8px;" />
+    <div id="lt-esign-overlay" style="position:absolute;left:0;top:0;width:100%;height:100%;"></div>
+    <div id="lt-esign-menu" style="display:none;position:absolute;z-index:20;background:#fff;
+         border:1px solid #94a3b8;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);
+         padding:4px 0;min-width:140px;"></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:12px;color:#64748b;">
+    <b>Click</b> to set position · <b>Right-click</b> Add text / date / sign ·
+    Drag boxes to move · corner handle to resize
+  </p>
+</div>
+<script>
+(function () {{
+  const PAGE = {page_index};
+  const DEF_W = {default_w};
+  const DEF_H = {default_h};
+  let fields = {fields_json};
+  const stage = document.getElementById("lt-esign-stage");
+  const overlay = document.getElementById("lt-esign-overlay");
+  const menu = document.getElementById("lt-esign-menu");
+  const img = document.getElementById("lt-esign-img");
+  let pending = null;
+  let drag = null;
+
+  function parentDoc() {{
+    try {{ return window.parent.document; }} catch (e) {{ return document; }}
+  }}
+
+  function pushAction(obj) {{
+    const payload = JSON.stringify(obj);
+    const doc = parentDoc();
+    const areas = Array.from(doc.querySelectorAll("textarea"));
+    const ta = areas.find(function (t) {{
+      const lab = (t.getAttribute("aria-label") || "") + (t.id || "");
+      return lab.indexOf("lt_esign_placer_payload") >= 0 || lab.indexOf("esign_placer") >= 0;
+    }}) || areas[areas.length - 1];
+    if (!ta) return;
+    try {{
+      const tracker = ta._valueTracker;
+      if (tracker) tracker.setValue("");
+    }} catch (e) {{}}
+    const desc = Object.getOwnPropertyDescriptor(
+      window.parent.HTMLTextAreaElement.prototype, "value"
+    );
+    if (desc && desc.set) desc.set.call(ta, payload); else ta.value = payload;
+    ta.dispatchEvent(new Event("input", {{ bubbles: true }}));
+    const buttons = Array.from(doc.querySelectorAll("button"));
+    const btn = buttons.find(function (b) {{
+      return (b.innerText || "").trim() === "lt_esign_placer_apply";
+    }});
+    if (btn) setTimeout(function () {{ btn.click(); }}, 50);
+  }}
+
+  function fracFromEvent(ev) {{
+    const r = overlay.getBoundingClientRect();
+    const x = Math.max(0, Math.min(0.95, (ev.clientX - r.left) / r.width));
+    const y = Math.max(0, Math.min(0.95, (ev.clientY - r.top) / r.height));
+    return {{ x: x, y_from_top: y }};
+  }}
+
+  function typeColor(t) {{
+    if (t === "date") return "#059669";
+    if (t === "sign") return "#ea580c";
+    return "#2563eb";
+  }}
+
+  function renderFields() {{
+    overlay.innerHTML = "";
+    fields.forEach(function (f) {{
+      const box = document.createElement("div");
+      box.className = "lt-esign-field";
+      box.dataset.id = f.id;
+      const col = typeColor(f.type);
+      box.style.cssText =
+        "position:absolute;box-sizing:border-box;border:2px solid " + col + ";" +
+        "background:rgba(37,99,235,0.08);border-radius:4px;cursor:move;" +
+        "left:" + (f.x * 100) + "%;top:" + (f.y_from_top * 100) + "%;" +
+        "width:" + (f.w * 100) + "%;height:" + (f.h * 100) + "%;";
+      const lbl = document.createElement("span");
+      lbl.textContent = f.label || f.type || "Field";
+      lbl.style.cssText =
+        "position:absolute;left:2px;top:-16px;font-size:10px;color:" + col +
+        ";background:#fff;padding:0 3px;border-radius:3px;white-space:nowrap;";
+      box.appendChild(lbl);
+      const handle = document.createElement("div");
+      handle.className = "lt-esign-resize";
+      handle.style.cssText =
+        "position:absolute;right:-4px;bottom:-4px;width:10px;height:10px;" +
+        "background:" + col + ";border-radius:2px;cursor:nwse-resize;";
+      box.appendChild(handle);
+      box.addEventListener("mousedown", function (ev) {{
+        if (ev.target === handle) return;
+        ev.stopPropagation();
+        drag = {{ id: f.id, mode: "move", sx: ev.clientX, sy: ev.clientY,
+          ox: f.x, oy: f.y_from_top, ow: f.w, oh: f.h }};
+      }});
+      handle.addEventListener("mousedown", function (ev) {{
+        ev.stopPropagation();
+        drag = {{ id: f.id, mode: "resize", sx: ev.clientX, sy: ev.clientY,
+          ox: f.x, oy: f.y_from_top, ow: f.w, oh: f.h }};
+      }});
+      box.addEventListener("contextmenu", function (ev) {{
+        ev.preventDefault();
+        ev.stopPropagation();
+        pushAction({{ action: "delete", id: f.id }});
+      }});
+      overlay.appendChild(box);
+    }});
+    if (pending) {{
+      const dot = document.createElement("div");
+      dot.style.cssText =
+        "position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;" +
+        "background:#dc2626;border-radius:50%;border:2px solid #fff;" +
+        "left:" + (pending.x * 100) + "%;top:" + (pending.y * 100) + "%;";
+      overlay.appendChild(dot);
+    }}
+  }}
+
+  function showMenu(ev, pos) {{
+    menu.innerHTML = "";
+    menu.style.display = "block";
+    const r = stage.getBoundingClientRect();
+    menu.style.left = Math.min(ev.clientX - r.left, r.width - 150) + "px";
+    menu.style.top = Math.min(ev.clientY - r.top, r.height - 120) + "px";
+    [
+      {{ t: "text", label: "Add text" }},
+      {{ t: "date", label: "Add date" }},
+      {{ t: "sign", label: "Add sign" }}
+    ].forEach(function (item) {{
+      const row = document.createElement("button");
+      row.type = "button";
+      row.textContent = item.label;
+      row.style.cssText =
+        "display:block;width:100%;text-align:left;padding:8px 12px;border:none;" +
+        "background:transparent;cursor:pointer;font-size:13px;";
+      row.onmouseover = function () {{ row.style.background = "#f1f5f9"; }};
+      row.onmouseout = function () {{ row.style.background = "transparent"; }};
+      row.onclick = function () {{
+        menu.style.display = "none";
+        pushAction({{
+          action: "add",
+          type: item.t,
+          page: PAGE,
+          x: pos.x,
+          y_from_top: pos.y_from_top,
+          w: DEF_W,
+          h: DEF_H,
+          label: item.label.replace("Add ", "")
+        }});
+      }};
+      menu.appendChild(row);
+    }});
+  }}
+
+  overlay.addEventListener("click", function (ev) {{
+    if (drag) return;
+    const pos = fracFromEvent(ev);
+    pending = pos;
+    renderFields();
+    pushAction({{ action: "click", x: pos.x, y_from_top: pos.y_from_top }});
+  }});
+
+  overlay.addEventListener("contextmenu", function (ev) {{
+    ev.preventDefault();
+    const pos = fracFromEvent(ev);
+    pending = pos;
+    renderFields();
+    showMenu(ev, pos);
+  }});
+
+  document.addEventListener("mousemove", function (ev) {{
+    if (!drag) return;
+    const r = overlay.getBoundingClientRect();
+    const dx = (ev.clientX - drag.sx) / r.width;
+    const dy = (ev.clientY - drag.sy) / r.height;
+    const f = fields.find(function (x) {{ return x.id === drag.id; }});
+    if (!f) return;
+    if (drag.mode === "move") {{
+      f.x = Math.max(0, Math.min(0.95, drag.ox + dx));
+      f.y_from_top = Math.max(0, Math.min(0.95, drag.oy + dy));
+    }} else {{
+      f.w = Math.max(0.05, Math.min(0.9, drag.ow + dx));
+      f.h = Math.max(0.02, Math.min(0.2, drag.oh + dy));
+    }}
+    renderFields();
+  }});
+
+  document.addEventListener("mouseup", function () {{
+    if (!drag) return;
+    const f = fields.find(function (x) {{ return x.id === drag.id; }});
+    drag = null;
+    if (f) {{
+      pushAction({{
+        action: "update",
+        id: f.id,
+        x: f.x,
+        y_from_top: f.y_from_top,
+        w: f.w,
+        h: f.h
+      }});
+    }}
+  }});
+
+  img.onload = function () {{ renderFields(); }};
+  if (img.complete) renderFields();
+}})();
+</script>
+"""
+    components.html(html, height=frame_h, scrolling=False)
 
 
 def _company_from_session() -> dict[str, Any]:
@@ -76,7 +419,11 @@ def try_render_public_fill() -> bool:
         return True
 
     st.markdown("Preview (fill the fields below — original layout is unchanged):")
-    _pdf_iframe(fillable, height=560)
+    try:
+        pages_n = esign.pdf_page_count(fillable)
+        _pdf_preview_pages(fillable, page_index=0, total_pages=pages_n)
+    except Exception:
+        st.caption("Preview unavailable — use the form fields below.")
 
     fields = list(meta.get("fields") or [])
     if not fields:
@@ -227,16 +574,59 @@ def _compose_tab(*, user: dict, company: dict) -> None:
     st.success(f"Loaded · {pages} page(s) · {len(pdf_bytes):,} bytes")
     left, right = st.columns([1.35, 1])
 
+    page_i = int(st.session_state.get("esign_page") or 1)
+    page_i = max(1, min(pages, page_i))
+    page_idx = page_i - 1
+
+    apply_clicked = _placer_bridge_widgets()
+    if apply_clicked:
+        _consume_placer_action(page_index=page_idx)
+
     with left:
         st.markdown("#### Preview")
+        if pages > 1:
+            pc1, pc2, pc3 = st.columns([1, 2, 1])
+            with pc1:
+                if st.button("◀ Prev", disabled=page_i <= 1, key="esign_prev_page"):
+                    st.session_state["esign_page"] = page_i - 1
+                    st.rerun()
+            with pc2:
+                page_i = st.number_input(
+                    "Page",
+                    min_value=1,
+                    max_value=max(1, pages),
+                    value=page_i,
+                    key="esign_page",
+                    label_visibility="collapsed",
+                )
+                page_idx = int(page_i) - 1
+            with pc3:
+                if st.button("Next ▶", disabled=page_i >= pages, key="esign_next_page"):
+                    st.session_state["esign_page"] = page_i + 1
+                    st.rerun()
+        try:
+            png, iw, ih = _pdf_page_image(pdf_bytes, page_idx)
+        except Exception as exc:
+            st.error(f"Preview render failed: {exc}")
+            png, iw, ih = b"", 0, 0
         fields = list(st.session_state.get(_session_fields_key()) or [])
-        preview_bytes = (
-            esign.build_fillable_pdf(pdf_bytes, fields) if fields else pdf_bytes
-        )
-        _pdf_iframe(preview_bytes, height=640)
+        if png:
+            _render_field_placer(
+                png_bytes=png,
+                img_w=iw,
+                img_h=ih,
+                page_index=page_idx,
+                fields=fields,
+            )
 
     with right:
         st.markdown("#### Place field")
+        pending_x = float(st.session_state.get("esign_pending_x") or 0.1)
+        pending_y = float(st.session_state.get("esign_pending_y") or 0.2)
+        st.caption(
+            f"Preview click position: **{pending_x:.0%}** from left, "
+            f"**{pending_y:.0%}** from top (page {page_idx + 1})"
+        )
         ftype = st.radio(
             "Field type",
             ["text", "date", "sign"],
@@ -248,21 +638,25 @@ def _compose_tab(*, user: dict, company: dict) -> None:
             }[t],
             key="esign_ftype",
         )
-        page_i = st.number_input(
-            "Page (1-based)",
-            min_value=1,
-            max_value=max(1, pages),
-            value=1,
-            key="esign_page",
-        )
+        if pages <= 1:
+            page_i = st.number_input(
+                "Page (1-based)",
+                min_value=1,
+                max_value=max(1, pages),
+                value=1,
+                key="esign_page",
+            )
+            page_idx = int(page_i) - 1
         label = st.text_input(
             "Field label",
             value={"text": "Text", "date": "Date", "sign": "Sign"}[ftype],
             key="esign_label",
             help="Use labels like company_name, contact_name, email, date for CRM auto-prefill.",
         )
-        x = st.slider("X from left (%)", 0, 90, 10, key="esign_x") / 100.0
-        y = st.slider("Y from top (%)", 0, 90, 20, key="esign_y") / 100.0
+        def_x = int(round(pending_x * 100))
+        def_y = int(round(pending_y * 100))
+        x = st.slider("X from left (%)", 0, 90, min(90, def_x), key="esign_x") / 100.0
+        y = st.slider("Y from top (%)", 0, 90, min(90, def_y), key="esign_y") / 100.0
         w = st.slider("Width (%)", 5, 90, 28, key="esign_w") / 100.0
         h = st.slider("Height (%)", 2, 20, 4, key="esign_h") / 100.0
 

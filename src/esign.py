@@ -163,6 +163,62 @@ def pdf_page_count(pdf_bytes: bytes) -> int:
     return len(reader.pages)
 
 
+def render_pdf_page_png(
+    pdf_bytes: bytes,
+    page_index: int = 0,
+    *,
+    zoom: float = 1.75,
+) -> tuple[bytes, int, int]:
+    """
+    Rasterize one PDF page to PNG (for Streamlit preview — avoids iframe PDF embed).
+    Returns (png_bytes, pixel_width, pixel_height).
+    """
+    import fitz
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        if page_index < 0 or page_index >= doc.page_count:
+            raise IndexError(f"page {page_index} out of range")
+        page = doc.load_page(page_index)
+        mat = fitz.Matrix(float(zoom), float(zoom))
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        return pix.tobytes("png"), int(pix.width), int(pix.height)
+    finally:
+        doc.close()
+
+
+def pixel_to_norm(
+    px_x: float,
+    px_y: float,
+    *,
+    img_w: float,
+    img_h: float,
+) -> tuple[float, float]:
+    """Map click position on rendered page image → normalized x, y_from_top."""
+    if img_w <= 0 or img_h <= 0:
+        return 0.0, 0.0
+    x = float(px_x) / float(img_w)
+    y = float(px_y) / float(img_h)
+    return (
+        float(max(0.0, min(0.95, x))),
+        float(max(0.0, min(0.95, y))),
+    )
+
+
+def norm_to_pixel(
+    x: float,
+    y_from_top: float,
+    *,
+    img_w: float,
+    img_h: float,
+) -> tuple[float, float]:
+    """Normalized top-left fractions → pixel coords on rendered image."""
+    return (
+        float(x) * float(img_w),
+        float(y_from_top) * float(img_h),
+    )
+
+
 def pdf_page_size(pdf_bytes: bytes, page_index: int = 0) -> tuple[float, float]:
     from pypdf import PdfReader
 
