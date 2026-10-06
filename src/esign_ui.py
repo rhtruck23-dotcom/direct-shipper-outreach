@@ -558,6 +558,12 @@ def _session_fields_key() -> str:
     return "esign_compose_fields"
 
 
+def _nudge_esign_page(delta: int, max_pages: int) -> None:
+    """Prev/Next callback: mutate page before widgets instantiate (same-run safe)."""
+    cur = int(st.session_state.get("esign_page") or 1)
+    st.session_state["esign_page"] = max(1, min(int(max_pages), cur + int(delta)))
+
+
 def _compose_tab(*, user: dict, company: dict) -> None:
     uploaded = st.file_uploader("Upload PDF", type=["pdf"], key="esign_upload")
     title = st.text_input(
@@ -596,9 +602,14 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         if pages > 1:
             pc1, pc2, pc3 = st.columns([1, 2, 1])
             with pc1:
-                if st.button("◀ Prev", disabled=page_i <= 1, key="esign_prev_page"):
-                    st.session_state["esign_page"] = page_i - 1
-                    st.rerun()
+                # on_click mutates esign_page before number_input binds the key
+                st.button(
+                    "◀ Prev",
+                    disabled=page_i <= 1,
+                    key="esign_prev_page",
+                    on_click=_nudge_esign_page,
+                    args=(-1, pages),
+                )
             with pc2:
                 page_i = st.number_input(
                     "Page",
@@ -610,9 +621,13 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                 )
                 page_idx = int(page_i) - 1
             with pc3:
-                if st.button("Next ▶", disabled=page_i >= pages, key="esign_next_page"):
-                    st.session_state["esign_page"] = page_i + 1
-                    st.rerun()
+                st.button(
+                    "Next ▶",
+                    disabled=page_i >= pages,
+                    key="esign_next_page",
+                    on_click=_nudge_esign_page,
+                    args=(1, pages),
+                )
         try:
             png, iw, ih = _pdf_page_image(pdf_bytes, page_idx)
         except Exception as exc:

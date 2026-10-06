@@ -135,6 +135,102 @@ def test_bridge_hide_css_targets_element_container_not_tabs():
     assert "#lt-esign-bridge-marker" in css
 
 
+def test_nudge_esign_page_clamps():
+    """Prev/Next callback must clamp without touching widgets mid-run."""
+    from src import esign_ui
+
+    class _SS(dict):
+        pass
+
+    ss = _SS()
+    ss["esign_page"] = 1
+    import streamlit as st
+
+    # Patch session_state for the helper only
+    original = st.session_state
+    try:
+        st.session_state = ss  # type: ignore[misc]
+        esign_ui._nudge_esign_page(1, 3)
+        assert ss["esign_page"] == 2
+        esign_ui._nudge_esign_page(1, 3)
+        assert ss["esign_page"] == 3
+        esign_ui._nudge_esign_page(1, 3)
+        assert ss["esign_page"] == 3  # clamp at max
+        esign_ui._nudge_esign_page(-1, 3)
+        assert ss["esign_page"] == 2
+        esign_ui._nudge_esign_page(-5, 3)
+        assert ss["esign_page"] == 1  # clamp at min
+    finally:
+        st.session_state = original  # type: ignore[misc]
+
+
+def test_compose_page_nav_uses_on_click_not_post_widget_assign():
+    """Regression: assigning esign_page after number_input → WidgetAlreadyInstantiatedError."""
+    import inspect
+
+    from src import esign_ui
+
+    src = inspect.getsource(esign_ui._compose_tab)
+    assert "on_click=_nudge_esign_page" in src
+    assert 'st.session_state["esign_page"] = page_i + 1' not in src
+    assert 'st.session_state["esign_page"] = page_i - 1' not in src
+
+
+def test_page_nav_apptest_next_prev():
+    """Streamlit AppTest: Next/Prev must not raise WidgetAlreadyInstantiatedError."""
+    from streamlit.testing.v1 import AppTest
+
+    script = '''
+import streamlit as st
+
+def nudge(delta, max_pages):
+    cur = int(st.session_state.get("esign_page") or 1)
+    st.session_state["esign_page"] = max(1, min(int(max_pages), cur + int(delta)))
+
+pages = 3
+page_i = int(st.session_state.get("esign_page") or 1)
+page_i = max(1, min(pages, page_i))
+st.button("Prev", disabled=page_i <= 1, key="esign_prev_page", on_click=nudge, args=(-1, pages))
+page_i = st.number_input("Page", min_value=1, max_value=pages, value=page_i, key="esign_page")
+st.button("Next", disabled=page_i >= pages, key="esign_next_page", on_click=nudge, args=(1, pages))
+st.write(f"page={int(st.session_state.get('esign_page') or 1)}")
+'''
+    at = AppTest.from_string(script, default_timeout=10)
+    at.run()
+    assert not at.exception
+    assert int(at.session_state["esign_page"]) == 1
+
+    at.button(key="esign_next_page").click().run()
+    assert not at.exception, f"Next raised: {at.exception}"
+    assert int(at.session_state["esign_page"]) == 2
+
+    at.button(key="esign_next_page").click().run()
+    assert not at.exception, f"Next→3 raised: {at.exception}"
+    assert int(at.session_state["esign_page"]) == 3
+
+    at.button(key="esign_prev_page").click().run()
+    assert not at.exception, f"Prev raised: {at.exception}"
+    assert int(at.session_state["esign_page"]) == 2
+
+    at.button(key="esign_prev_page").click().run()
+    assert not at.exception
+    assert int(at.session_state["esign_page"]) == 1
+
+
+def test_multipage_preview_pngs_distinct():
+    """3-page fixture: each page renders; navigate index 0→1→2→0 like the UI."""
+    pdf = _blank_pdf(pages=3, width=612, height=792)
+    assert esign.pdf_page_count(pdf) == 3
+    digests = []
+    for i in [0, 1, 2, 0]:
+        png, iw, ih = esign.render_pdf_page_png(pdf, i, zoom=1.0)
+        assert png[:8] == b"\x89PNG\r\n\x1a\n"
+        assert iw > 0 and ih > 0
+        digests.append(png[:64])
+    # Round-trip back to page 0 matches first render header bytes
+    assert digests[0] == digests[3]
+
+
 def test_pixel_norm_roundtrip():
     pdf = _blank_pdf(width=612, height=792)
     _, iw, ih = esign.render_pdf_page_png(pdf, 0, zoom=1.0)
