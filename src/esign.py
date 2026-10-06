@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import secrets
 import uuid
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -24,6 +25,69 @@ FIELD_TYPES = ("text", "date", "sign")
 # Default field size as fractions of page width/height
 _DEFAULT_W = 0.28
 _DEFAULT_H = 0.035
+
+# Normalize field label/name → lead prefill key
+_PREFILL_ALIASES: dict[str, tuple[str, ...]] = {
+    "company_name": (
+        "company_name",
+        "company",
+        "company name",
+        "business_name",
+        "business",
+        "business name",
+        "org",
+        "organization",
+        "shipper",
+        "carrier",
+        "account",
+        "account_name",
+        "account name",
+    ),
+    "contact_name": (
+        "contact_name",
+        "contact",
+        "contact name",
+        "name",
+        "full_name",
+        "full name",
+        "fullname",
+        "signer",
+        "signatory",
+        "signer_name",
+        "signer name",
+        "recipient_name",
+        "recipient name",
+    ),
+    "email": (
+        "email",
+        "e-mail",
+        "email_address",
+        "email address",
+        "contact_email",
+        "contact email",
+        "recipient_email",
+        "recipient email",
+    ),
+    "date": (
+        "date",
+        "today",
+        "signing_date",
+        "signing date",
+        "sign_date",
+        "sign date",
+        "agreement_date",
+        "agreement date",
+    ),
+    "phone": (
+        "phone",
+        "telephone",
+        "mobile",
+        "phone_number",
+        "phone number",
+        "contact_phone",
+        "contact phone",
+    ),
+}
 
 
 def _utc_now() -> str:
@@ -432,6 +496,145 @@ def list_documents(*, owner_email: str = "", limit: int = 50) -> list[dict[str, 
     if owner:
         rows = [r for r in rows if (r.get("owner_email") or "").lower() == owner]
     return rows[: max(1, int(limit))]
+
+
+def list_templates(*, owner_email: str = "", limit: int = 100) -> list[dict[str, Any]]:
+    """
+    Saved named docs with at least one field — usable as CRM send-for-signature templates.
+    Returns full meta rows (not just index stubs).
+    """
+    out: list[dict[str, Any]] = []
+    for row in list_documents(owner_email=owner_email, limit=max(limit * 2, 50)):
+        meta = load_document(row.get("id") or "")
+        if not meta:
+            continue
+        if not (meta.get("fields") or []):
+            continue
+        # Prefer reusable templates / ready docs; still allow draft-with-fields
+        status = (meta.get("status") or "").lower()
+        if status in ("signed",):
+            continue
+        out.append(meta)
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
+def _norm_field_key(value: str) -> str:
+    s = (value or "").strip().lower()
+    s = s.replace("-", " ").replace("_", " ")
+    s = re.sub(r"[^a-z0-9\s]", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s.replace(" ", "_")
+
+
+def lead_prefill_source(lead: dict[str, Any] | None) -> dict[str, str]:
+    """Canonical values drawn from a CRM lead for form prefill."""
+    lead = lead or {}
+    return {
+        "company_name": str(
+            lead.get("company_name") or lead.get("name") or lead.get("dba") or ""
+        ).strip(),
+        "contact_name": str(lead.get("contact_name") or lead.get("contact") or "").strip(),
+        "email": str(lead.get("email") or "").strip(),
+        "date": date.today().isoformat(),
+        "phone": str(lead.get("phone") or lead.get("phone_number") or "").strip(),
+    }
+
+
+def match_prefill_for_fields(
+    fields: list[dict[str, Any]] | None,
+    lead: dict[str, Any] | None,
+) -> dict[str, str]:
+    """
+    Map AcroForm field names → values when field name/label matches common aliases
+    (company_name, contact_name, email, date, phone).
+    Sign fields are left blank for the signer.
+    """
+    source = lead_prefill_source(lead)
+    alias_to_key: dict[str, str] = {}
+    for key, aliases in _PREFILL_ALIASES.items():
+        for a in aliases:
+            alias_to_key[_norm_field_key(a)] = key
+
+    values: dict[str, str] = {}
+    for field in fields or []:
+        if (field.get("type") or "text").lower() == "sign":
+            continue
+        name = str(field.get("name") or "")
+        if not name:
+            continue
+        candidates = [
+            _norm_field_key(str(field.get("label") or "")),
+            _norm_field_key(name),
+            # strip type_ prefix from auto names like text_f_abc
+            _norm_field_key(re.sub(r"^(text|date|sign)_f_[a-f0-9]+$", "", name, flags=re.I)),
+        ]
+        for cand in candidates:
+            if not cand:
+                continue
+            mapped = alias_to_key.get(cand)
+            if mapped and source.get(mapped):
+                values[name] = source[mapped]
+                break
+    return values
+
+
+def clone_document(
+    source_doc_id: str,
+    *,
+    title: str = "",
+    owner_email: str = "",
+    owner_name: str = "",
+    lead_id: str = "",
+    funnel: str = "",
+    prefill: Optional[dict[str, str]] = None,
+) -> dict[str, Any]:
+    """
+    Clone a saved template into a new per-send document (keeps original reusable).
+    Optionally bake prefill into fillable.pdf and store on meta.
+    """
+    src = load_document(source_doc_id)
+    if not src:
+        raise FileNotFoundError(source_doc_id)
+    original = read_original_pdf(source_doc_id)
+    fields = deepcopy(list(src.get("fields") or []))
+    meta = create_document(
+        title=(title or "").strip() or src.get("title") or "Agreement",
+        original_pdf=original,
+        owner_email=owner_email or src.get("owner_email") or "",
+        owner_name=owner_name or src.get("owner_name") or "",
+        fields=fields,
+    )
+    meta["template_id"] = source_doc_id
+    if lead_id:
+        meta["lead_id"] = str(lead_id)
+    if funnel:
+        meta["funnel"] = str(funnel)
+    prefill_clean = {str(k): str(v) for k, v in (prefill or {}).items() if str(v or "").strip()}
+    if prefill_clean:
+        meta["prefill"] = prefill_clean
+        fillable = fill_form_values(read_fillable_pdf(meta["id"]), prefill_clean)
+        (doc_dir(meta["id"]) / "fillable.pdf").write_bytes(fillable)
+    save_document_meta(meta)
+    return meta
+
+
+def attach_lead_tracking(
+    doc_id: str,
+    *,
+    lead_id: str = "",
+    funnel: str = "",
+) -> dict[str, Any]:
+    meta = load_document(doc_id)
+    if not meta:
+        raise FileNotFoundError(doc_id)
+    if lead_id:
+        meta["lead_id"] = str(lead_id)
+    if funnel:
+        meta["funnel"] = str(funnel)
+    save_document_meta(meta)
+    return meta
 
 
 def fill_link_path(token: str) -> str:

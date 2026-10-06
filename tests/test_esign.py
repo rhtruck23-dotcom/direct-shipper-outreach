@@ -95,3 +95,65 @@ def test_page_count_and_size():
     w, h = esign.pdf_page_size(pdf, 1)
     assert abs(w - 500) < 0.1
     assert abs(h - 700) < 0.1
+
+
+def test_match_prefill_for_fields_aliases():
+    fields = [
+        esign.new_field(field_type="text", label="Company Name"),
+        esign.new_field(field_type="text", label="contact_name"),
+        esign.new_field(field_type="text", label="Email Address"),
+        esign.new_field(field_type="date", label="Date"),
+        esign.new_field(field_type="sign", label="Sign"),
+        esign.new_field(field_type="text", label="Other"),
+    ]
+    lead = {
+        "company_name": "Acme Dairy",
+        "contact_name": "Pat Lee",
+        "email": "pat@acme.test",
+        "phone": "555-0100",
+    }
+    values = esign.match_prefill_for_fields(fields, lead)
+    assert values[fields[0]["name"]] == "Acme Dairy"
+    assert values[fields[1]["name"]] == "Pat Lee"
+    assert values[fields[2]["name"]] == "pat@acme.test"
+    assert values[fields[3]["name"]]  # today's date
+    assert fields[4]["name"] not in values  # sign left blank
+    assert fields[5]["name"] not in values  # unmatched
+
+
+def test_clone_document_prefills_and_tracks_lead(tmp_path, monkeypatch):
+    monkeypatch.setattr(esign, "ESIGN_DIR", tmp_path / "esign")
+    monkeypatch.setattr(esign, "ESIGN_INDEX", tmp_path / "esign" / "index.json")
+    original = _blank_pdf()
+    fields = [
+        esign.new_field(field_type="text", label="company_name"),
+        esign.new_field(field_type="text", label="email"),
+    ]
+    tpl = esign.create_document(
+        title="Carrier Packet",
+        original_pdf=original,
+        owner_email="owner@example.com",
+        fields=fields,
+    )
+    lead = {"company_name": "Fast Haul LLC", "email": "ops@fasthaul.test"}
+    prefill = esign.match_prefill_for_fields(fields, lead)
+    clone = esign.clone_document(
+        tpl["id"],
+        title="Carrier Packet",
+        owner_email="owner@example.com",
+        lead_id="carrier:ops@fasthaul.test",
+        funnel="carrier",
+        prefill=prefill,
+    )
+    assert clone["id"] != tpl["id"]
+    assert clone["template_id"] == tpl["id"]
+    assert clone["lead_id"] == "carrier:ops@fasthaul.test"
+    assert clone["funnel"] == "carrier"
+    assert clone["prefill"][fields[0]["name"]] == "Fast Haul LLC"
+    # Template remains reusable / unsent
+    tpl_reload = esign.load_document(tpl["id"])
+    assert tpl_reload["status"] == "ready"
+    templates = esign.list_templates(owner_email="owner@example.com")
+    ids = {t["id"] for t in templates}
+    assert tpl["id"] in ids
+    assert clone["id"] in ids

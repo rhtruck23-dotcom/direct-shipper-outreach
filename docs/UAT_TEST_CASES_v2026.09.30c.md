@@ -5,7 +5,7 @@ Practical step-by-step for a **~30–45 min** first-pass UAT. Mark **Pass / Fail
 | Field | Fill in |
 |--------|---------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Version (sidebar caption)** | **v2026.10.06a · Esign Docs** |
+| **Version (sidebar caption)** | **v2026.10.06b · Esign per lead** |
 | **Git commit (expected)** | _(after push)_ |
 | **Tester** | _______________________________ |
 | **Date** | _______________ |
@@ -20,11 +20,11 @@ Practical step-by-step for a **~30–45 min** first-pass UAT. Mark **Pass / Fail
 | **Lead for X** | Project Setup (includes Templates) · Find Leads · Leads List → same three buttons |
 | **Settings** | Esign Docs · Org Setup · Cloud Hosting · Help |
 
-**Esign Docs (v2026.10.06a):** Upload PDF → place Text/Date/Sign fields → Download fillable or Save & email. Recipient `?esign=TOKEN` fill page → owner downloads signed copy / gets email. Sign = typed-name AcroForm text (not DigSig).
+**Esign Docs (v2026.10.06b):** Upload PDF → place Text/Date/Sign fields → **Save as template**. From any funnel **Leads List** lead detail → **Send for signature** (pick template, To=lead email, optional note). Prefills company/contact/email/date when labels match. Recipient `?esign=TOKEN` fill page → owner downloads signed copy / gets email. Sign = typed-name AcroForm text (not DigSig).
 
 **Header cleanup (this build):** Leads List views have **no** under-title blurb and **no** cloud/local banner under the title. Sidebar still shows Cloud DB / Local DB + Dry run / LIVE EMAIL at the bottom.
 
-**Notes voice lineage:** Mic fix shipped in **v2026.09.29b** (parent-realm Web Speech + Record; iframe `allow=microphone`). Current caption is **v2026.10.06a**; voice should still work.
+**Notes voice lineage:** Mic fix shipped in **v2026.09.29b** (parent-realm Web Speech + Record; iframe `allow=microphone`). Current caption is **v2026.10.06b**; voice should still work.
 
 ---
 
@@ -100,10 +100,24 @@ Work top to bottom. The **★ Top 10** cases are the must-run set (~20–25 min)
 **Steps:**
 1. Look under **LogixTrek Outreach** in the left sidebar.
 
-**Expected:** Exact caption: `v2026.09.30d · Gmail pool activate`.
+**Expected:** Exact caption: `v2026.10.06b · Esign per lead`.
 
 **Result:** [ ] Pass  [ ] Fail  [ ] Skip  
 **Comment:** (paste exact text if different)
+
+---
+
+### H-02b Esign per lead (dry-run)
+
+**Steps:**
+1. **Settings → Esign Docs** → upload a 1-page PDF → place fields labeled `company_name`, `contact_name`, `email`, `date`, and `Sign` → **Save as template**.
+2. Open **Shipper → Leads List** (or Carrier / Lead for X) → select a lead with email.
+3. Under CRM, find **Send for signature** → pick the template → confirm **To** → optional note → **Send for signature**.
+
+**Expected:** Success toast shows mode `dry-run` (LIVE OFF) and a `?esign=TOKEN` link. Prefill caption lists company/contact/email/date when labels match. Template remains listed under Esign Docs **My documents**.
+
+**Result:** [ ] Pass  [ ] Fail  [ ] Skip  
+**Comment:**
 
 ---
 

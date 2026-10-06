@@ -3544,9 +3544,10 @@ def page_help():
 
 ### Esign Docs (Settings)
 1. **Settings → Esign Docs** — upload PDF (layout unchanged).  
-2. Place **Text / Date / Sign** fields (Sign = typed name AcroForm text).  
-3. **Download fillable PDF**, or **Save & email** (attachment + `?esign=TOKEN` fill link).  
-4. Recipient opens fill link → submits → owner gets signed PDF by email (LIVE) and can download under **My documents**.
+2. Place **Text / Date / Sign** fields (Sign = typed name AcroForm text). Label fields `company_name` / `contact_name` / `email` / `date` for CRM auto-prefill.  
+3. **Save as template** (named), or **Save & email** (attachment + `?esign=TOKEN` fill link).  
+4. **Leads List** (Shipper / Carrier / Lead for X) → open a lead → **Send for signature** — pick template, confirm To, optional note, Send.  
+5. Recipient opens fill link / fillable PDF → submits → owner gets signed PDF by email (LIVE) and can download under **My documents**.
 
 Email opens the door. **Phone within 2 hours** of a positive reply closes the account / lease-on / deal.
 """
@@ -3662,7 +3663,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.10.06a · Esign Docs")
+        st.caption("v2026.10.06b · Esign per lead")
 
         from src.notes_ui import render_sidebar_add_note_button
 

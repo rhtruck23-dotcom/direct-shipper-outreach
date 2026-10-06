@@ -184,6 +184,17 @@ def render_lead_crm_panel(
                 st.error(result.get("error") or "Send failed.")
             st.rerun()
 
+    # ---- Send for signature (Esign Docs templates) ----
+    from .esign_ui import render_send_for_signature
+
+    render_send_for_signature(
+        lead,
+        company,
+        funnel=funnel,
+        key_prefix=f"{key_prefix}_esign",
+        persist=persist,
+    )
+
     # ---- Tasks ----
     st.markdown("#### Schedule task")
     t1, t2 = st.columns(2)
