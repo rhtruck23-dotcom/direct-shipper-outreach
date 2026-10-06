@@ -73,6 +73,7 @@ from src.stages import STAGE_STYLE, contact_indicator, stage_label
 from src.storage import update_lead, using_cloud
 from src.cloud_setup import build_simple_secrets_toml, secret_status
 from src.templates import render_email
+from src.esign_ui import page_esign_docs, try_render_public_fill
 
 st.set_page_config(
     page_title="LogixTrek Direct Shipper Outreach",
@@ -3541,12 +3542,22 @@ def page_help():
 - **Lead for X** templates: **Lead for X → Project Setup** (Templates section)  
 - Also previewed inside each funnel’s Pipeline tab.
 
+### Esign Docs (Settings)
+1. **Settings → Esign Docs** — upload PDF (layout unchanged).  
+2. Place **Text / Date / Sign** fields (Sign = typed name AcroForm text).  
+3. **Download fillable PDF**, or **Save & email** (attachment + `?esign=TOKEN` fill link).  
+4. Recipient opens fill link → submits → owner gets signed PDF by email (LIVE) and can download under **My documents**.
+
 Email opens the door. **Phone within 2 hours** of a positive reply closes the account / lease-on / deal.
 """
     )
 
 
 def main():
+    # Public recipient fill page (?esign=TOKEN) — no login required
+    if try_render_public_fill():
+        return
+
     user = _require_auth()
     if not user:
         return
@@ -3573,7 +3584,9 @@ def main():
         if p in pages_available
     ]
     settings_pages = [
-        p for p in ("Org Setup", "Cloud Hosting", "Help") if p in pages_available
+        p
+        for p in ("Esign Docs", "Org Setup", "Cloud Hosting", "Help")
+        if p in pages_available
     ]
 
     # Map old bookmarks / session values → hub page + horizontal tab
@@ -3649,7 +3662,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.09.30i · Reply inbox poll")
+        st.caption("v2026.10.06a · Esign Docs")
 
         from src.notes_ui import render_sidebar_add_note_button
 
@@ -3700,6 +3713,7 @@ def main():
             title="Settings",
             pages=settings_pages,
             short_map={
+                "Esign Docs": "Esign Docs",
                 "Org Setup": "Org Setup",
                 "Cloud Hosting": "Cloud Hosting",
                 "Help": "Help",
@@ -3736,6 +3750,7 @@ def main():
         "Org Setup": page_org_setup,
         "Cloud Hosting": page_cloud,
         "Help": page_help,
+        "Esign Docs": lambda: page_esign_docs(user=user, company=_company()),
     }
     # Keyed container remounts page body on nav switch — reduces stale widget residue
     epoch = int(st.session_state.get("_lt_nav_epoch") or 0)

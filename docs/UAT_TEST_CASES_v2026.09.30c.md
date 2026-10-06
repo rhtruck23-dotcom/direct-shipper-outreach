@@ -5,8 +5,8 @@ Practical step-by-step for a **~30–45 min** first-pass UAT. Mark **Pass / Fail
 | Field | Fill in |
 |--------|---------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Version (sidebar caption)** | **v2026.09.30d · Gmail pool activate** |
-| **Git commit (expected)** | `d8bf80e` |
+| **Version (sidebar caption)** | **v2026.10.06a · Esign Docs** |
+| **Git commit (expected)** | _(after push)_ |
 | **Tester** | _______________________________ |
 | **Date** | _______________ |
 | **Safety (first pass)** | **Send LIVE emails = OFF** · **Autopilot = OFF** · IMAP poll OFF |
@@ -18,11 +18,13 @@ Practical step-by-step for a **~30–45 min** first-pass UAT. Mark **Pass / Fail
 | **Shipper** | Find Shippers · Leads List → horizontal **List \| Pipeline \| Inbox** (buttons, default List) |
 | **Carrier** | Find Carriers · Leads List → same three buttons |
 | **Lead for X** | Project Setup (includes Templates) · Find Leads · Leads List → same three buttons |
-| **Settings** | Org Setup · Cloud Hosting · Help |
+| **Settings** | Esign Docs · Org Setup · Cloud Hosting · Help |
+
+**Esign Docs (v2026.10.06a):** Upload PDF → place Text/Date/Sign fields → Download fillable or Save & email. Recipient `?esign=TOKEN` fill page → owner downloads signed copy / gets email. Sign = typed-name AcroForm text (not DigSig).
 
 **Header cleanup (this build):** Leads List views have **no** under-title blurb and **no** cloud/local banner under the title. Sidebar still shows Cloud DB / Local DB + Dry run / LIVE EMAIL at the bottom.
 
-**Notes voice lineage:** Mic fix shipped in **v2026.09.29b** (parent-realm Web Speech + Record; iframe `allow=microphone`). Current caption is **v2026.09.30d**; voice should still work.
+**Notes voice lineage:** Mic fix shipped in **v2026.09.29b** (parent-realm Web Speech + Record; iframe `allow=microphone`). Current caption is **v2026.10.06a**; voice should still work.
 
 ---
 

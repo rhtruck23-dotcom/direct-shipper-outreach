@@ -1,0 +1,97 @@
+"""Esign Docs — AcroForm field merge / fill tests (mock PDF bytes)."""
+from __future__ import annotations
+
+import io
+
+from pypdf import PageObject, PdfReader, PdfWriter
+
+from src import esign
+
+
+def _blank_pdf(pages: int = 1, width: float = 612, height: float = 792) -> bytes:
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_page(PageObject.create_blank_page(width=width, height=height))
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
+def test_new_field_defaults():
+    f = esign.new_field(field_type="sign", page=0, x=0.2, y_from_top=0.3)
+    assert f["type"] == "sign"
+    assert f["name"].startswith("sign_")
+    assert f["label"] == "Sign"
+    assert 0 <= f["x"] <= 1
+
+
+def test_build_fillable_adds_acroform_fields():
+    original = _blank_pdf()
+    fields = [
+        esign.new_field(field_type="text", label="Name", x=0.1, y_from_top=0.2),
+        esign.new_field(field_type="date", label="Date", x=0.1, y_from_top=0.3),
+        esign.new_field(field_type="sign", label="Sign", x=0.1, y_from_top=0.4),
+    ]
+    out = esign.build_fillable_pdf(original, fields)
+    reader = PdfReader(io.BytesIO(out))
+    form = reader.get_form_text_fields()
+    assert form is not None
+    assert len(form) == 3
+    for f in fields:
+        assert f["name"] in form
+
+
+def test_fill_form_values_writes_text():
+    original = _blank_pdf()
+    fields = [esign.new_field(field_type="text", label="Name", x=0.1, y_from_top=0.2)]
+    fillable = esign.build_fillable_pdf(original, fields)
+    name = fields[0]["name"]
+    filled = esign.fill_form_values(fillable, {name: "Ada Lovelace"})
+    reader = PdfReader(io.BytesIO(filled))
+    assert reader.get_form_text_fields()[name] == "Ada Lovelace"
+
+
+def test_rect_from_norm_bottom_left():
+    # y_from_top=0 at top → ury near page_h
+    llx, lly, urx, ury = esign._rect_from_norm(
+        page_w=100, page_h=200, x=0.1, y_from_top=0.0, w=0.2, h=0.1
+    )
+    assert abs(llx - 10) < 0.01
+    assert abs(urx - 30) < 0.01
+    assert abs(ury - 200) < 0.01
+    assert abs(lly - 180) < 0.01
+
+
+def test_create_complete_signing_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr(esign, "ESIGN_DIR", tmp_path / "esign")
+    monkeypatch.setattr(esign, "ESIGN_INDEX", tmp_path / "esign" / "index.json")
+    original = _blank_pdf()
+    fields = [
+        esign.new_field(field_type="text", label="Name"),
+        esign.new_field(field_type="sign", label="Sign", y_from_top=0.5),
+    ]
+    meta = esign.create_document(
+        title="Test Deal",
+        original_pdf=original,
+        owner_email="owner@example.com",
+        fields=fields,
+    )
+    assert meta["status"] == "ready"
+    assert esign.find_by_token(meta["token"])["id"] == meta["id"]
+    values = {fields[0]["name"]: "Bob", fields[1]["name"]: "Bob Signer"}
+    done = esign.complete_signing(meta["id"], values, signer_email="bob@ex.com")
+    assert done["status"] == "signed"
+    signed = esign.read_signed_pdf(meta["id"])
+    assert signed
+    reader = PdfReader(io.BytesIO(signed))
+    filled = reader.get_form_text_fields()
+    assert filled[fields[0]["name"]] == "Bob"
+    assert filled[fields[1]["name"]] == "Bob Signer"
+
+
+def test_page_count_and_size():
+    pdf = _blank_pdf(pages=2, width=500, height=700)
+    assert esign.pdf_page_count(pdf) == 2
+    w, h = esign.pdf_page_size(pdf, 1)
+    assert abs(w - 500) < 0.1
+    assert abs(h - 700) < 0.1

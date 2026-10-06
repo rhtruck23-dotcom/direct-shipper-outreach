@@ -17,6 +17,7 @@ data/gmail_oauth_token.json
 data/ims_july2026_parsed.csv
 data/mailboxes.json
 data/mailbox_send_counts.json
+data/esign/
 .streamlit/secrets.toml
 __pycache__/
 *.pyc

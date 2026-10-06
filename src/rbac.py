@@ -162,6 +162,12 @@ MODULES: dict[str, dict[str, Any]] = {
         "super_only": False,
         "default_actions": ["read"],
     },
+    "esign": {
+        "label": "Esign Docs",
+        "page": "Esign Docs",
+        "super_only": False,
+        "default_actions": ["create", "read", "update", "delete"],
+    },
     "team_admin": {
         "label": "Team & Access",
         "page": None,  # lives inside Org Setup
@@ -196,6 +202,7 @@ ROLE_PRESETS: dict[str, dict[str, Any]] = {
             "x_pipeline": ["create", "read", "update"],
             "x_inbox": ["create", "read", "update"],
             "x_templates": ["create", "read", "update"],
+            "esign": ["create", "read", "update", "delete"],
             "help": ["read"],
         },
     },
@@ -638,7 +645,7 @@ def _nav_group_for_page(page_label: str) -> Optional[str]:
         "X Inbox",
         "X Templates",
     }
-    settings = {"Org Setup", "Cloud Hosting", "Help"}
+    settings = {"Org Setup", "Cloud Hosting", "Help", "Esign Docs"}
     if page_label in shipper:
         return "shipper"
     if page_label in carrier:
