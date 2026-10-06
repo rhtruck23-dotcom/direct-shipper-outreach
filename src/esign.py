@@ -124,6 +124,27 @@ def doc_dir(doc_id: str) -> Path:
     return ensure_esign_dir() / doc_id
 
 
+def normalize_hex_color(raw: str, *, default: str = "#111827") -> str:
+    """Return #RRGGBB (lowercase) or default if invalid."""
+    s = (raw or "").strip()
+    if s.startswith("#"):
+        s = s[1:]
+    if len(s) == 3 and all(c in "0123456789abcdefABCDEF" for c in s):
+        s = "".join(c * 2 for c in s)
+    if len(s) == 6 and all(c in "0123456789abcdefABCDEF" for c in s):
+        return f"#{s.lower()}"
+    return default
+
+
+def hex_to_pdf_rgb(color: str) -> tuple[float, float, float]:
+    """#RRGGBB → PDF 0..1 RGB triple."""
+    c = normalize_hex_color(color)
+    r = int(c[1:3], 16) / 255.0
+    g = int(c[3:5], 16) / 255.0
+    b = int(c[5:7], 16) / 255.0
+    return r, g, b
+
+
 def new_field(
     *,
     field_type: str = "text",
@@ -133,6 +154,8 @@ def new_field(
     w: float = _DEFAULT_W,
     h: float = _DEFAULT_H,
     label: str = "",
+    value: str = "",
+    color: str = "#111827",
 ) -> dict[str, Any]:
     ft = (field_type or "text").lower().strip()
     if ft not in FIELD_TYPES:
@@ -153,6 +176,9 @@ def new_field(
         "y_from_top": float(max(0.0, min(0.95, y_from_top))),
         "w": float(max(0.05, min(0.9, w))),
         "h": float(max(0.02, min(0.2, h))),
+        # Typewriter content shown in preview / prefilled into AcroForm
+        "value": str(value or ""),
+        "color": normalize_hex_color(color),
     }
 
 
@@ -323,8 +349,12 @@ def build_fillable_pdf(original_pdf: bytes, fields: list[dict[str, Any]]) -> byt
         name = str(field.get("name") or f"field_{i}")
         label = str(field.get("label") or name)
         ftype = str(field.get("type") or "text")
+        typed = str(field.get("value") or "")
         # Sign: slightly larger text; Date/Text: standard
         font_size = 14 if ftype == "sign" else 11
+        r, g, b = hex_to_pdf_rgb(str(field.get("color") or "#111827"))
+        # PDF default appearance: color then font (typewriter preview color)
+        da = f"{r:.3f} {g:.3f} {b:.3f} rg /Helv {font_size} Tf"
         annot = DictionaryObject(
             {
                 NameObject("/Type"): NameObject("/Annot"),
@@ -332,8 +362,8 @@ def build_fillable_pdf(original_pdf: bytes, fields: list[dict[str, Any]]) -> byt
                 NameObject("/FT"): NameObject("/Tx"),
                 NameObject("/T"): TextStringObject(name),
                 NameObject("/TU"): TextStringObject(label),
-                NameObject("/V"): TextStringObject(""),
-                NameObject("/DV"): TextStringObject(""),
+                NameObject("/V"): TextStringObject(typed),
+                NameObject("/DV"): TextStringObject(typed),
                 NameObject("/Rect"): ArrayObject(
                     [
                         FloatObject(llx),
@@ -345,7 +375,7 @@ def build_fillable_pdf(original_pdf: bytes, fields: list[dict[str, Any]]) -> byt
                 NameObject("/F"): NumberObject(4),  # Print
                 NameObject("/Ff"): NumberObject(0),
                 NameObject("/MK"): DictionaryObject(),
-                NameObject("/DA"): TextStringObject(f"/Helv {font_size} Tf 0 g"),
+                NameObject("/DA"): TextStringObject(da),
             }
         )
         added = writer.add_annotation(page_i, annot)

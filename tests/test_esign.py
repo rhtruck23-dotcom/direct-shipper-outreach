@@ -184,6 +184,236 @@ def test_placer_js_commits_drag_without_dom_rebuild():
     assert "suppressClick" in src
     # Regression: rebuilding overlay.innerHTML on every mousemove dropped mouseup
     assert "In-place style update" in src
+    # Right-click menu must use pointerdown (click is swallowed after contextmenu)
+    assert "pointerdown" in src
+    assert 'action: "add"' in src
+    assert "Edit text" in src
+    assert "__ltEsignPlacerGen" in src
+
+
+def test_apply_placer_add_preserves_existing_rects():
+    """
+    Collapse regression (v2026.10.06g): 4 distinct fields on page 1 must keep
+    page/x/y/w/h when adding field E on page 2.
+    """
+    from src import esign_ui
+
+    placements = [
+        (0.10, 0.20),
+        (0.30, 0.50),
+        (0.55, 0.80),
+        (0.70, 0.90),
+    ]
+    fields = [
+        esign.new_field(
+            field_type="text",
+            label=f"A{i}",
+            page=0,
+            x=x,
+            y_from_top=y,
+            w=0.22,
+            h=0.04,
+        )
+        for i, (x, y) in enumerate(placements)
+    ]
+    before = esign_ui._field_rect_snapshot(fields)
+
+    # Simulate bridge right-click Add text on page 2 at y≈0.6
+    after, effects = esign_ui.apply_placer_message(
+        fields,
+        {
+            "action": "add",
+            "type": "text",
+            "page": 1,
+            "x": 0.15,
+            "y_from_top": 0.60,
+            "w": 0.28,
+            "h": 0.04,
+            "label": "Text",
+            "value": "Hello",
+            "color": "#c41e3a",
+        },
+        page_index=1,
+    )
+    assert len(after) == 5
+    assert effects.get("pending_xy") == (0.15, 0.60)
+
+    after_snap = esign_ui._field_rect_snapshot(after)
+    # First 4 ids unchanged
+    for prev, nxt in zip(before, after_snap[:4]):
+        assert prev == nxt, f"field collapsed/moved: before={prev} after={nxt}"
+
+    e = after[4]
+    assert int(e["page"]) == 1
+    assert abs(float(e["y_from_top"]) - 0.60) < 1e-9
+    assert abs(float(e["x"]) - 0.15) < 1e-9
+    assert e.get("value") == "Hello"
+    assert e.get("color") == "#c41e3a"
+
+    # Export AcroForm rects must still match original p1 placements
+    pdf = _blank_pdf(pages=2)
+    out = esign.build_fillable_pdf(pdf, after)
+    rects = esign.acroform_field_rects(out)
+    page_w, page_h = 612.0, 792.0
+    for f, (x, y) in zip(after[:4], placements):
+        expected = esign._rect_from_norm(
+            page_w=page_w, page_h=page_h, x=x, y_from_top=y, w=0.22, h=0.04
+        )
+        got = rects[f["name"]]
+        for a, b in zip(got, expected):
+            assert abs(a - b) < 1.0, f"{f['label']} rect drifted: {got} vs {expected}"
+
+
+def test_apply_placer_right_click_add_appends_at_click_pos():
+    """Right-click Add text bridge payload must append one field at click x/y/page."""
+    from src import esign_ui
+
+    fields = [
+        esign.new_field(field_type="text", page=0, x=0.1, y_from_top=0.2),
+    ]
+    before = esign_ui._field_rect_snapshot(fields)
+    after, _ = esign_ui.apply_placer_message(
+        fields,
+        {
+            "action": "add",
+            "type": "date",
+            "page": 0,
+            "x": 0.42,
+            "y_from_top": 0.33,
+            "w": 0.28,
+            "h": 0.04,
+            "label": "Date",
+        },
+        page_index=0,
+    )
+    assert len(after) == 2
+    assert esign_ui._field_rect_snapshot(after)[0] == before[0]
+    assert after[1]["type"] == "date"
+    assert abs(float(after[1]["x"]) - 0.42) < 1e-9
+    assert abs(float(after[1]["y_from_top"]) - 0.33) < 1e-9
+
+
+def test_apply_placer_edit_text_keeps_rect():
+    """Edit text updates label/value/color without moving the field rect."""
+    from src import esign_ui
+
+    f = esign.new_field(
+        field_type="text",
+        label="Old",
+        page=0,
+        x=0.25,
+        y_from_top=0.40,
+        w=0.30,
+        h=0.05,
+        value="before",
+        color="#111827",
+    )
+    rect_before = esign_ui._field_rect_snapshot([f])[0]
+    after, _ = esign_ui.apply_placer_message(
+        [f],
+        {
+            "action": "edit_text",
+            "id": f["id"],
+            "label": "Company",
+            "value": "Acme Dairy Co",
+            "color": "#2563eb",
+        },
+        page_index=0,
+    )
+    assert len(after) == 1
+    assert after[0]["label"] == "Company"
+    assert after[0]["value"] == "Acme Dairy Co"
+    assert after[0]["color"] == "#2563eb"
+    assert esign_ui._field_rect_snapshot(after)[0] == rect_before
+
+
+def test_field_color_roundtrip_in_state_and_pdf_da():
+    """Color stored on field round-trips and lands in AcroForm /DA."""
+    f = esign.new_field(
+        field_type="text",
+        label="Ink",
+        value="Typewriter line",
+        color="#c41e3a",
+        x=0.1,
+        y_from_top=0.2,
+    )
+    assert f["color"] == "#c41e3a"
+    assert f["value"] == "Typewriter line"
+    # normalize
+    assert esign.normalize_hex_color("C41E3A") == "#c41e3a"
+    assert esign.normalize_hex_color("#abc") == "#aabbcc"
+    r, g, b = esign.hex_to_pdf_rgb("#c41e3a")
+    assert abs(r - 196 / 255) < 1e-6
+
+    pdf = _blank_pdf()
+    out = esign.build_fillable_pdf(pdf, [f])
+    from pypdf import PdfReader
+
+    reader = PdfReader(__import__("io").BytesIO(out))
+    form_fields = reader.get_form_text_fields()
+    assert form_fields[f["name"]] == "Typewriter line"
+    # Inspect /DA for rgb
+    found_da = None
+    for page in reader.pages:
+        for ref in page.get("/Annots") or []:
+            annot = ref.get_object()
+            if str(annot.get("/T")) == f["name"]:
+                found_da = str(annot.get("/DA"))
+    assert found_da is not None
+    assert "rg" in found_da
+    assert "/Helv" in found_da
+
+
+def test_consume_placer_add_after_existing_keeps_p1_coords():
+    """Session consume path: add on page 2 must not rewrite page-1 fields."""
+    from src import esign_ui
+    import streamlit as st
+
+    class _SS(dict):
+        pass
+
+    placements = [(0.10, 0.20), (0.30, 0.50), (0.55, 0.80), (0.70, 0.90)]
+    fields = [
+        esign.new_field(
+            field_type="text", label=f"P1-{i}", page=0, x=x, y_from_top=y
+        )
+        for i, (x, y) in enumerate(placements)
+    ]
+    before = esign_ui._field_rect_snapshot(fields)
+    ss = _SS()
+    ss["esign_compose_fields"] = fields
+    ss["esign_placer_payload"] = json.dumps(
+        {
+            "action": "add",
+            "type": "text",
+            "page": 1,
+            "x": 0.18,
+            "y_from_top": 0.61,
+            "w": 0.28,
+            "h": 0.04,
+            "label": "Text",
+        }
+    )
+    original_ss = st.session_state
+    original_rerun = st.rerun
+
+    def _fake_rerun():
+        pass
+
+    try:
+        st.session_state = ss  # type: ignore[misc]
+        st.rerun = _fake_rerun  # type: ignore[method-assign]
+        esign_ui._consume_placer_action(page_index=1)
+        after = ss["esign_compose_fields"]
+        assert len(after) == 5
+        after_snap = esign_ui._field_rect_snapshot(after)
+        for prev, nxt in zip(before, after_snap[:4]):
+            assert prev == nxt
+        assert int(after[4]["page"]) == 1
+        assert abs(float(after[4]["y_from_top"]) - 0.61) < 1e-9
+    finally:
+        st.session_state = original_ss  # type: ignore[misc]
+        st.rerun = original_rerun  # type: ignore[method-assign]
 
 
 def test_create_complete_signing_roundtrip(tmp_path, monkeypatch):

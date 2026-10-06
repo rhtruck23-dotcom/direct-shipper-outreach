@@ -3663,7 +3663,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.10.06f · Esign field coords")
+        st.caption("v2026.10.06g · Esign fields sticky+edit")
 
         from src.notes_ui import render_sidebar_add_note_button
 

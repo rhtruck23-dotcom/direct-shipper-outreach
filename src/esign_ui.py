@@ -107,6 +107,121 @@ def _sync_placer_sliders(x: float, y_from_top: float) -> None:
     st.session_state["esign_y"] = int(round(py * 100))
 
 
+def _field_rect_snapshot(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Stable per-field rect copy for tests / sticky-coord asserts."""
+    out: list[dict[str, Any]] = []
+    for f in fields or []:
+        out.append(
+            {
+                "id": f.get("id"),
+                "page": int(f.get("page") or 0),
+                "x": float(f.get("x") or 0),
+                "y_from_top": float(f.get("y_from_top") or 0),
+                "w": float(f.get("w") or 0),
+                "h": float(f.get("h") or 0),
+            }
+        )
+    return out
+
+
+def apply_placer_message(
+    fields: list[dict[str, Any]],
+    msg: dict[str, Any],
+    *,
+    page_index: int = 0,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """
+    Pure bridge mutator: apply one placer action to a field list.
+
+    Critical: `add` only appends — never rewrites existing field page/x/y/w/h.
+    `update` / `edit_text` only touch the matching field id.
+    Returns (new_fields, side_effects) where side_effects may include
+    pending_xy, edit_field_id, clear_edit.
+    """
+    # Copy each dict so callers cannot accidentally share mutable state
+    # across list entries (collapse-into-one-place failure mode).
+    out = [dict(f) for f in (fields or [])]
+    effects: dict[str, Any] = {}
+    action = str(msg.get("action") or "")
+
+    if action == "add":
+        ftype = str(msg.get("type") or "text").lower()
+        x = float(msg["x"]) if msg.get("x") is not None else 0.1
+        y = (
+            float(msg["y_from_top"])
+            if msg.get("y_from_top") is not None
+            else 0.15
+        )
+        out.append(
+            esign.new_field(
+                field_type=ftype,
+                page=int(msg.get("page", page_index)),
+                x=x,
+                y_from_top=y,
+                w=float(msg["w"]) if msg.get("w") is not None else 0.28,
+                h=float(msg["h"]) if msg.get("h") is not None else 0.04,
+                label=str(msg.get("label") or ""),
+                value=str(msg.get("value") or ""),
+                color=str(msg.get("color") or "#111827"),
+            )
+        )
+        effects["pending_xy"] = (x, y)
+    elif action == "update":
+        fid = str(msg.get("id") or "")
+        if not fid:
+            return out, effects
+        for f in out:
+            if f.get("id") != fid:
+                continue
+            if "x" in msg and msg["x"] is not None:
+                f["x"] = float(msg["x"])
+            if "y_from_top" in msg and msg["y_from_top"] is not None:
+                f["y_from_top"] = float(msg["y_from_top"])
+            if "w" in msg and msg["w"] is not None:
+                f["w"] = float(msg["w"])
+            if "h" in msg and msg["h"] is not None:
+                f["h"] = float(msg["h"])
+            effects["pending_xy"] = (
+                float(f.get("x") or 0.1),
+                float(f.get("y_from_top") or 0.15),
+            )
+            break
+    elif action == "edit_text":
+        fid = str(msg.get("id") or "")
+        if not fid:
+            return out, effects
+        for f in out:
+            if f.get("id") != fid:
+                continue
+            # Label / typewriter / color only — never move the rect.
+            if "label" in msg and msg["label"] is not None:
+                f["label"] = str(msg["label"])
+            if "value" in msg and msg["value"] is not None:
+                f["value"] = str(msg["value"])
+            if "color" in msg and msg["color"] is not None:
+                f["color"] = esign.normalize_hex_color(str(msg["color"]))
+            break
+    elif action == "delete":
+        fid = str(msg.get("id") or "")
+        out = [f for f in out if f.get("id") != fid]
+        effects["deleted_id"] = fid
+    elif action == "edit":
+        # Open editor for this field id (right panel); no geometry change.
+        fid = str(msg.get("id") or "")
+        if fid:
+            effects["edit_field_id"] = fid
+    elif action == "click":
+        px = float(msg["x"]) if msg.get("x") is not None else 0.1
+        py = (
+            float(msg["y_from_top"])
+            if msg.get("y_from_top") is not None
+            else 0.15
+        )
+        effects["pending_xy"] = (px, py)
+
+    return out, effects
+
+
 def _consume_placer_action(*, page_index: int) -> None:
     raw = str(st.session_state.get("esign_placer_payload") or "").strip()
     if not raw:
@@ -121,52 +236,35 @@ def _consume_placer_action(*, page_index: int) -> None:
         return
 
     fields = list(st.session_state.get(_session_fields_key()) or [])
+    before = _field_rect_snapshot(fields)
+    fields, effects = apply_placer_message(fields, msg, page_index=page_index)
+    after = _field_rect_snapshot(fields)
+
+    # Sticky-coord guard: existing ids must keep page/x/y/w/h unless this
+    # message was an explicit geometry update for that single id.
     action = str(msg.get("action") or "")
-    if action == "add":
-        ftype = str(msg.get("type") or "text").lower()
-        fields.append(
-            esign.new_field(
-                field_type=ftype,
-                page=int(msg.get("page", page_index)),
-                x=float(msg.get("x") or 0.1),
-                y_from_top=float(msg.get("y_from_top") or 0.15),
-                w=float(msg.get("w") or 0.28),
-                h=float(msg.get("h") or 0.04),
-                label=str(msg.get("label") or ""),
-            )
-        )
-        _sync_placer_sliders(
-            float(msg.get("x") or 0.1),
-            float(msg.get("y_from_top") or 0.15),
-        )
-    elif action == "update":
-        fid = str(msg.get("id") or "")
-        for f in fields:
-            if f.get("id") == fid:
-                if "x" in msg:
-                    f["x"] = float(msg["x"])
-                if "y_from_top" in msg:
-                    f["y_from_top"] = float(msg["y_from_top"])
-                if "w" in msg:
-                    f["w"] = float(msg["w"])
-                if "h" in msg:
-                    f["h"] = float(msg["h"])
-                # Drag/resize must refresh sliders so Download uses same coords
-                # the blue overlay shows (not stale Place-field defaults).
-                _sync_placer_sliders(
-                    float(f.get("x") or 0.1),
-                    float(f.get("y_from_top") or 0.15),
-                )
-                break
-    elif action == "delete":
-        fid = str(msg.get("id") or "")
-        fields = [f for f in fields if f.get("id") != fid]
-    elif action == "click":
-        px = float(msg.get("x") or 0.1)
-        py = float(msg.get("y_from_top") or 0.15)
-        _sync_placer_sliders(px, py)
-        st.session_state["esign_placer_payload"] = ""
-        st.rerun()
+    updated_id = str(msg.get("id") or "") if action == "update" else ""
+    before_by_id = {r["id"]: r for r in before}
+    for snap in after:
+        fid = snap["id"]
+        if fid not in before_by_id:
+            continue
+        if fid == updated_id:
+            continue
+        prev = before_by_id[fid]
+        for k in ("page", "x", "y_from_top", "w", "h"):
+            if snap[k] != prev[k]:
+                for f in fields:
+                    if f.get("id") == fid:
+                        f[k] = prev[k]
+
+    if "pending_xy" in effects:
+        _sync_placer_sliders(*effects["pending_xy"])
+    if effects.get("edit_field_id"):
+        st.session_state["esign_edit_field_id"] = effects["edit_field_id"]
+    deleted = effects.get("deleted_id")
+    if deleted and st.session_state.get("esign_edit_field_id") == deleted:
+        st.session_state.pop("esign_edit_field_id", None)
 
     st.session_state[_session_fields_key()] = fields
     st.session_state["esign_placer_payload"] = ""
@@ -184,6 +282,10 @@ def _render_field_placer(
     """Interactive overlay: click to set position, right-click to add field type."""
     b64 = base64.b64encode(png_bytes).decode("ascii")
     on_page = [f for f in fields if int(f.get("page") or 0) == page_index]
+    # Ensure value/color always present for overlay JS
+    for f in on_page:
+        f.setdefault("value", "")
+        f.setdefault("color", "#111827")
     fields_json = json.dumps(on_page)
     default_w = 0.28
     default_h = 0.04
@@ -195,13 +297,13 @@ def _render_field_placer(
     <img id="lt-esign-img" src="data:image/png;base64,{b64}"
          style="width:100%;height:auto;display:block;border:1px solid #cbd5e1;border-radius:8px;" />
     <div id="lt-esign-overlay" style="position:absolute;left:0;top:0;width:100%;height:100%;"></div>
-    <div id="lt-esign-menu" style="display:none;position:absolute;z-index:20;background:#fff;
+    <div id="lt-esign-menu" style="display:none;position:absolute;z-index:9999;background:#fff;
          border:1px solid #94a3b8;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);
-         padding:4px 0;min-width:140px;"></div>
+         padding:4px 0;min-width:160px;"></div>
   </div>
   <p style="margin:8px 0 0;font-size:12px;color:#64748b;">
     <b>Click</b> to set position · <b>Right-click</b> Add text / date / sign ·
-    Drag boxes to move · corner handle to resize
+    Right-click a field to <b>Edit text</b> or delete · Drag to move · corner to resize
   </p>
 </div>
 <script>
@@ -209,6 +311,7 @@ def _render_field_placer(
   const PAGE = {page_index};
   const DEF_W = {default_w};
   const DEF_H = {default_h};
+  const GEN = (window.__ltEsignPlacerGen = (window.__ltEsignPlacerGen || 0) + 1);
   let fields = {fields_json};
   const stage = document.getElementById("lt-esign-stage");
   const overlay = document.getElementById("lt-esign-overlay");
@@ -231,7 +334,7 @@ def _render_field_placer(
       const lab = (t.getAttribute("aria-label") || "") + (t.id || "") +
         (t.getAttribute("data-testid") || "");
       return lab.indexOf("lt_esign_placer_payload") >= 0 || lab.indexOf("esign_placer") >= 0;
-    }}) || areas[areas.length - 1];
+    }});
     if (!ta) return;
     try {{
       const tracker = ta._valueTracker;
@@ -252,7 +355,9 @@ def _render_field_placer(
     }});
     if (btn) {{
       if (pushTimer) clearTimeout(pushTimer);
-      pushTimer = setTimeout(function () {{ btn.click(); }}, 40);
+      pushTimer = setTimeout(function () {{
+        try {{ btn.click(); }} catch (e) {{}}
+      }}, 40);
     }}
   }}
 
@@ -279,13 +384,20 @@ def _render_field_placer(
   }}
 
   function applyBoxStyle(box, f) {{
-    box.style.left = (f.x * 100) + "%";
-    box.style.top = (f.y_from_top * 100) + "%";
-    box.style.width = (f.w * 100) + "%";
-    box.style.height = (f.h * 100) + "%";
+    const y = (f.y_from_top != null ? f.y_from_top : f.y) || 0;
+    box.style.left = ((f.x || 0) * 100) + "%";
+    box.style.top = (y * 100) + "%";
+    box.style.width = ((f.w || 0.28) * 100) + "%";
+    box.style.height = ((f.h || 0.04) * 100) + "%";
+  }}
+
+  function hideMenu() {{
+    menu.style.display = "none";
+    menu.innerHTML = "";
   }}
 
   function commitDrag() {{
+    if (GEN !== window.__ltEsignPlacerGen) return;
     if (!drag) return;
     const f = fields.find(function (x) {{ return x.id === drag.id; }});
     const moved = drag.moved;
@@ -304,6 +416,7 @@ def _render_field_placer(
   }}
 
   function onDragMove(ev) {{
+    if (GEN !== window.__ltEsignPlacerGen) return;
     if (!drag) return;
     const r = overlay.getBoundingClientRect();
     if (!r.width || !r.height) return;
@@ -326,24 +439,28 @@ def _render_field_placer(
   }}
 
   function bindGlobal(type, fn) {{
-    document.addEventListener(type, fn, true);
-    window.addEventListener(type, fn, true);
+    const wrap = function (ev) {{
+      if (GEN !== window.__ltEsignPlacerGen) return;
+      fn(ev);
+    }};
+    document.addEventListener(type, wrap, true);
+    window.addEventListener(type, wrap, true);
     try {{
-      window.parent.document.addEventListener(type, fn, true);
-      window.parent.addEventListener(type, fn, true);
+      window.parent.document.addEventListener(type, wrap, true);
+      window.parent.addEventListener(type, wrap, true);
     }} catch (e) {{}}
   }}
 
   bindGlobal("pointermove", onDragMove);
   bindGlobal("pointerup", commitDrag);
   bindGlobal("pointercancel", commitDrag);
-  // Fallback for environments without PointerEvent
   bindGlobal("mousemove", onDragMove);
   bindGlobal("mouseup", commitDrag);
 
   function startDrag(ev, f, mode) {{
     ev.preventDefault();
     ev.stopPropagation();
+    hideMenu();
     drag = {{
       id: f.id, mode: mode, sx: ev.clientX, sy: ev.clientY,
       ox: f.x, oy: f.y_from_top, ow: f.w, oh: f.h, moved: false
@@ -355,6 +472,28 @@ def _render_field_placer(
     }} catch (e) {{}}
   }}
 
+  function menuRow(label, onPick) {{
+    const row = document.createElement("div");
+    row.setAttribute("role", "button");
+    row.textContent = label;
+    row.style.cssText =
+      "display:block;width:100%;text-align:left;padding:8px 12px;border:none;" +
+      "background:transparent;cursor:pointer;font-size:13px;box-sizing:border-box;";
+    row.onmouseover = function () {{ row.style.background = "#f1f5f9"; }};
+    row.onmouseout = function () {{ row.style.background = "transparent"; }};
+    // pointerdown (not click): Streamlit iframe often swallows click after
+    // contextmenu; pointerdown reliably posts the bridge action.
+    function fire(ev) {{
+      ev.preventDefault();
+      ev.stopPropagation();
+      hideMenu();
+      onPick();
+    }}
+    row.addEventListener("pointerdown", fire);
+    row.addEventListener("mousedown", fire);
+    return row;
+  }}
+
   function renderFields() {{
     syncOverlayToImage();
     overlay.innerHTML = "";
@@ -363,9 +502,11 @@ def _render_field_placer(
       box.className = "lt-esign-field";
       box.dataset.id = f.id;
       const col = typeColor(f.type);
+      const ink = f.color || "#111827";
       box.style.cssText =
         "position:absolute;box-sizing:border-box;border:2px solid " + col + ";" +
-        "background:rgba(37,99,235,0.08);border-radius:4px;cursor:move;touch-action:none;";
+        "background:rgba(37,99,235,0.08);border-radius:4px;cursor:move;touch-action:none;" +
+        "overflow:hidden;";
       applyBoxStyle(box, f);
       const lbl = document.createElement("span");
       lbl.textContent = f.label || f.type || "Field";
@@ -373,6 +514,15 @@ def _render_field_placer(
         "position:absolute;left:2px;top:-16px;font-size:10px;color:" + col +
         ";background:#fff;padding:0 3px;border-radius:3px;white-space:nowrap;";
       box.appendChild(lbl);
+      if (f.value) {{
+        const tw = document.createElement("div");
+        tw.textContent = f.value;
+        tw.style.cssText =
+          "position:absolute;left:4px;top:2px;right:4px;bottom:2px;" +
+          "font-family:Courier New,Courier,monospace;font-size:12px;line-height:1.2;" +
+          "color:" + ink + ";white-space:pre-wrap;overflow:hidden;pointer-events:none;";
+        box.appendChild(tw);
+      }}
       const handle = document.createElement("div");
       handle.className = "lt-esign-resize";
       handle.style.cssText =
@@ -389,7 +539,7 @@ def _render_field_placer(
       box.addEventListener("contextmenu", function (ev) {{
         ev.preventDefault();
         ev.stopPropagation();
-        pushAction({{ action: "delete", id: f.id }});
+        showFieldMenu(ev, f);
       }});
       overlay.appendChild(box);
     }});
@@ -398,33 +548,34 @@ def _render_field_placer(
       const py = pending.y_from_top != null ? pending.y_from_top : pending.y;
       dot.style.cssText =
         "position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;" +
-        "background:#dc2626;border-radius:50%;border:2px solid #fff;" +
+        "background:#dc2626;border-radius:50%;border:2px solid #fff;z-index:5;" +
         "left:" + (pending.x * 100) + "%;top:" + (py * 100) + "%;";
       overlay.appendChild(dot);
     }}
   }}
 
-  function showMenu(ev, pos) {{
-    menu.innerHTML = "";
+  function placeMenu(ev) {{
     menu.style.display = "block";
     const r = stage.getBoundingClientRect();
-    menu.style.left = Math.min(ev.clientX - r.left, r.width - 150) + "px";
-    menu.style.top = Math.min(ev.clientY - r.top, r.height - 120) + "px";
+    const mw = 168;
+    const mh = 140;
+    let left = ev.clientX - r.left;
+    let top = ev.clientY - r.top;
+    if (left + mw > r.width) left = Math.max(0, r.width - mw);
+    if (top + mh > r.height) top = Math.max(0, r.height - mh);
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+  }}
+
+  function showMenu(ev, pos) {{
+    menu.innerHTML = "";
+    placeMenu(ev);
     [
       {{ t: "text", label: "Add text" }},
       {{ t: "date", label: "Add date" }},
       {{ t: "sign", label: "Add sign" }}
     ].forEach(function (item) {{
-      const row = document.createElement("button");
-      row.type = "button";
-      row.textContent = item.label;
-      row.style.cssText =
-        "display:block;width:100%;text-align:left;padding:8px 12px;border:none;" +
-        "background:transparent;cursor:pointer;font-size:13px;";
-      row.onmouseover = function () {{ row.style.background = "#f1f5f9"; }};
-      row.onmouseout = function () {{ row.style.background = "transparent"; }};
-      row.onclick = function () {{
-        menu.style.display = "none";
+      menu.appendChild(menuRow(item.label, function () {{
         pushAction({{
           action: "add",
           type: item.t,
@@ -433,15 +584,38 @@ def _render_field_placer(
           y_from_top: pos.y_from_top,
           w: DEF_W,
           h: DEF_H,
-          label: item.label.replace("Add ", "")
+          label: item.label.replace("Add ", ""),
+          value: "",
+          color: "#111827"
         }});
-      }};
-      menu.appendChild(row);
+      }}));
     }});
   }}
 
+  function showFieldMenu(ev, f) {{
+    menu.innerHTML = "";
+    placeMenu(ev);
+    if ((f.type || "text") === "text") {{
+      menu.appendChild(menuRow("Edit text", function () {{
+        pushAction({{ action: "edit", id: f.id }});
+      }}));
+    }}
+    menu.appendChild(menuRow("Delete field", function () {{
+      pushAction({{ action: "delete", id: f.id }});
+    }}));
+  }}
+
+  // Keep menu clicks from falling through to overlay
+  menu.addEventListener("pointerdown", function (ev) {{
+    ev.stopPropagation();
+  }});
+  menu.addEventListener("mousedown", function (ev) {{
+    ev.stopPropagation();
+  }});
+
   overlay.addEventListener("click", function (ev) {{
     if (drag || suppressClick) return;
+    hideMenu();
     const pos = fracFromEvent(ev);
     pending = pos;
     renderFields();
@@ -457,7 +631,10 @@ def _render_field_placer(
   }});
 
   img.onload = function () {{ renderFields(); }};
-  window.addEventListener("resize", function () {{ syncOverlayToImage(); }});
+  window.addEventListener("resize", function () {{
+    if (GEN !== window.__ltEsignPlacerGen) return;
+    syncOverlayToImage();
+  }});
   if (img.complete) renderFields();
 }})();
 </script>
@@ -769,6 +946,21 @@ def _compose_tab(*, user: dict, company: dict) -> None:
             key="esign_label",
             help="Use labels like company_name, contact_name, email, date for CRM auto-prefill.",
         )
+        typewriter = ""
+        color = "#111827"
+        if ftype == "text":
+            typewriter = st.text_area(
+                "Typewriter text",
+                value="",
+                key="esign_typewriter",
+                height=68,
+                help="Optional typed content shown on the preview and prefilled in the PDF.",
+            )
+            color = st.color_picker(
+                "Text color",
+                value="#111827",
+                key="esign_text_color",
+            )
         def_x = int(round(pending_x * 100))
         def_y = int(round(pending_y * 100))
         x = st.slider("X from left (%)", 0, 90, min(90, def_x), key="esign_x") / 100.0
@@ -777,7 +969,7 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         h = st.slider("Height (%)", 2, 20, 4, key="esign_h") / 100.0
 
         if st.button("Place field", type="primary", use_container_width=True):
-            fields = list(st.session_state.get(_session_fields_key()) or [])
+            fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
             fields.append(
                 esign.new_field(
                     field_type=ftype,
@@ -787,32 +979,95 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                     w=w,
                     h=h,
                     label=label,
+                    value=typewriter if ftype == "text" else "",
+                    color=color if ftype == "text" else "#111827",
                 )
             )
             st.session_state[_session_fields_key()] = fields
             st.rerun()
 
-        fields = list(st.session_state.get(_session_fields_key()) or [])
+        fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
+
+        edit_id = str(st.session_state.get("esign_edit_field_id") or "")
+        edit_field = next((f for f in fields if f.get("id") == edit_id), None)
+        if edit_field is not None:
+            st.markdown("#### Edit text")
+            st.caption(
+                f"Editing **{edit_field.get('label')}** · "
+                f"p{int(edit_field.get('page', 0)) + 1} · "
+                f"position stays put"
+            )
+            new_label = st.text_input(
+                "Label",
+                value=str(edit_field.get("label") or ""),
+                key=f"esign_edit_label_{edit_id}",
+            )
+            new_value = st.text_area(
+                "Typewriter text",
+                value=str(edit_field.get("value") or ""),
+                key=f"esign_edit_value_{edit_id}",
+                height=68,
+            )
+            new_color = st.color_picker(
+                "Text color",
+                value=esign.normalize_hex_color(str(edit_field.get("color") or "#111827")),
+                key=f"esign_edit_color_{edit_id}",
+            )
+            ec1, ec2 = st.columns(2)
+            with ec1:
+                if st.button("Save text", type="primary", use_container_width=True):
+                    updated, _ = apply_placer_message(
+                        fields,
+                        {
+                            "action": "edit_text",
+                            "id": edit_id,
+                            "label": new_label,
+                            "value": new_value,
+                            "color": new_color,
+                        },
+                        page_index=page_idx,
+                    )
+                    st.session_state[_session_fields_key()] = updated
+                    st.session_state.pop("esign_edit_field_id", None)
+                    st.rerun()
+            with ec2:
+                if st.button("Cancel edit", use_container_width=True):
+                    st.session_state.pop("esign_edit_field_id", None)
+                    st.rerun()
+
         st.markdown(f"#### Placed fields ({len(fields)})")
         if not fields:
             st.caption("No fields yet.")
         else:
             for idx, f in enumerate(fields):
-                c1, c2 = st.columns([4, 1])
+                c1, c2, c3 = st.columns([3.2, 1, 1])
                 with c1:
+                    extra = ""
+                    if f.get("value"):
+                        extra = f" · “{str(f.get('value'))[:24]}”"
                     st.write(
                         f"**{f.get('label')}** · {f.get('type')} · "
                         f"p{int(f.get('page', 0)) + 1} · "
                         f"x={float(f.get('x', 0)):.0%} y={float(f.get('y_from_top', 0)):.0%}"
+                        f"{extra}"
                     )
                 with c2:
+                    if f.get("type") == "text" and st.button(
+                        "Edit", key=f"esign_editbtn_{f.get('id')}"
+                    ):
+                        st.session_state["esign_edit_field_id"] = f.get("id")
+                        st.rerun()
+                with c3:
                     if st.button("Del", key=f"esign_del_{f.get('id')}"):
                         fields.pop(idx)
                         st.session_state[_session_fields_key()] = fields
+                        if st.session_state.get("esign_edit_field_id") == f.get("id"):
+                            st.session_state.pop("esign_edit_field_id", None)
                         st.rerun()
 
         if fields and st.button("Clear all fields", use_container_width=True):
             st.session_state[_session_fields_key()] = []
+            st.session_state.pop("esign_edit_field_id", None)
             st.rerun()
 
         fillable = esign.build_fillable_pdf(pdf_bytes, fields) if fields else pdf_bytes
