@@ -818,7 +818,7 @@ def test_consume_menu_add_grows_field_count_0_to_1():
 
 
 def test_compose_has_click_to_place_and_xy_fallback():
-    """v2026.10.07a: image-coordinates click-to-place + X%/Y% fallback; no dead bridge."""
+    """v2026.10.07b: image-coordinates click-to-place + X%/Y% fallback; no dead bridge."""
     import inspect
 
     from src import esign_ui
@@ -843,6 +843,22 @@ def test_compose_has_click_to_place_and_xy_fallback():
     assert 'key="esign_x"' not in compose
     assert "st.slider" not in compose
     assert "lt_esign_placer_apply" not in compose
+
+
+def test_render_clickable_page_always_shows_st_image_and_avoids_raw_png0():
+    """v2026.10.07b: blank preview was uncompressed PNG data-URL in the iframe."""
+    import inspect
+
+    from src import esign_ui
+
+    src = inspect.getsource(esign_ui._render_clickable_page)
+    assert "st.image" in src
+    assert 'image_format="JPEG"' in src or "image_format='JPEG'" in src
+    assert "jpeg_quality" in src
+    assert "streamlit_image_coordinates(" in src
+    # Must not pass the library default that blanks large pages
+    assert "png_compression_level=" not in src.split("streamlit_image_coordinates(")[1]
+    assert 'use_column_width="always"' not in src
 
 
 def test_ingest_image_coordinates_sets_pending_not_center():

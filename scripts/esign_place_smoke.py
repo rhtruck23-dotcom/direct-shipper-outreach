@@ -36,7 +36,7 @@ from src.esign_ui import (
 )
 
 st.set_page_config(page_title="Esign place smoke", layout="wide")
-st.caption("v2026.10.07a · Esign place reset · smoke (no auth)")
+st.caption("v2026.10.07b · Esign preview visible · smoke (no auth)")
 
 user = {
     "id": "super_admin",
@@ -109,6 +109,11 @@ with left:
     annotated = _annotate_fields_png(
         png, fields, page_idx, pending_xy=_pending_place_xy()
     )
+    st.info(
+        f"**Place a field:** select type → **left-click** the interactive page. "
+        f"Next click places **{_selected_field_type()}**."
+    )
+    st.caption(f"Preview {iw}×{ih}px · page {page_idx + 1}/{pages}")
     click_val = _render_clickable_page(annotated, key=f"esign_click_p{page_idx}")
     if place_on_image_click(click_val, page_index=page_idx):
         xy = _pending_place_xy()
@@ -121,11 +126,6 @@ with left:
             except Exception:
                 pass
         st.rerun()
-    st.info(
-        f"**Place a field:** select type → **left-click** the page. "
-        f"Next click places **{_selected_field_type()}**."
-    )
-    st.caption(f"Preview {iw}×{ih}px · page {page_idx + 1}/{pages}")
 
 with right:
     st.session_state.setdefault("esign_next_type", "text")

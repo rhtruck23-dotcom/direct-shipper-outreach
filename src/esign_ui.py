@@ -164,24 +164,52 @@ def place_on_image_click(value: Any, *, page_index: int) -> bool:
 
 
 def _render_clickable_page(png_bytes: bytes, *, key: str) -> Any:
-    """Primary click target — streamlit-image-coordinates (proven Streamlit path)."""
+    """
+    Clickable page preview for field placement.
+
+    Always paints the page with st.image first so the PDF is never blank.
+    streamlit-image-coordinates defaults to png_compression_level=0, which
+    expands a ~1071×1386 page to ~4.5MB (~6MB base64) and blanks the custom
+    component iframe — use JPEG (or compressed PNG) for the click layer.
+    """
+    if not png_bytes:
+        st.warning("No page image to show.")
+        return None
+
+    # Guaranteed visible document pixels (native Streamlit — never a blank iframe).
+    try:
+        st.image(png_bytes, width="stretch")
+    except TypeError:
+        st.image(png_bytes, use_container_width=True)
+
     try:
         from PIL import Image
         from streamlit_image_coordinates import streamlit_image_coordinates
     except ImportError:
         st.warning(
             "Click-to-place needs `streamlit-image-coordinates` "
-            "(pip install streamlit-image-coordinates)."
+            "(pip install streamlit-image-coordinates). "
+            "Use X%/Y% → Place here on the preview above."
         )
-        st.image(png_bytes, use_container_width=True)
         return None
-    img = Image.open(io.BytesIO(png_bytes))
-    return streamlit_image_coordinates(
-        img,
-        key=key,
-        use_column_width="always",
-        cursor="crosshair",
-    )
+
+    try:
+        img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+        # width="stretch" = fill column; JPEG keeps the click-layer data-URL small.
+        return streamlit_image_coordinates(
+            img,
+            key=key,
+            width="stretch",
+            cursor="crosshair",
+            image_format="JPEG",
+            jpeg_quality=85,
+        )
+    except Exception as exc:
+        st.caption(
+            f"Click layer unavailable ({exc}). "
+            "Use the preview above with X%/Y% → Place here."
+        )
+        return None
 
 
 def _selected_field_type() -> str:
@@ -798,6 +826,14 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                 page_idx,
                 pending_xy=_pending_place_xy(),
             )
+            st.info(
+                f"**Place a field:** select **Text / Date / Sign** (right) → "
+                f"**left-click** the interactive page below (or the preview). "
+                f"Next click places **{_selected_field_type()}**. "
+                "Backup: set X%/Y% → Place here. Drag-to-move is not available — "
+                "delete a field and click again to re-place."
+            )
+            st.caption(f"Preview {iw}×{ih}px · page {page_idx + 1}/{pages}")
             click_val = _render_clickable_page(
                 annotated,
                 key=f"esign_click_p{page_idx}",
@@ -814,13 +850,6 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                     except Exception:
                         pass
                 st.rerun()
-            st.info(
-                f"**Place a field:** select **Text / Date / Sign** (right) → "
-                f"**left-click** this page. Next click places **{_selected_field_type()}**. "
-                "Backup: set X%/Y% → Place here. Drag-to-move is not available — "
-                "delete a field and click again to re-place."
-            )
-            st.caption(f"Preview {iw}×{ih}px · page {page_idx + 1}/{pages}")
         else:
             st.warning(
                 "No page preview available. Reload or try another PDF to place fields."
