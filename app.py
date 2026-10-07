@@ -431,9 +431,11 @@ st.markdown(
     border-radius: 10px !important;
   }
 
-  /* Hide 1px components.html glue iframes (Notes/FAB inject) — cuts layout thrash */
-  iframe[height="1"],
-  iframe[height="0"],
+  /* Hide Notes/FAB components.html glue iframes only — NEVER global iframe[height="0"].
+     Global matching trapped streamlit-image-coordinates (starts at height=0, then
+     width=stretch laid out inside a width:0 box → stuck blank forever). */
+  div[data-testid="stHtml"] iframe[height="1"],
+  div[data-testid="stHtml"] iframe[height="0"],
   div[data-testid="stHtml"]:has(iframe[height="1"]) {
     position: absolute !important;
     width: 0 !important;
@@ -3663,7 +3665,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.10.07b · Esign preview visible")
+        st.caption("v2026.10.07c · Esign preview fix2")
 
         from src.notes_ui import render_sidebar_add_note_button
 

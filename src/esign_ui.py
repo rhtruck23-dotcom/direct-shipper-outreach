@@ -4,8 +4,11 @@ Esign Docs Streamlit UI — upload PDF, place AcroForm fields, download / send /
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
+import tempfile
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 import streamlit as st
@@ -17,6 +20,7 @@ from .lead_crm import lead_stable_id
 PersistFn = Callable[[dict], None]
 
 _TYPE_BORDER = {"text": "#2563eb", "date": "#059669", "sign": "#ea580c"}
+_PREVIEW_CLICK_WIDTH = 680
 
 
 def _qp_get(key: str) -> Optional[str]:
@@ -163,24 +167,107 @@ def place_on_image_click(value: Any, *, page_index: int) -> bool:
     return place_selected_type_at_pending(page_index=page_index)
 
 
+def _image_has_ink(png_bytes: bytes, *, min_frac: float = 0.0005) -> bool:
+    """True when the raster has a non-trivial share of non-near-white pixels."""
+    if not png_bytes:
+        return False
+    try:
+        from PIL import Image
+
+        im = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+        w, h = im.size
+        if w <= 0 or h <= 0:
+            return False
+        # Downsample for a cheap ink check (full 1071×1386 scan is unnecessary).
+        small = im.resize((max(1, w // 8), max(1, h // 8)))
+        pixels = small.getdata()
+        total = small.width * small.height
+        nonwhite = 0
+        for p in pixels:
+            if p[0] < 250 or p[1] < 250 or p[2] < 250:
+                nonwhite += 1
+                if nonwhite / total >= min_frac:
+                    return True
+        return (nonwhite / max(1, total)) >= min_frac
+    except Exception:
+        return False
+
+
+def _write_preview_jpeg(png_bytes: bytes, *, stem: str) -> Path:
+    """Persist page preview to a temp JPEG so st.image(path) is reliable on Cloud."""
+    from PIL import Image
+
+    digest = hashlib.sha1(png_bytes[:8192] + str(len(png_bytes)).encode()).hexdigest()[:14]
+    path = Path(tempfile.gettempdir()) / f"esign_preview_{stem}_{digest}.jpg"
+    if not path.is_file() or path.stat().st_size < 32:
+        img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+        img.save(path, format="JPEG", quality=90, optimize=True)
+    return path
+
+
+def _show_page_image(png_bytes: bytes, *, key: str) -> Path:
+    """
+    Always show the PDF page with native st.image (file path), plus a download
+    so we can prove bytes exist even if the media widget misbehaves.
+    """
+    path = _write_preview_jpeg(png_bytes, stem=key.replace(" ", "_")[:40])
+    try:
+        st.image(str(path), width="stretch")
+    except TypeError:
+        try:
+            st.image(str(path), use_container_width=True)
+        except Exception as exc:
+            st.error(f"Preview image failed ({exc}). Use Download page preview below.")
+    except Exception as exc:
+        st.error(f"Preview image failed ({exc}). Use Download page preview below.")
+    try:
+        st.download_button(
+            "Download page preview",
+            data=path.read_bytes(),
+            file_name=f"{key}.jpg",
+            mime="image/jpeg",
+            key=f"{key}_dl",
+            use_container_width=True,
+        )
+    except Exception as exc:
+        st.caption(f"Preview download unavailable ({exc})")
+    if not _image_has_ink(png_bytes):
+        st.warning(
+            "Page raster looks empty (all/near-white). The PDF may use features "
+            "PyMuPDF cannot paint, or this page has no visible ink. "
+            "Try another export of the PDF, or place fields with X%/Y%."
+        )
+    return path
+
+
 def _render_clickable_page(png_bytes: bytes, *, key: str) -> Any:
     """
     Clickable page preview for field placement.
 
-    Always paints the page with st.image first so the PDF is never blank.
-    streamlit-image-coordinates defaults to png_compression_level=0, which
-    expands a ~1071×1386 page to ~4.5MB (~6MB base64) and blanks the custom
-    component iframe — use JPEG (or compressed PNG) for the click layer.
+    v2026.10.07c root causes that still blanked 07b:
+    1) app.css hid ALL iframe[height="0"|"1"] — custom components start at 0 and
+       with width="stretch" can never lay out (width:0 trap).
+    2) streamlit-image-coordinates default PNG compress=0 → multi-MB data-URLs.
+    3) Relying on in-memory st.image(bytes) alone was not enough on Cloud.
+
+    Fix: file-backed st.image + download proof; click layer only with an explicit
+    integer width (never "stretch") and JPEG; X%/Y% always available.
     """
     if not png_bytes:
-        st.warning("No page image to show.")
+        st.error("No page image to show (empty PNG bytes).")
         return None
 
-    # Guaranteed visible document pixels (native Streamlit — never a blank iframe).
+    # Guaranteed visible document pixels (path-based native Streamlit image).
     try:
-        st.image(png_bytes, width="stretch")
-    except TypeError:
-        st.image(png_bytes, use_container_width=True)
+        _show_page_image(png_bytes, key=f"{key}_img")
+    except Exception as exc:
+        st.error(f"Preview render failed ({exc}).")
+        return None
+
+    # Skip click iframe when the page has no ink — avoids a second blank frame.
+    if not _image_has_ink(png_bytes):
+        st.caption("Click layer skipped (empty page raster). Use X%/Y% → Place here.")
+        return None
 
     try:
         from PIL import Image
@@ -195,11 +282,14 @@ def _render_clickable_page(png_bytes: bytes, *, key: str) -> Any:
 
     try:
         img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
-        # width="stretch" = fill column; JPEG keeps the click-layer data-URL small.
+        # Integer width (not "stretch") so the component iframe gets a non-zero
+        # setFrameHeight even before CSS layout — avoids height=0 traps.
+        click_w = min(_PREVIEW_CLICK_WIDTH, max(120, int(img.size[0])))
+        st.caption("Left-click the interactive page below to place the selected field:")
         return streamlit_image_coordinates(
             img,
             key=key,
-            width="stretch",
+            width=click_w,
             cursor="crosshair",
             image_format="JPEG",
             jpeg_quality=85,

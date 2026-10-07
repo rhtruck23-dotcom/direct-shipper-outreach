@@ -846,19 +846,64 @@ def test_compose_has_click_to_place_and_xy_fallback():
 
 
 def test_render_clickable_page_always_shows_st_image_and_avoids_raw_png0():
-    """v2026.10.07b: blank preview was uncompressed PNG data-URL in the iframe."""
+    """v2026.10.07c: file-backed st.image + JPEG click layer; never width=stretch."""
     import inspect
 
     from src import esign_ui
 
     src = inspect.getsource(esign_ui._render_clickable_page)
-    assert "st.image" in src
+    show_src = inspect.getsource(esign_ui._show_page_image)
+    assert "st.image" in show_src
+    assert "_show_page_image" in src
+    assert "_write_preview_jpeg" in show_src or "esign_preview_" in inspect.getsource(
+        esign_ui._write_preview_jpeg
+    )
+    assert "Download page preview" in show_src
     assert 'image_format="JPEG"' in src or "image_format='JPEG'" in src
     assert "jpeg_quality" in src
     assert "streamlit_image_coordinates(" in src
     # Must not pass the library default that blanks large pages
     assert "png_compression_level=" not in src.split("streamlit_image_coordinates(")[1]
     assert 'use_column_width="always"' not in src
+    # width="stretch" on the custom component re-triggers height=0 CSS traps
+    click_call = src.split("streamlit_image_coordinates(")[1]
+    assert 'width="stretch"' not in click_call
+    assert "width=click_w" in src or "width = click_w" in src
+
+
+def test_app_css_does_not_hide_global_height0_iframes():
+    """v2026.10.07c: global iframe[height=0] hide trapped image-coordinates."""
+    from pathlib import Path
+
+    app_src = Path("app.py").read_text(encoding="utf-8")
+    assert 'div[data-testid="stHtml"] iframe[height="0"]' in app_src
+    # Bare global selectors must stay gone
+    for line in app_src.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("iframe[height=\"0\"]") or stripped.startswith(
+            "iframe[height=\"1\"]"
+        ):
+            raise AssertionError(f"global iframe hide still present: {stripped}")
+
+
+def test_image_has_ink_detects_blank_and_content():
+    from PIL import Image
+
+    from src import esign_ui
+    import io
+
+    blank = Image.new("RGB", (200, 200), (255, 255, 255))
+    buf = io.BytesIO()
+    blank.save(buf, format="PNG")
+    assert not esign_ui._image_has_ink(buf.getvalue())
+
+    drawn = Image.new("RGB", (200, 200), (255, 255, 255))
+    for x in range(20, 80):
+        for y in range(20, 80):
+            drawn.putpixel((x, y), (0, 0, 0))
+    buf2 = io.BytesIO()
+    drawn.save(buf2, format="PNG")
+    assert esign_ui._image_has_ink(buf2.getvalue())
 
 
 def test_ingest_image_coordinates_sets_pending_not_center():

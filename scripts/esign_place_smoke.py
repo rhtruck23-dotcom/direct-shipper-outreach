@@ -36,7 +36,7 @@ from src.esign_ui import (
 )
 
 st.set_page_config(page_title="Esign place smoke", layout="wide")
-st.caption("v2026.10.07b · Esign preview visible · smoke (no auth)")
+st.caption("v2026.10.07c · Esign preview fix2 · smoke (no auth)")
 
 user = {
     "id": "super_admin",
@@ -55,12 +55,37 @@ st.session_state["company"] = company
 
 
 def _fixture_pdf() -> bytes:
-    writer = PdfWriter()
-    for _ in range(2):
-        writer.add_page(PageObject.create_blank_page(width=612, height=792))
-    buf = io.BytesIO()
-    writer.write(buf)
-    return buf.getvalue()
+    """Two letter pages with visible ink (blank pages look 'broken' in preview)."""
+    try:
+        import fitz
+
+        doc = fitz.open()
+        for i in range(2):
+            page = doc.new_page(width=612, height=792)
+            page.insert_text(
+                (72, 72),
+                f"ESIGN SMOKE — Driver Agreement — Page {i + 1}",
+                fontsize=16,
+                color=(0, 0, 0),
+            )
+            page.insert_text(
+                (72, 110),
+                "Visible body text for preview verification (not a blank page).",
+                fontsize=12,
+                color=(0.15, 0.15, 0.15),
+            )
+            page.draw_rect(fitz.Rect(72, 160, 540, 320), color=(0, 0, 0), width=1.5)
+            page.insert_text((80, 190), "Signature / field placement area", fontsize=11)
+        data = doc.tobytes()
+        doc.close()
+        return data
+    except Exception:
+        writer = PdfWriter()
+        for _ in range(2):
+            writer.add_page(PageObject.create_blank_page(width=612, height=792))
+        buf = io.BytesIO()
+        writer.write(buf)
+        return buf.getvalue()
 
 
 pdf_bytes = _fixture_pdf()
