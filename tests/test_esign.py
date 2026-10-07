@@ -579,17 +579,21 @@ def test_render_pdf_page_png_multipage_fixture():
         assert iw >= 600 and ih >= 700
 
 
-def test_bridge_hide_css_targets_element_container_not_tabs():
-    """Regression: bare stVerticalBlock>:has(marker) blanked stTabs (v2026.10.06c)."""
+def test_compose_ui_has_no_dead_apply_bridge():
+    """v2026.10.07a reset: no hidden Apply bridge / pointer-events junk in compose."""
+    import inspect
+
     from src import esign_ui
 
-    css = esign_ui._ESIGN_BRIDGE_HIDE_CSS
-    assert "stElementContainer" in css
-    assert "stVerticalBlock" not in css
-    assert "#lt-esign-bridge-marker" in css
-    # v2026.10.06i: pointer-events:none blocked programmatic Apply click
-    assert "pointer-events" not in css
-    assert "opacity: 0.02" in css
+    compose = inspect.getsource(esign_ui._compose_tab)
+    assert "_placer_bridge_widgets" not in compose
+    assert "lt_esign_placer_apply" not in compose
+    assert "esign_placer_payload" not in compose
+    assert "_ESIGN_BRIDGE_HIDE_CSS" not in compose
+    assert "pointer-events" not in compose
+    src = inspect.getsource(esign_ui)
+    assert "_ESIGN_BRIDGE_HIDE_CSS" not in src
+    assert "def _placer_bridge_widgets" not in src
 
 
 def test_apply_placer_menu_add_at_click_03_04():
@@ -813,8 +817,8 @@ def test_consume_menu_add_grows_field_count_0_to_1():
         st.rerun = original_rerun  # type: ignore[method-assign]
 
 
-def test_compose_has_right_click_component_and_xy_fallback():
-    """v2026.10.06n: setComponentValue placer + X%/Y% fallback; no Place-field sliders."""
+def test_compose_has_click_to_place_and_xy_fallback():
+    """v2026.10.07a: image-coordinates click-to-place + X%/Y% fallback; no dead bridge."""
     import inspect
 
     from src import esign_ui
@@ -829,19 +833,16 @@ def test_compose_has_right_click_component_and_xy_fallback():
     assert "Placed fields" in compose
     assert "_on_select_field_type" in compose
     assert "_on_place_here" in compose
-    assert "_render_field_placer" in compose
-    assert "ingest_placer_component_value" in compose
+    assert "_render_clickable_page" in compose
+    assert "place_on_image_click" in compose
+    assert "_annotate_fields_png" in compose
+    assert "_render_field_placer" not in compose
+    assert "ingest_placer_component_value" not in compose
     assert "_on_add_field_button" not in compose
     assert "Place field" not in compose
     assert 'key="esign_x"' not in compose
     assert "st.slider" not in compose
-
-    src = inspect.getsource(esign_ui._render_field_placer)
-    assert "esign_placer" in src
-    assert "setComponentValue" in src
-    # Must not revive the dead components.html Apply bridge in the placer
-    assert "lt_esign_placer_apply" not in src
-    assert "components.html(" not in src
+    assert "lt_esign_placer_apply" not in compose
 
 
 def test_ingest_image_coordinates_sets_pending_not_center():
@@ -879,7 +880,7 @@ def test_ingest_image_coordinates_sets_pending_not_center():
 
 
 def test_click_ingest_places_selected_type_immediately():
-    """A: ingest click + place_selected_type → field at click, not center."""
+    """A: place_on_image_click → field at click, not center."""
     from src import esign_ui
     import streamlit as st
 
@@ -892,15 +893,62 @@ def test_click_ingest_places_selected_type_immediately():
     original_ss = st.session_state
     try:
         st.session_state = ss  # type: ignore[misc]
-        assert esign_ui.ingest_image_coordinates_click(
-            {"x": 200, "y": 700, "width": 1000, "height": 1000, "unix_time": 333}
+        assert esign_ui.place_on_image_click(
+            {"x": 200, "y": 700, "width": 1000, "height": 1000, "unix_time": 333},
+            page_index=0,
         )
-        assert esign_ui.place_selected_type_at_pending(page_index=0)
         fields = ss["esign_compose_fields"]
         assert len(fields) == 1
         assert fields[0]["type"] == "sign"
         assert abs(float(fields[0]["x"]) - 0.2) < 1e-9
         assert abs(float(fields[0]["y_from_top"]) - 0.7) < 1e-9
+        # Sticky same unix_time must not double-place
+        assert not esign_ui.place_on_image_click(
+            {"x": 200, "y": 700, "width": 1000, "height": 1000, "unix_time": 333},
+            page_index=0,
+        )
+        assert len(ss["esign_compose_fields"]) == 1
+    finally:
+        st.session_state = original_ss  # type: ignore[misc]
+
+
+def test_three_image_clicks_place_distinct_types_and_coords():
+    """Reset acceptance: Text/Date/Sign at three click positions → distinct x/y."""
+    from src import esign_ui
+    import streamlit as st
+
+    class _SS(dict):
+        pass
+
+    ss = _SS()
+    ss["esign_compose_fields"] = []
+    planned = [
+        ("text", 200, 200, 0.2, 0.2),
+        ("date", 750, 800, 0.75, 0.8),
+        ("sign", 500, 500, 0.5, 0.5),
+    ]
+    original_ss = st.session_state
+    try:
+        st.session_state = ss  # type: ignore[misc]
+        for i, (ftype, px, py, ex, ey) in enumerate(planned):
+            ss["esign_next_type"] = ftype
+            assert esign_ui.place_on_image_click(
+                {
+                    "x": px,
+                    "y": py,
+                    "width": 1000,
+                    "height": 1000,
+                    "unix_time": 1000 + i,
+                },
+                page_index=0,
+            )
+        fields = ss["esign_compose_fields"]
+        assert len(fields) == 3
+        coords = [(float(f["x"]), float(f["y_from_top"]), f["type"]) for f in fields]
+        assert coords == [(0.2, 0.2, "text"), (0.75, 0.8, "date"), (0.5, 0.5, "sign")]
+        assert len({(c[0], c[1]) for c in coords}) == 3
+        # Must not be the old cascade stack near 50/50 for all three
+        assert not all(abs(c[0] - 0.5) < 0.05 and abs(c[1] - 0.5) < 0.08 for c in coords)
     finally:
         st.session_state = original_ss  # type: ignore[misc]
 

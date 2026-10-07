@@ -9,7 +9,6 @@ import json
 from typing import Any, Callable, Optional
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from . import esign
 from .emailer import send_email
@@ -56,51 +55,6 @@ def _pdf_preview_pages(
     if total_pages > 1:
         st.caption(f"Page {page_index + 1} of {total_pages}")
     st.image(png, use_container_width=True)
-
-
-# CSS must target stElementContainer only — never bare
-# `stVerticalBlock > div:has(#marker)`, which also matches stTabs and
-# blanks the whole Compose UI (left:-8000px on the tabs root).
-# CRITICAL: do NOT set pointer-events:none — iframe JS must programmatically
-# click lt_esign_placer_apply (same pattern as OneNote floating bridge).
-_ESIGN_BRIDGE_HIDE_CSS = """
-<style>
-  div[data-testid="stElementContainer"]:has(#lt-esign-bridge-marker),
-  div[data-testid="stElementContainer"]:has(#lt-esign-bridge-marker)
-    + div[data-testid="stElementContainer"],
-  div[data-testid="stElementContainer"]:has(#lt-esign-bridge-marker)
-    + div[data-testid="stElementContainer"]
-    + div[data-testid="stElementContainer"] {
-    position: absolute !important;
-    width: 2px !important;
-    height: 2px !important;
-    overflow: hidden !important;
-    opacity: 0.02 !important;
-    left: -8000px !important;
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-</style>
-"""
-
-
-def _placer_bridge_widgets() -> bool:
-    """Hidden bridge: JS writes JSON actions → Apply button triggers Python."""
-    st.markdown(
-        _ESIGN_BRIDGE_HIDE_CSS + '<div id="lt-esign-bridge-marker"></div>',
-        unsafe_allow_html=True,
-    )
-    st.text_area(
-        "lt_esign_placer_payload",
-        key="esign_placer_payload",
-        height=68,
-        label_visibility="collapsed",
-    )
-    return st.button(
-        "lt_esign_placer_apply",
-        key="esign_placer_apply",
-        help="Internal: apply field placement from preview",
-    )
 
 
 def _sync_pending_click(x: float, y_from_top: float) -> None:
@@ -198,8 +152,19 @@ def ingest_image_coordinates_click(value: Any) -> bool:
     return True
 
 
+def place_on_image_click(value: Any, *, page_index: int) -> bool:
+    """
+    Primary placement path: image click → pending coords → place selected type.
+
+    Returns True when a field was appended. Never invents 0.5/0.5.
+    """
+    if not ingest_image_coordinates_click(value):
+        return False
+    return place_selected_type_at_pending(page_index=page_index)
+
+
 def _render_clickable_page(png_bytes: bytes, *, key: str) -> Any:
-    """Primary click target — Streamlit component, not the iframe Apply bridge."""
+    """Primary click target — streamlit-image-coordinates (proven Streamlit path)."""
     try:
         from PIL import Image
         from streamlit_image_coordinates import streamlit_image_coordinates
@@ -548,10 +513,10 @@ def _render_field_placer(
     key: Optional[str] = None,
 ) -> Any:
     """
-    Primary placer: custom Streamlit component with setComponentValue.
+    Optional secondary placer (right-click / drag) via esign_placer component.
 
-    Right-click → Add text/date/sign returns {op:'add', type, x, y, page}
-    to Python. Does NOT use components.html Apply bridge (dead on Cloud).
+    Primary compose UI uses streamlit_image_coordinates instead — this helper
+    remains for tests and optional advanced use.
     """
     from .esign_placer import esign_placer
 
@@ -733,9 +698,10 @@ def page_esign_docs(*, user: dict, company: dict) -> None:
 
     st.title("Esign Docs")
     st.caption(
-        "Upload a PDF → place Text / Date / Sign fields (AcroForm overlays only) → "
-        "save as a named template for CRM **Send for signature**, or email a fill link. "
-        "Sign = typed name in a text field (not a DigSig certificate)."
+        "Upload a PDF → select Text / Date / Sign → **left-click the page** to place "
+        "(AcroForm overlays only) → save as a named template for CRM **Send for signature**, "
+        "or email a fill link. Sign = typed name (not DigSig). "
+        "To move a field: delete it and place again."
     )
 
     tabs = st.tabs(["Compose", "My documents"])
@@ -784,14 +750,6 @@ def _compose_tab(*, user: dict, company: dict) -> None:
     page_i = max(1, min(pages, page_i))
     page_idx = page_i - 1
 
-    # Legacy hidden bridge kept for older tests / rescue path only.
-    apply_clicked = _placer_bridge_widgets()
-    payload_ready = bool(
-        str(st.session_state.get("esign_placer_payload") or "").strip()
-    )
-    if apply_clicked or payload_ready:
-        _consume_placer_action(page_index=page_idx)
-
     with left:
         st.markdown("#### Preview")
         if pages > 1:
@@ -834,30 +792,35 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         st.session_state.setdefault("esign_next_type", "text")
         fields = list(st.session_state.get(_session_fields_key()) or [])
         if png:
-            # Primary: custom component — right-click Add uses setComponentValue.
-            try:
-                placer_val = _render_field_placer(
-                    png_bytes=png,
-                    img_w=iw,
-                    img_h=ih,
-                    page_index=page_idx,
-                    fields=fields,
-                    next_type=_selected_field_type(),
-                    key=f"esign_placer_p{page_idx}",
-                )
-            except Exception as exc:
-                st.error(
-                    f"Field placer failed ({exc}). "
-                    "Use X%/Y% → Place here as backup."
-                )
-                placer_val = None
-            if ingest_placer_component_value(placer_val, page_index=page_idx):
-                st.rerun()
-            st.caption(
-                "**Right-click** the page → Add text / date / sign at that spot. "
-                "Left-click places the selected type. "
-                "If needed, set **X% / Y%** → **Place here**."
+            annotated = _annotate_fields_png(
+                png,
+                fields,
+                page_idx,
+                pending_xy=_pending_place_xy(),
             )
+            click_val = _render_clickable_page(
+                annotated,
+                key=f"esign_click_p{page_idx}",
+            )
+            if place_on_image_click(click_val, page_index=page_idx):
+                ftype = _selected_field_type()
+                xy = _pending_place_xy()
+                if xy is not None:
+                    try:
+                        st.toast(
+                            f"Placed {ftype} at x={xy[0]:.0%} y={xy[1]:.0%}",
+                            icon="✅",
+                        )
+                    except Exception:
+                        pass
+                st.rerun()
+            st.info(
+                f"**Place a field:** select **Text / Date / Sign** (right) → "
+                f"**left-click** this page. Next click places **{_selected_field_type()}**. "
+                "Backup: set X%/Y% → Place here. Drag-to-move is not available — "
+                "delete a field and click again to re-place."
+            )
+            st.caption(f"Preview {iw}×{ih}px · page {page_idx + 1}/{pages}")
         else:
             st.warning(
                 "No page preview available. Reload or try another PDF to place fields."
@@ -871,8 +834,7 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         coords_ready = bool(st.session_state.get("esign_coords_ready"))
         st.markdown("#### Fields")
         st.caption(
-            "1) Right-click page → Add text/date/sign at click · "
-            "or choose type + left-click · or X%/Y% → Place here. "
+            "1) Choose type → 2) left-click the page · or set X%/Y% → Place here. "
             "Never invents center 50%/50%. Save keeps page/x/y/w/h."
         )
         active = _selected_field_type()
@@ -946,7 +908,7 @@ def _compose_tab(*, user: dict, company: dict) -> None:
             st.warning(str(st.session_state.get("esign_place_error")))
         elif coords_ready and pending_x is not None and pending_y is not None:
             st.caption(
-                f"Ready at: **{float(pending_x):.0%}** left, "
+                f"Last click: **{float(pending_x):.0%}** left, "
                 f"**{float(pending_y):.0%}** top (page {page_idx + 1})."
             )
         else:
@@ -1005,8 +967,8 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         st.markdown(f"#### Placed fields ({len(fields)})")
         if not fields:
             st.caption(
-                "No fields yet — right-click the page → Add text/date/sign, "
-                "or left-click / Place here."
+                "No fields yet — select a type and left-click the page, "
+                "or use X%/Y% → Place here."
             )
         else:
             for idx, f in enumerate(fields):
