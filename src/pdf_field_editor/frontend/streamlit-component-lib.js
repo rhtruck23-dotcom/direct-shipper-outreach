@@ -2,7 +2,6 @@
 // Borrowed minimalistic Streamlit API from Thiago
 // https://discuss.streamlit.io/t/code-snippet-create-components-without-any-frontend-tooling-no-react-babel-webpack-etc/13064
 function sendMessageToStreamlitClient(type, data) {
-  console.log(type, data)
   const outData = Object.assign({
       isStreamlitMessage: true,
       type: type,
@@ -31,4 +30,8 @@ const Streamlit = {
           });
       }
   }
-}
+};
+
+// Must attach to window — top-level `const` is NOT a window property, and
+// streamlit-frame-height.js / Vite SPAs look up window.Streamlit.
+window.Streamlit = Streamlit;

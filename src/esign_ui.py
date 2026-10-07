@@ -881,9 +881,8 @@ def page_esign_docs(*, user: dict, company: dict) -> None:
 
     st.title("Esign Docs")
     st.caption(
-        "Same LogixTrek app — **PDF Field Editor** (drag / resize / download fillable PDF) "
-        "is embedded below. Use **CRM template** for Save + Send for signature. "
-        "Sign on fill links = typed name (not DigSig)."
+        "**PDF Field Editor** (React) — upload, place Text/Date/Sign, drag/resize, download. "
+        "Optional CRM save/send is collapsed below. Fill-link sign = typed name (not DigSig)."
     )
 
     tabs = st.tabs(["Compose", "My documents"])
@@ -904,18 +903,26 @@ def _nudge_esign_page(delta: int, max_pages: int) -> None:
 
 
 def _compose_tab(*, user: dict, company: dict) -> None:
-    st.markdown("#### PDF Field Editor")
-    st.caption(
-        "Field placement runs in **PDF Field Editor** (same product — not a separate app). "
-        "Upload a PDF in the editor → place Text / Date / Sign → drag / resize → download "
-        "fillable PDF. Optional: set Streamlit secret `PDF_FIELD_EDITOR_URL` for a hosted SPA."
-    )
+    """Compose = React PDF Field Editor only (full width). Legacy Streamlit placer is not primary."""
+    hdr, link = st.columns([3, 1])
+    with hdr:
+        st.markdown("#### Compose")
+    with link:
+        st.caption("My documents → tab above")
+
     from .pdf_field_editor import render_pdf_field_editor
 
-    render_pdf_field_editor(height=920, key="esign_pdf_field_editor")
+    render_pdf_field_editor(height=960, key="esign_pdf_field_editor")
 
     st.divider()
-    with st.expander("CRM template (Place X%/Y% → Save for Send for signature)", expanded=False):
+    with st.expander(
+        "CRM: Save template / Send for signature (secondary)",
+        expanded=False,
+    ):
+        st.caption(
+            "Secondary path for named CRM templates. Primary placement is the React editor above "
+            "(Upload PDF → Text/Date/Signature → download fillable PDF)."
+        )
         _compose_crm_template(user=user, company=company)
 
 

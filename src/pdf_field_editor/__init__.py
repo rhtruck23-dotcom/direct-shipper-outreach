@@ -45,6 +45,25 @@ def bundled_frontend_ready() -> bool:
     return _COMPONENT is not None and (_FRONTEND / "index.html").is_file()
 
 
+def _force_editor_iframe_height(height: int) -> None:
+    """
+    Custom components often start at iframe height 0 until setFrameHeight.
+    Force a visible min-height so the React toolbar is never blank.
+    """
+    h = int(height)
+    st.markdown(
+        f"""
+<style>
+div[data-testid="stCustomComponentV1"] iframe {{
+  min-height: {h}px !important;
+  height: {h}px !important;
+}}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def render_pdf_field_editor(*, height: int = 920, key: str = "pdf_field_editor") -> None:
     """
     Embed the PDF Field Editor full-width in the current Streamlit page.
@@ -53,17 +72,20 @@ def render_pdf_field_editor(*, height: int = 920, key: str = "pdf_field_editor")
     2) Else if bundled frontend exists → Streamlit custom component (same deploy).
     3) Else try local Vite default URL with a short hint.
     """
+    h = max(640, int(height))
     url = resolve_pdf_field_editor_url()
     if url:
         st.caption(f"PDF Field Editor · {url}")
-        components.iframe(url, height=int(height), scrolling=True)
+        components.iframe(url, height=h, scrolling=True)
         return
 
     if bundled_frontend_ready() and _COMPONENT is not None:
         st.caption(
-            "PDF Field Editor · bundled in this app (place / drag / resize / download)."
+            "PDF Field Editor · Upload PDF · Text / Date / Signature · drag / resize / download."
         )
-        _COMPONENT(default=None, key=key)
+        _force_editor_iframe_height(h)
+        # height= is Streamlit's initial iframe size (critical — do not omit).
+        _COMPONENT(default=None, key=key, height=h)
         return
 
     # Local fallback: Vite dev server
@@ -74,4 +96,4 @@ def render_pdf_field_editor(*, height: int = 920, key: str = "pdf_field_editor")
         "On Streamlit Cloud, set secret **PDF_FIELD_EDITOR_URL** or commit a build "
         "(`pnpm --dir pdf-field-editor build` → `src/pdf_field_editor/frontend/`)."
     )
-    components.iframe(DEFAULT_LOCAL_DEV_URL, height=int(height), scrolling=True)
+    components.iframe(DEFAULT_LOCAL_DEV_URL, height=h, scrolling=True)

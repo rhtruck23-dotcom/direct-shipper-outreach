@@ -824,14 +824,16 @@ def test_consume_menu_add_grows_field_count_0_to_1():
 
 
 def test_compose_has_click_to_place_and_xy_fallback():
-    """v2026.10.07e: CRM template Place field + X%/Y%; editor embed on Compose."""
+    """v2026.10.07g: React editor primary; CRM Place X%/Y% secondary only."""
     import inspect
 
     from src import esign_ui
 
     parent = inspect.getsource(esign_ui._compose_tab)
     assert "render_pdf_field_editor" in parent
-    assert "CRM template" in parent
+    assert "CRM:" in parent or "CRM " in parent
+    assert "Place X%" not in parent
+    assert "Place field" not in parent
 
     compose = inspect.getsource(esign_ui._compose_crm_template)
     assert '"Text"' in compose
@@ -1385,12 +1387,12 @@ if st.button("Save", key="esign_save_smoke"):
 
 
 def test_sidebar_caption_esign_place_works():
-    """Sidebar must advertise v2026.10.07f · Esign embeds PDF editor."""
+    """Sidebar must advertise v2026.10.07g · Esign React editor only."""
     from pathlib import Path
 
     app = Path(__file__).resolve().parents[1] / "app.py"
     text = app.read_text(encoding="utf-8")
-    assert "v2026.10.07f · Esign embeds PDF editor" in text
+    assert "v2026.10.07g · Esign React editor only" in text
 
 
 def test_esign_compose_embeds_pdf_field_editor():
@@ -1401,12 +1403,26 @@ def test_esign_compose_embeds_pdf_field_editor():
     text = ui.read_text(encoding="utf-8")
     assert "render_pdf_field_editor" in text
     assert "pdf_field_editor" in text
+    compose_fn = text.split("def _compose_tab")[1].split("def _compose_crm_template")[0]
+    assert "Place X%" not in compose_fn
+    assert "Place field" not in compose_fn
+    assert "render_pdf_field_editor" in compose_fn
 
     embed = Path(__file__).resolve().parents[1] / "src" / "pdf_field_editor" / "__init__.py"
     assert embed.is_file()
     embed_text = embed.read_text(encoding="utf-8")
     assert "PDF_FIELD_EDITOR_URL" in embed_text
     assert "declare_component" in embed_text
+    assert "height=h" in embed_text
+    lib = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "pdf_field_editor"
+        / "frontend"
+        / "streamlit-component-lib.js"
+    )
+    assert lib.is_file()
+    assert "window.Streamlit" in lib.read_text(encoding="utf-8")
 
 
 def test_streamlit_image_coordinates_importable():

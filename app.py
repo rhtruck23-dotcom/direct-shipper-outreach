@@ -3545,7 +3545,7 @@ def page_help():
 - Also previewed inside each funnel’s Pipeline tab.
 
 ### Esign Docs (Settings)
-1. **Settings → Esign Docs** — **PDF Field Editor** is embedded in Compose (same app; drag/resize/download).  
+1. **Settings → Esign Docs → Compose** — React **PDF Field Editor** only (Upload / Text / Date / Signature; drag/resize/download).  
 2. Optional **CRM template** expander: Place **Text / Date / Sign** via X%/Y% for Send for signature. Label fields `company_name` / `contact_name` / `email` / `date` for CRM auto-prefill.  
 3. **Save as template** (named), or **Save & email** (attachment + `?esign=TOKEN` fill link).  
 4. **Leads List** (Shipper / Carrier / Lead for X) → open a lead → **Send for signature** — pick template, confirm To, optional note, Send.  
@@ -3665,7 +3665,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.10.07f · Esign embeds PDF editor")
+        st.caption("v2026.10.07g · Esign React editor only")
 
         from src.notes_ui import render_sidebar_add_note_button
 

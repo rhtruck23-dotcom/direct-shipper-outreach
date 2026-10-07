@@ -8,17 +8,21 @@
       return;
     }
     var h = Math.max(
-      920,
+      960,
       (document.documentElement && document.documentElement.scrollHeight) || 0,
       (document.body && document.body.scrollHeight) || 0
     );
     window.Streamlit.setFrameHeight(h);
   }
 
-  if (window.Streamlit && typeof window.Streamlit.setComponentReady === "function") {
-    window.Streamlit.setComponentReady();
+  function boot() {
+    if (window.Streamlit && typeof window.Streamlit.setComponentReady === "function") {
+      window.Streamlit.setComponentReady();
+    }
+    applyHeight();
   }
-  applyHeight();
+
+  boot();
   window.addEventListener("load", applyHeight);
   window.addEventListener("resize", applyHeight);
   if (typeof ResizeObserver !== "undefined" && document.body) {
@@ -28,5 +32,12 @@
       /* ignore */
     }
   }
+  // Retry briefly — component lib may load just after this script in some builds.
+  var tries = 0;
+  var timer = setInterval(function () {
+    tries += 1;
+    boot();
+    if (tries >= 20) clearInterval(timer);
+  }, 250);
   setInterval(applyHeight, 1500);
 })();
