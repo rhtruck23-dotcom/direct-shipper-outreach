@@ -267,19 +267,22 @@ def test_no_slider_place_field_path_in_compose_ui():
     assert 'key="esign_w"' not in compose
     assert 'key="esign_h"' not in compose
     assert "st.slider" not in compose
-    # Sync helper must not write slider widget keys
+    # Sync helper must not write old slider widget keys (esign_x / esign_y)
     sync = inspect.getsource(esign_ui._sync_pending_click)
-    assert "esign_x" not in sync
-    assert "esign_y" not in sync
+    assert '["esign_x"]' not in sync
+    assert '["esign_y"]' not in sync
     assert "esign_pending_x" in sync
+    assert "esign_coords_ready" in sync
     # No leftover alias that still broadcasts slider keys
     src = inspect.getsource(esign_ui)
     assert "_sync_placer_sliders" not in src
     assert 'st.session_state["esign_x"]' not in src
     assert 'st.session_state["esign_y"]' not in src
     add_fn = inspect.getsource(esign_ui._add_field_at_pending)
-    assert "esign_x" not in add_fn
-    assert "esign_pending_x" in add_fn or "_pending_place_xy" in add_fn
+    assert '["esign_x"]' not in add_fn
+    assert "_pending_place_xy" in add_fn
+    assert "0.5, 0.5" not in add_fn
+    assert "return False" in add_fn
 
 
 def test_apply_placer_add_preserves_existing_rects():
@@ -614,7 +617,7 @@ def test_apply_placer_menu_add_at_click_03_04():
 
 
 def test_fallback_add_at_pending_click_05_06():
-    """Fallback Add buttons use pending click (0.5, 0.6) — never 0.1/0.2."""
+    """Place-here uses explicit pending (0.5, 0.6) — never 0.1/0.2 slider default."""
     from src import esign_ui
     import streamlit as st
 
@@ -625,11 +628,11 @@ def test_fallback_add_at_pending_click_05_06():
     ss["esign_compose_fields"] = []
     ss["esign_pending_x"] = 0.5
     ss["esign_pending_y"] = 0.6
-    ss["esign_add_cascade"] = 0
+    ss["esign_coords_ready"] = True
     original_ss = st.session_state
     try:
         st.session_state = ss  # type: ignore[misc]
-        esign_ui._add_field_at_pending("text", page_index=0)
+        assert esign_ui._add_field_at_pending("text", page_index=0)
         fields = ss["esign_compose_fields"]
         assert len(fields) == 1
         assert abs(float(fields[0]["x"]) - 0.5) < 1e-9
@@ -641,8 +644,33 @@ def test_fallback_add_at_pending_click_05_06():
         st.session_state = original_ss  # type: ignore[misc]
 
 
+def test_add_without_coords_refuses_no_center_cascade():
+    """Without pending/X/Y ready, Add must refuse — never invent 50/50 cascade."""
+    from src import esign_ui
+    import streamlit as st
+
+    class _SS(dict):
+        pass
+
+    ss = _SS()
+    ss["esign_compose_fields"] = []
+    original_ss = st.session_state
+    try:
+        st.session_state = ss  # type: ignore[misc]
+        assert not esign_ui._add_field_at_pending("text", page_index=0)
+        assert ss["esign_compose_fields"] == []
+        assert "Click the page or set X/Y first" in str(ss.get("esign_place_error") or "")
+        # Display defaults alone must not authorize center place
+        ss["esign_place_x_pct"] = 50
+        ss["esign_place_y_pct"] = 50
+        assert not esign_ui._add_field_at_pending("date", page_index=0)
+        assert ss["esign_compose_fields"] == []
+    finally:
+        st.session_state = original_ss  # type: ignore[misc]
+
+
 def test_fallback_sequential_adds_distinct_geometries():
-    """Four Add-here calls at different pending positions → four distinct rects."""
+    """Four Place-here calls at different pending positions → four distinct rects."""
     from src import esign_ui
     import streamlit as st
 
@@ -656,11 +684,9 @@ def test_fallback_sequential_adds_distinct_geometries():
     try:
         st.session_state = ss  # type: ignore[misc]
         for i, (x, y) in enumerate(planned):
-            ss["esign_pending_x"] = x
-            ss["esign_pending_y"] = y
-            ss["esign_add_cascade"] = 0  # simulate fresh click each time
+            esign_ui._sync_pending_click(x, y)
             ftype = ("text", "date", "sign", "text")[i]
-            esign_ui._add_field_at_pending(ftype, page_index=0)
+            assert esign_ui._add_field_at_pending(ftype, page_index=0)
         fields = ss["esign_compose_fields"]
         assert len(fields) == 4
         coords = [(float(f["x"]), float(f["y_from_top"])) for f in fields]
@@ -668,12 +694,8 @@ def test_fallback_sequential_adds_distinct_geometries():
         for f, (x, y) in zip(fields, planned):
             assert abs(float(f["x"]) - x) < 1e-9
             assert abs(float(f["y_from_top"]) - y) < 1e-9
-        # Never the old 10%/20% slider default unless that was the click
-        for f in fields:
-            assert not (
-                abs(float(f["x"]) - 0.1) < 1e-9
-                and abs(float(f["y_from_top"]) - 0.2) < 1e-9
-            )
+        xs = [float(f["x"]) for f in fields]
+        assert not all(abs(x - 0.5) < 1e-9 for x in xs)
     finally:
         st.session_state = original_ss  # type: ignore[misc]
 
@@ -721,20 +743,26 @@ def test_consume_menu_add_grows_field_count_0_to_1():
         st.rerun = original_rerun  # type: ignore[method-assign]
 
 
-def test_compose_has_fallback_add_buttons_no_sliders():
-    """v2026.10.06k: Add beside Placed fields; native image click; no Place-field sliders."""
+def test_compose_has_click_place_and_xy_fallback_no_sliders():
+    """v2026.10.06m: type select + click place + X%/Y% fallback; no Place-field sliders."""
     import inspect
 
     from src import esign_ui
 
     compose = inspect.getsource(esign_ui._compose_tab)
-    assert '"Add text"' in compose
-    assert '"Add date"' in compose
-    assert '"Add sign"' in compose
+    assert '"Text"' in compose
+    assert '"Date"' in compose
+    assert '"Sign"' in compose
+    assert "Place here" in compose
+    assert "Place X%" in compose
+    assert "Place Y%" in compose
     assert "Placed fields" in compose
-    assert "_on_add_field_button" in compose
+    assert "_on_select_field_type" in compose
+    assert "_on_place_here" in compose
+    assert "place_selected_type_at_pending" in compose
     assert "_render_clickable_page" in compose
     assert "ingest_image_coordinates_click" in compose
+    assert "_on_add_field_button" not in compose
     assert "Place field" not in compose
     assert 'key="esign_x"' not in compose
     assert "st.slider" not in compose
@@ -746,7 +774,7 @@ def test_compose_has_fallback_add_buttons_no_sliders():
 
 
 def test_ingest_image_coordinates_sets_pending_not_center():
-    """Native click dict → pending x/y; sticky unix_time must not reset cascade."""
+    """Native click dict → pending x/y + coords_ready; sticky unix_time ignored."""
     from src import esign_ui
     import streamlit as st
 
@@ -762,20 +790,46 @@ def test_ingest_image_coordinates_sets_pending_not_center():
         )
         assert abs(float(ss["esign_pending_x"]) - 0.2) < 1e-9
         assert abs(float(ss["esign_pending_y"]) - 0.3) < 1e-9
-        assert int(ss["esign_add_cascade"]) == 0
-        ss["esign_add_cascade"] = 2
-        # Same click again (component sticky value) — must NOT reset cascade
+        assert ss.get("esign_coords_ready") is True
+        assert int(ss["esign_place_x_pct"]) == 20
+        assert int(ss["esign_place_y_pct"]) == 30
+        # Same click again (component sticky value) — must NOT re-ingest
         assert not esign_ui.ingest_image_coordinates_click(
             {"x": 200, "y": 300, "width": 1000, "height": 1000, "unix_time": 111}
         )
-        assert int(ss["esign_add_cascade"]) == 2
         # New click
         assert esign_ui.ingest_image_coordinates_click(
             {"x": 700, "y": 800, "width": 1000, "height": 1000, "unix_time": 222}
         )
         assert abs(float(ss["esign_pending_x"]) - 0.7) < 1e-9
         assert abs(float(ss["esign_pending_y"]) - 0.8) < 1e-9
-        assert int(ss["esign_add_cascade"]) == 0
+    finally:
+        st.session_state = original_ss  # type: ignore[misc]
+
+
+def test_click_ingest_places_selected_type_immediately():
+    """A: ingest click + place_selected_type → field at click, not center."""
+    from src import esign_ui
+    import streamlit as st
+
+    class _SS(dict):
+        pass
+
+    ss = _SS()
+    ss["esign_compose_fields"] = []
+    ss["esign_next_type"] = "sign"
+    original_ss = st.session_state
+    try:
+        st.session_state = ss  # type: ignore[misc]
+        assert esign_ui.ingest_image_coordinates_click(
+            {"x": 200, "y": 700, "width": 1000, "height": 1000, "unix_time": 333}
+        )
+        assert esign_ui.place_selected_type_at_pending(page_index=0)
+        fields = ss["esign_compose_fields"]
+        assert len(fields) == 1
+        assert fields[0]["type"] == "sign"
+        assert abs(float(fields[0]["x"]) - 0.2) < 1e-9
+        assert abs(float(fields[0]["y_from_top"]) - 0.7) < 1e-9
     finally:
         st.session_state = original_ss  # type: ignore[misc]
 
@@ -793,14 +847,10 @@ def test_add_at_distinct_pending_clicks_not_center_stack():
     original_ss = st.session_state
     try:
         st.session_state = ss  # type: ignore[misc]
-        ss["esign_pending_x"] = 0.2
-        ss["esign_pending_y"] = 0.3
-        ss["esign_add_cascade"] = 0
-        esign_ui._add_field_at_pending("text", page_index=0)
-        ss["esign_pending_x"] = 0.7
-        ss["esign_pending_y"] = 0.8
-        ss["esign_add_cascade"] = 0
-        esign_ui._add_field_at_pending("date", page_index=0)
+        esign_ui._sync_pending_click(0.2, 0.3)
+        assert esign_ui._add_field_at_pending("text", page_index=0)
+        esign_ui._sync_pending_click(0.7, 0.8)
+        assert esign_ui._add_field_at_pending("date", page_index=0)
         fields = ss["esign_compose_fields"]
         assert len(fields) == 2
         assert abs(float(fields[0]["x"]) - 0.2) < 1e-9
@@ -836,10 +886,8 @@ def test_three_pending_adds_survive_save_load_roundtrip(tmp_path, monkeypatch):
     try:
         st.session_state = ss  # type: ignore[misc]
         for x, y, ftype in planned:
-            ss["esign_pending_x"] = x
-            ss["esign_pending_y"] = y
-            ss["esign_add_cascade"] = 0
-            esign_ui._add_field_at_pending(ftype, page_index=0)
+            esign_ui._sync_pending_click(x, y)
+            assert esign_ui._add_field_at_pending(ftype, page_index=0)
         fields = list(ss["esign_compose_fields"])
         assert len(fields) == 3
         coords = [(float(f["x"]), float(f["y_from_top"])) for f in fields]
@@ -869,19 +917,21 @@ def test_three_pending_adds_survive_save_load_roundtrip(tmp_path, monkeypatch):
         st.session_state = original_ss  # type: ignore[misc]
 
 
-def test_add_buttons_apptest_count_0_to_3():
-    """AppTest: Add text/date/sign → Placed fields 0→1→2→3 with distinct types."""
+def test_apptest_place_without_coords_refuses_no_center_cascade():
+    """AppTest: Place here without coords must not create 50/50 cascade stack."""
     from streamlit.testing.v1 import AppTest
 
     script = '''
 import streamlit as st
-from src.esign_ui import _on_add_field_button
+from src.esign_ui import _on_place_here, _on_select_field_type
 
 st.session_state.setdefault("esign_compose_fields", [])
 st.session_state.setdefault("esign_page", 1)
-st.button("Add text", key="esign_add_text_here", on_click=_on_add_field_button, args=("text",))
-st.button("Add date", key="esign_add_date_here", on_click=_on_add_field_button, args=("date",))
-st.button("Add sign", key="esign_add_sign_here", on_click=_on_add_field_button, args=("sign",))
+st.session_state.setdefault("esign_next_type", "text")
+st.session_state.setdefault("esign_place_x_pct", 50)
+st.session_state.setdefault("esign_place_y_pct", 50)
+st.button("Text", key="esign_type_text", on_click=_on_select_field_type, args=("text",))
+st.button("Place here", key="esign_place_here", on_click=_on_place_here)
 fields = list(st.session_state.get("esign_compose_fields") or [])
 st.write("COUNT=" + str(len(fields)))
 '''
@@ -890,61 +940,89 @@ st.write("COUNT=" + str(len(fields)))
     assert not at.exception
     assert len(at.session_state["esign_compose_fields"]) == 0
 
-    at.button(key="esign_add_text_here").click().run()
+    at.button(key="esign_place_here").click().run()
     assert not at.exception
-    assert len(at.session_state["esign_compose_fields"]) == 1
-    assert at.session_state["esign_compose_fields"][0]["type"] == "text"
-
-    at.button(key="esign_add_date_here").click().run()
-    assert len(at.session_state["esign_compose_fields"]) == 2
-    at.button(key="esign_add_sign_here").click().run()
-    fields = at.session_state["esign_compose_fields"]
-    assert len(fields) == 3
-    assert [f["type"] for f in fields] == ["text", "date", "sign"]
-    ys = [float(f["y_from_top"]) for f in fields]
-    assert ys[0] == 0.5
-    assert abs(ys[1] - 0.53) < 1e-9
-    assert abs(ys[2] - 0.56) < 1e-9
+    assert len(at.session_state["esign_compose_fields"]) == 0
+    err = ""
+    try:
+        err = str(at.session_state["esign_place_error"] or "")
+    except KeyError:
+        err = ""
+    assert "Click the page or set X/Y first" in err
 
 
-def test_apptest_pending_clicks_place_at_distinct_coords():
-    """AppTest: set pending (0.2,0.3) Add text; (0.7,0.8) Add date — not center stack."""
+def test_apptest_xy_ready_places_at_20_70():
+    """AppTest: coords_ready X=20 Y=70 → Place here lands at 0.2/0.7."""
     from streamlit.testing.v1 import AppTest
 
     script = '''
 import streamlit as st
-from src.esign_ui import _on_add_field_button
+from src.esign_ui import _on_place_here, _on_select_field_type
 
 st.session_state.setdefault("esign_compose_fields", [])
 st.session_state.setdefault("esign_page", 1)
-st.button("Add text", key="esign_add_text_here", on_click=_on_add_field_button, args=("text",))
-st.button("Add date", key="esign_add_date_here", on_click=_on_add_field_button, args=("date",))
-st.button("Add sign", key="esign_add_sign_here", on_click=_on_add_field_button, args=("sign",))
+st.session_state.setdefault("esign_next_type", "text")
+st.button("Text", key="esign_type_text", on_click=_on_select_field_type, args=("text",))
+st.button("Date", key="esign_type_date", on_click=_on_select_field_type, args=("date",))
+st.button("Place here", key="esign_place_here", on_click=_on_place_here)
 '''
     at = AppTest.from_string(script, default_timeout=15)
     at.run()
+    at.session_state["esign_place_x_pct"] = 20
+    at.session_state["esign_place_y_pct"] = 70
+    at.session_state["esign_coords_ready"] = True
     at.session_state["esign_pending_x"] = 0.2
-    at.session_state["esign_pending_y"] = 0.3
-    at.session_state["esign_add_cascade"] = 0
-    at.button(key="esign_add_text_here").click().run()
+    at.session_state["esign_pending_y"] = 0.7
+    at.session_state["esign_next_type"] = "date"
+    at.button(key="esign_place_here").click().run()
     assert not at.exception
-    f0 = at.session_state["esign_compose_fields"][0]
-    assert abs(float(f0["x"]) - 0.2) < 1e-9
-    assert abs(float(f0["y_from_top"]) - 0.3) < 1e-9
-
-    at.session_state["esign_pending_x"] = 0.7
-    at.session_state["esign_pending_y"] = 0.8
-    at.session_state["esign_add_cascade"] = 0
-    at.button(key="esign_add_date_here").click().run()
     fields = at.session_state["esign_compose_fields"]
-    assert len(fields) == 2
-    assert abs(float(fields[1]["x"]) - 0.7) < 1e-9
-    assert abs(float(fields[1]["y_from_top"]) - 0.8) < 1e-9
+    assert len(fields) == 1
+    assert fields[0]["type"] == "date"
     assert abs(float(fields[0]["x"]) - 0.2) < 1e-9
-    xs = {round(float(f["x"]), 4) for f in fields}
-    ys = {round(float(f["y_from_top"]), 4) for f in fields}
-    assert xs == {0.2, 0.7}
-    assert ys == {0.3, 0.8}
+    assert abs(float(fields[0]["y_from_top"]) - 0.7) < 1e-9
+
+
+def test_apptest_three_xy_sets_distinct_x_not_all_half():
+    """AppTest: three X/Y sets → three distinct x values, not all 0.5."""
+    from streamlit.testing.v1 import AppTest
+
+    script = '''
+import streamlit as st
+from src.esign_ui import _on_place_here
+
+st.session_state.setdefault("esign_compose_fields", [])
+st.session_state.setdefault("esign_page", 1)
+st.session_state.setdefault("esign_next_type", "text")
+st.button("Place here", key="esign_place_here", on_click=_on_place_here)
+'''
+    at = AppTest.from_string(script, default_timeout=15)
+    at.run()
+    planned = [(20, 30), (45, 55), (75, 85)]
+    for xp, yp in planned:
+        at.session_state["esign_place_x_pct"] = xp
+        at.session_state["esign_place_y_pct"] = yp
+        at.session_state["esign_coords_ready"] = True
+        at.session_state["esign_pending_x"] = xp / 100.0
+        at.session_state["esign_pending_y"] = yp / 100.0
+        at.button(key="esign_place_here").click().run()
+        assert not at.exception
+    fields = at.session_state["esign_compose_fields"]
+    assert len(fields) == 3
+    xs = [round(float(f["x"]), 4) for f in fields]
+    ys = [round(float(f["y_from_top"]), 4) for f in fields]
+    assert xs == [0.2, 0.45, 0.75]
+    assert ys == [0.3, 0.55, 0.85]
+    assert not all(abs(x - 0.5) < 1e-9 for x in xs)
+    # Must not match the old unused-pending cascade fingerprint
+    assert ys != [0.5, 0.53, 0.56]
+
+
+def test_streamlit_image_coordinates_importable():
+    """requirements pin must import in a clean env used by Cloud."""
+    import streamlit_image_coordinates
+
+    assert hasattr(streamlit_image_coordinates, "streamlit_image_coordinates")
 
 
 def test_delete_document_removes_from_list(tmp_path, monkeypatch):

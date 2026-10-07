@@ -104,22 +104,33 @@ def _placer_bridge_widgets() -> bool:
 
 
 def _sync_pending_click(x: float, y_from_top: float) -> None:
-    """Store last preview click — used by Add buttons, never sliders."""
+    """Store next placement coords from image click or X%/Y% inputs."""
     px = float(max(0.0, min(0.95, x)))
     py = float(max(0.0, min(0.95, y_from_top)))
     st.session_state["esign_pending_x"] = px
     st.session_state["esign_pending_y"] = py
-    st.session_state["esign_add_cascade"] = 0
+    st.session_state["esign_coords_ready"] = True
+    # Keep Cloud X%/Y% fallback inputs in sync (set before widgets bind).
+    st.session_state["esign_place_x_pct"] = int(round(px * 100))
+    st.session_state["esign_place_y_pct"] = int(round(py * 100))
+    st.session_state.pop("esign_place_error", None)
+    st.session_state.pop("esign_add_cascade", None)
 
 
-def _pending_place_xy() -> tuple[float, float]:
-    """Last preview click, or page center when the user has not clicked yet."""
-    if "esign_pending_x" in st.session_state and "esign_pending_y" in st.session_state:
-        return (
-            float(st.session_state["esign_pending_x"]),
-            float(st.session_state["esign_pending_y"]),
-        )
-    return 0.5, 0.5
+def _pending_place_xy() -> Optional[tuple[float, float]]:
+    """
+    Next placement coords, or None when the user has not clicked / set X/Y.
+
+    Never invents page-center (0.5, 0.5) — that path caused Cloud cascade stacks.
+    """
+    if not st.session_state.get("esign_coords_ready"):
+        return None
+    if "esign_pending_x" not in st.session_state or "esign_pending_y" not in st.session_state:
+        return None
+    return (
+        float(st.session_state["esign_pending_x"]),
+        float(st.session_state["esign_pending_y"]),
+    )
 
 
 def _annotate_fields_png(
@@ -159,10 +170,10 @@ def _annotate_fields_png(
 
 def ingest_image_coordinates_click(value: Any) -> bool:
     """
-    Streamlit-native click → esign_pending_x/y.
+    Streamlit-native click → esign_pending_x/y (+ X%/Y% fallback inputs).
 
     Uses streamlit-image-coordinates return dict. Dedupes on unix_time so a
-    sticky last-click value does not reset cascade on every rerun.
+    sticky last-click value does not re-place on every rerun.
     """
     if not value or not isinstance(value, dict):
         return False
@@ -208,21 +219,58 @@ def _render_clickable_page(png_bytes: bytes, *, key: str) -> Any:
     )
 
 
-def _on_add_field_button(ftype: str) -> None:
-    """Streamlit on_click: runs before script body so Add cannot lose to bridge rerun."""
+def _selected_field_type() -> str:
+    return str(st.session_state.get("esign_next_type") or "text").lower()
+
+
+def _on_select_field_type(ftype: str) -> None:
+    """Type buttons only choose the next field type — they do not place."""
+    st.session_state["esign_next_type"] = str(ftype or "text").lower()
+    st.session_state.pop("esign_place_error", None)
+
+
+def _on_xy_pct_change() -> None:
+    """X%/Y% number_inputs → pending coords (Cloud fallback when click is dead)."""
+    try:
+        x = float(st.session_state.get("esign_place_x_pct") or 0) / 100.0
+        y = float(st.session_state.get("esign_place_y_pct") or 0) / 100.0
+    except (TypeError, ValueError):
+        return
+    _sync_pending_click(x, y)
+
+
+def _on_place_here() -> None:
+    """Place the selected type at current X%/Y% (or last click) — never invent 50/50."""
     page_idx = max(0, int(st.session_state.get("esign_page") or 1) - 1)
-    _add_field_at_pending(ftype, page_index=page_idx)
+    if "esign_place_x_pct" in st.session_state and "esign_place_y_pct" in st.session_state:
+        if st.session_state.get("esign_coords_ready"):
+            try:
+                x = float(st.session_state["esign_place_x_pct"]) / 100.0
+                y = float(st.session_state["esign_place_y_pct"]) / 100.0
+                _sync_pending_click(x, y)
+            except (TypeError, ValueError):
+                pass
+    if not _add_field_at_pending(_selected_field_type(), page_index=page_idx):
+        st.session_state["esign_place_error"] = "Click the page or set X/Y first"
 
 
-def _add_field_at_pending(ftype: str, *, page_index: int) -> None:
+def place_selected_type_at_pending(*, page_index: int) -> bool:
+    """Place currently selected type at pending coords (used after image click)."""
+    return _add_field_at_pending(_selected_field_type(), page_index=page_index)
+
+
+def _add_field_at_pending(ftype: str, *, page_index: int) -> bool:
     """
-    Primary Add path: place at last preview-click coords (or page center).
-    Pure session_state — never iframe Apply, never widget slider keys.
-    Repeated Adds without a new click cascade +0.03 down so boxes don't stack.
+    Place at last click / X%/Y% coords only.
+
+    Refuses (returns False) when no coords are ready — never defaults to
+    page-center 0.5/0.5 cascade (that broke Cloud when clicks were lost).
     """
-    x, y = _pending_place_xy()
-    cascade = int(st.session_state.get("esign_add_cascade") or 0)
-    y = float(min(0.95, y + cascade * 0.03))
+    xy = _pending_place_xy()
+    if xy is None:
+        st.session_state["esign_place_error"] = "Click the page or set X/Y first"
+        return False
+    x, y = xy
     labels = {"text": "Text", "date": "Date", "sign": "Sign"}
     fields = list(st.session_state.get(_session_fields_key()) or [])
     fields, _effects = apply_placer_message(
@@ -231,8 +279,8 @@ def _add_field_at_pending(ftype: str, *, page_index: int) -> None:
             "action": "add",
             "type": str(ftype or "text").lower(),
             "page": int(page_index),
-            "x": x,
-            "y_from_top": y,
+            "x": float(x),
+            "y_from_top": float(y),
             "w": 0.28,
             "h": 0.04,
             "label": labels.get(str(ftype or "text").lower(), "Text"),
@@ -241,9 +289,9 @@ def _add_field_at_pending(ftype: str, *, page_index: int) -> None:
         },
         page_index=page_index,
     )
-    # Keep pending click; bump cascade so the next Add offsets slightly.
-    st.session_state["esign_add_cascade"] = cascade + 1
     st.session_state[_session_fields_key()] = fields
+    st.session_state.pop("esign_place_error", None)
+    return True
 
 
 def _field_rect_snapshot(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1153,10 +1201,11 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                 "Try another PDF, or reload the page."
             )
             png, iw, ih = b"", 0, 0
+        st.session_state.setdefault("esign_next_type", "text")
         fields = list(st.session_state.get(_session_fields_key()) or [])
         if png:
             pending_pair: Optional[tuple[float, float]] = None
-            if (
+            if st.session_state.get("esign_coords_ready") and (
                 "esign_pending_x" in st.session_state
                 and "esign_pending_y" in st.session_state
             ):
@@ -1170,15 +1219,16 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                 )
             except Exception:
                 annotated = png
-            # Authoritative click path (Streamlit-native) — do not rely on iframe Apply.
+            # Click places the selected type immediately (no separate pending Add).
             click_val = _render_clickable_page(
                 annotated, key=f"esign_native_click_p{page_idx}"
             )
             if ingest_image_coordinates_click(click_val):
+                place_selected_type_at_pending(page_index=page_idx)
                 st.rerun()
             st.caption(
-                "Click the image to set the next field position (red dot). "
-                "Then use **Add text / date / sign**. "
+                "Select **Text / Date / Sign**, then **click the page** to place. "
+                "If click fails on Cloud, set **X% / Y%** and **Place here**. "
                 "Open **Drag & resize** below to move existing boxes."
             )
             with st.expander("Drag & resize fields", expanded=False):
@@ -1201,24 +1251,93 @@ def _compose_tab(*, user: dict, company: dict) -> None:
             )
 
     with right:
+        st.session_state.setdefault("esign_next_type", "text")
         fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
         pending_x = st.session_state.get("esign_pending_x")
         pending_y = st.session_state.get("esign_pending_y")
+        coords_ready = bool(st.session_state.get("esign_coords_ready"))
         st.markdown("#### Fields")
         st.caption(
-            "Click the preview image to set position, then **Add text / date / sign** "
-            "beside Placed fields. Optional: **Drag & resize** under the preview. "
-            "**Edit** for typewriter/color. Save keeps each field's page/x/y/w/h."
+            "1) Choose type · 2) Click the page (or set X%/Y% → Place here). "
+            "Never invents center 50%/50%. **Edit** for typewriter/color. "
+            "Save keeps each field's page/x/y/w/h."
         )
-        if pending_x is not None and pending_y is not None:
+        active = _selected_field_type()
+        t1, t2, t3 = st.columns(3)
+        with t1:
+            st.button(
+                "Text",
+                key="esign_type_text",
+                use_container_width=True,
+                type="primary" if active == "text" else "secondary",
+                on_click=_on_select_field_type,
+                args=("text",),
+            )
+        with t2:
+            st.button(
+                "Date",
+                key="esign_type_date",
+                use_container_width=True,
+                type="primary" if active == "date" else "secondary",
+                on_click=_on_select_field_type,
+                args=("date",),
+            )
+        with t3:
+            st.button(
+                "Sign",
+                key="esign_type_sign",
+                use_container_width=True,
+                type="primary" if active == "sign" else "secondary",
+                on_click=_on_select_field_type,
+                args=("sign",),
+            )
+        st.caption(f"Next click places: **{active}**")
+
+        # Display defaults only — do NOT mark coords_ready (avoids silent 50/50 adds).
+        st.session_state.setdefault("esign_place_x_pct", 50)
+        st.session_state.setdefault("esign_place_y_pct", 50)
+
+        # Cloud-safe fallback — bound only to next placement, not existing fields.
+        fx, fy, fbtn = st.columns([1, 1, 1.2])
+        with fx:
+            st.number_input(
+                "Place X%",
+                min_value=0,
+                max_value=95,
+                step=1,
+                key="esign_place_x_pct",
+                on_change=_on_xy_pct_change,
+                help="Percent from left. Set manually if image click does not register.",
+            )
+        with fy:
+            st.number_input(
+                "Place Y%",
+                min_value=0,
+                max_value=95,
+                step=1,
+                key="esign_place_y_pct",
+                on_change=_on_xy_pct_change,
+                help="Percent from top. Set manually if image click does not register.",
+            )
+        with fbtn:
+            st.write("")  # align with number_input label
+            st.button(
+                "Place here",
+                key="esign_place_here",
+                use_container_width=True,
+                type="primary",
+                on_click=_on_place_here,
+            )
+
+        if st.session_state.get("esign_place_error"):
+            st.warning(str(st.session_state.get("esign_place_error")))
+        elif coords_ready and pending_x is not None and pending_y is not None:
             st.caption(
-                f"Next field at: **{float(pending_x):.0%}** left, "
+                f"Ready at: **{float(pending_x):.0%}** left, "
                 f"**{float(pending_y):.0%}** top (page {page_idx + 1})."
             )
         else:
-            st.caption(
-                "No click yet — Add buttons place at page center (cascading slightly)."
-            )
+            st.caption("Click the page or set X%/Y% first — will not place at center.")
 
         edit_id = str(st.session_state.get("esign_edit_field_id") or "")
         edit_field = next((f for f in fields if f.get("id") == edit_id), None)
@@ -1268,39 +1387,11 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                     st.session_state.pop("esign_edit_field_id", None)
                     st.rerun()
 
-        # Re-read after on_click Add (callbacks mutate before this body runs)
+        # Re-read after on_click Place here (callbacks mutate before this body runs)
         fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
-        hdr, b1, b2, b3 = st.columns([2.2, 1, 1, 1])
-        with hdr:
-            st.markdown(f"#### Placed fields ({len(fields)})")
-        with b1:
-            st.button(
-                "Add text",
-                key="esign_add_text_here",
-                use_container_width=True,
-                on_click=_on_add_field_button,
-                args=("text",),
-            )
-        with b2:
-            st.button(
-                "Add date",
-                key="esign_add_date_here",
-                use_container_width=True,
-                on_click=_on_add_field_button,
-                args=("date",),
-            )
-        with b3:
-            st.button(
-                "Add sign",
-                key="esign_add_sign_here",
-                use_container_width=True,
-                on_click=_on_add_field_button,
-                args=("sign",),
-            )
-        # Refresh count after buttons (on_click already applied on this run)
-        fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
+        st.markdown(f"#### Placed fields ({len(fields)})")
         if not fields:
-            st.caption("No fields yet — click **Add text / date / sign** above.")
+            st.caption("No fields yet — select a type, then click the page or Place here.")
         else:
             for idx, f in enumerate(fields):
                 c1, c2, c3 = st.columns([3.2, 1, 1])
