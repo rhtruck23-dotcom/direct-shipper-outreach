@@ -174,24 +174,30 @@ def test_consume_placer_update_writes_y_from_top():
         st.rerun = original_rerun  # type: ignore[method-assign]
 
 
-def test_placer_js_commits_drag_without_dom_rebuild():
-    """Overlay JS must push update on pointerup and avoid mid-drag innerHTML wipe."""
-    import inspect
+def test_placer_js_uses_set_component_value_not_apply_bridge():
+    """Right-click Add must call Streamlit.setComponentValue — not Apply bridge."""
+    from pathlib import Path
 
     from src import esign_ui
 
-    src = inspect.getsource(esign_ui._render_field_placer)
-    assert 'action: "update"' in src
-    assert "commitDrag" in src
-    assert "setPointerCapture" in src
-    assert "suppressClick" in src
-    # Regression: rebuilding overlay.innerHTML on every mousemove dropped mouseup
-    assert "In-place style update" in src
-    # Right-click menu must use pointerdown (click is swallowed after contextmenu)
+    js_path = (
+        Path(esign_ui.__file__).resolve().parent
+        / "esign_placer"
+        / "frontend"
+        / "main.js"
+    )
+    src = js_path.read_text(encoding="utf-8")
+    assert "Streamlit.setComponentValue" in src or "setComponentValue" in src
+    assert 'op: "add"' in src
+    assert "Add text" in src
+    assert "Add date" in src
+    assert "Add sign" in src
     assert "pointerdown" in src
-    assert 'action: "add"' in src
-    assert "Edit text" in src
-    assert "__ltEsignPlacerGen" in src
+    assert "commitDrag" in src
+    # Dead path: parent-document Apply click must NOT be the menu handler
+    assert "lt_esign_placer_apply" not in src
+    assert "findApplyButton" not in src
+    assert "pushAction" not in src
 
 
 def test_six_distinct_fields_survive_sequential_adds():
@@ -616,6 +622,70 @@ def test_apply_placer_menu_add_at_click_03_04():
     )
 
 
+def test_ingest_component_value_add_at_025_04():
+    """Simulate setComponentValue {op:add,x:0.25,y:0.4} → field list gains that field."""
+    from src import esign_ui
+    import streamlit as st
+
+    class _SS(dict):
+        pass
+
+    ss = _SS()
+    ss["esign_compose_fields"] = []
+    original_ss = st.session_state
+    try:
+        st.session_state = ss  # type: ignore[misc]
+        assert esign_ui.ingest_placer_component_value(
+            {
+                "op": "add",
+                "type": "text",
+                "x": 0.25,
+                "y": 0.4,
+                "page": 0,
+                "w": 0.28,
+                "h": 0.04,
+                "t": 999001,
+            },
+            page_index=0,
+        )
+        fields = ss["esign_compose_fields"]
+        assert len(fields) == 1
+        assert fields[0]["type"] == "text"
+        assert abs(float(fields[0]["x"]) - 0.25) < 1e-9
+        assert abs(float(fields[0]["y_from_top"]) - 0.4) < 1e-9
+        # Sticky t must not double-add
+        assert not esign_ui.ingest_placer_component_value(
+            {
+                "op": "add",
+                "type": "text",
+                "x": 0.25,
+                "y": 0.4,
+                "page": 0,
+                "t": 999001,
+            },
+            page_index=0,
+        )
+        assert len(ss["esign_compose_fields"]) == 1
+        # New menu action grows count at new coords
+        assert esign_ui.ingest_placer_component_value(
+            {
+                "op": "add",
+                "type": "sign",
+                "x": 0.55,
+                "y_from_top": 0.62,
+                "page": 0,
+                "t": 999002,
+            },
+            page_index=0,
+        )
+        assert len(ss["esign_compose_fields"]) == 2
+        assert ss["esign_compose_fields"][1]["type"] == "sign"
+        assert abs(float(ss["esign_compose_fields"][1]["x"]) - 0.55) < 1e-9
+        assert abs(float(ss["esign_compose_fields"][1]["y_from_top"]) - 0.62) < 1e-9
+    finally:
+        st.session_state = original_ss  # type: ignore[misc]
+
+
 def test_fallback_add_at_pending_click_05_06():
     """Place-here uses explicit pending (0.5, 0.6) — never 0.1/0.2 slider default."""
     from src import esign_ui
@@ -743,8 +813,8 @@ def test_consume_menu_add_grows_field_count_0_to_1():
         st.rerun = original_rerun  # type: ignore[method-assign]
 
 
-def test_compose_has_click_place_and_xy_fallback_no_sliders():
-    """v2026.10.06m: type select + click place + X%/Y% fallback; no Place-field sliders."""
+def test_compose_has_right_click_component_and_xy_fallback():
+    """v2026.10.06n: setComponentValue placer + X%/Y% fallback; no Place-field sliders."""
     import inspect
 
     from src import esign_ui
@@ -759,18 +829,19 @@ def test_compose_has_click_place_and_xy_fallback_no_sliders():
     assert "Placed fields" in compose
     assert "_on_select_field_type" in compose
     assert "_on_place_here" in compose
-    assert "place_selected_type_at_pending" in compose
-    assert "_render_clickable_page" in compose
-    assert "ingest_image_coordinates_click" in compose
+    assert "_render_field_placer" in compose
+    assert "ingest_placer_component_value" in compose
     assert "_on_add_field_button" not in compose
     assert "Place field" not in compose
     assert 'key="esign_x"' not in compose
     assert "st.slider" not in compose
 
     src = inspect.getsource(esign_ui._render_field_placer)
-    assert "pointerEvents = \"auto\"" in src or "pointerEvents = 'auto'" in src
-    assert "lt_esign_placer_payload" in src
-    assert "120" in src  # flush delay before Apply click
+    assert "esign_placer" in src
+    assert "setComponentValue" in src
+    # Must not revive the dead components.html Apply bridge in the placer
+    assert "lt_esign_placer_apply" not in src
+    assert "components.html(" not in src
 
 
 def test_ingest_image_coordinates_sets_pending_not_center():

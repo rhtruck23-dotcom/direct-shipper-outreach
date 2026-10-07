@@ -434,19 +434,13 @@ def apply_placer_message(
     return out, effects
 
 
-def _consume_placer_action(*, page_index: int) -> None:
-    raw = str(st.session_state.get("esign_placer_payload") or "").strip()
-    if not raw:
-        return
-    try:
-        msg = json.loads(raw)
-    except Exception:
-        st.session_state["esign_placer_payload"] = ""
-        return
+def _apply_placer_msg_to_session(msg: dict[str, Any], *, page_index: int) -> bool:
+    """
+    Mutate esign_compose_fields from one placer message.
+    Shared by bridge consume + setComponentValue ingest.
+    """
     if not isinstance(msg, dict):
-        st.session_state["esign_placer_payload"] = ""
-        return
-
+        return False
     fields = list(st.session_state.get(_session_fields_key()) or [])
     before = _field_rect_snapshot(fields)
     fields, effects = apply_placer_message(fields, msg, page_index=page_index)
@@ -454,7 +448,7 @@ def _consume_placer_action(*, page_index: int) -> None:
 
     # Sticky-coord guard: existing ids must keep page/x/y/w/h unless this
     # message was an explicit geometry update for that single id.
-    action = str(msg.get("action") or "")
+    action = str(msg.get("action") or msg.get("op") or "")
     updated_id = str(msg.get("id") or "") if action == "update" else ""
     before_by_id = {r["id"]: r for r in before}
     for snap in after:
@@ -479,51 +473,68 @@ def _consume_placer_action(*, page_index: int) -> None:
         st.session_state.pop("esign_edit_field_id", None)
 
     st.session_state[_session_fields_key()] = fields
+    return True
+
+
+def ingest_placer_component_value(value: Any, *, page_index: int = 0) -> bool:
+    """
+    Apply return value from esign_placer custom component (setComponentValue).
+
+    Expected shapes:
+      {op:'add', type:'text', x:0.25, y:0.4, page:0, t:<ms>}
+      {op:'update'|'delete'|'edit', id:..., ...}
+    Dedupes on `t` so sticky component values do not re-add every rerun.
+    """
+    if not value or not isinstance(value, dict):
+        return False
+    t = value.get("t")
+    if t is None:
+        t = value.get("unix_time")
+    if t is not None and st.session_state.get("_esign_last_placer_t") == t:
+        return False
+
+    op = str(value.get("op") or value.get("action") or "").lower()
+    if not op:
+        return False
+
+    msg: dict[str, Any] = dict(value)
+    msg["action"] = op
+    if op == "add":
+        if msg.get("y_from_top") is None and msg.get("y") is not None:
+            msg["y_from_top"] = float(msg["y"])
+        if msg.get("x") is None:
+            return False
+        if msg.get("y_from_top") is None:
+            return False
+        msg.setdefault("w", 0.28)
+        msg.setdefault("h", 0.04)
+        msg.setdefault("page", page_index)
+        labels = {"text": "Text", "date": "Date", "sign": "Sign"}
+        ftype = str(msg.get("type") or "text").lower()
+        msg.setdefault("label", labels.get(ftype, "Text"))
+
+    if t is not None:
+        st.session_state["_esign_last_placer_t"] = t
+
+    return _apply_placer_msg_to_session(msg, page_index=page_index)
+
+
+def _consume_placer_action(*, page_index: int) -> None:
+    raw = str(st.session_state.get("esign_placer_payload") or "").strip()
+    if not raw:
+        return
+    try:
+        msg = json.loads(raw)
+    except Exception:
+        st.session_state["esign_placer_payload"] = ""
+        return
+    if not isinstance(msg, dict):
+        st.session_state["esign_placer_payload"] = ""
+        return
+
+    _apply_placer_msg_to_session(msg, page_index=page_index)
     st.session_state["esign_placer_payload"] = ""
     st.rerun()
-
-
-def _resync_placer_from_session_storage() -> None:
-    """One-shot: pull payload from parent sessionStorage into the bridge textarea."""
-    components.html(
-        """
-<script>
-(function () {
-  const doc = window.parent.document;
-  const win = window.parent;
-  let payload = "";
-  try { payload = win.sessionStorage.getItem("lt_esign_placer_payload") || ""; } catch (e) {}
-  if (!payload || payload.indexOf('"action"') < 0) return;
-  const areas = Array.from(doc.querySelectorAll("textarea"));
-  const ta = areas.find(function (t) {
-    const lab = (t.getAttribute("aria-label") || "") + (t.id || "");
-    return lab.indexOf("lt_esign_placer_payload") >= 0 ||
-      lab.indexOf("esign_placer_payload") >= 0;
-  });
-  if (!ta) return;
-  try {
-    const tracker = ta._valueTracker;
-    if (tracker) tracker.setValue("");
-  } catch (e) {}
-  const desc = Object.getOwnPropertyDescriptor(
-    window.parent.HTMLTextAreaElement.prototype, "value"
-  );
-  if (desc && desc.set) desc.set.call(ta, payload); else ta.value = payload;
-  ta.dispatchEvent(new Event("input", { bubbles: true }));
-  ta.dispatchEvent(new Event("change", { bubbles: true }));
-  const btn = Array.from(doc.querySelectorAll("button")).find(function (b) {
-    return (b.innerText || "").trim() === "lt_esign_placer_apply";
-  });
-  if (btn) {
-    try { btn.style.pointerEvents = "auto"; } catch (e) {}
-    setTimeout(function () { try { btn.click(); } catch (e) {} }, 80);
-  }
-})();
-</script>
-""",
-        height=1,
-        width=1,
-    )
 
 
 def _render_field_placer(
@@ -533,412 +544,38 @@ def _render_field_placer(
     img_h: int,
     page_index: int,
     fields: list[dict[str, Any]],
-) -> None:
-    """Interactive overlay: click to set position, right-click to add field type."""
+    next_type: str = "text",
+    key: Optional[str] = None,
+) -> Any:
+    """
+    Primary placer: custom Streamlit component with setComponentValue.
+
+    Right-click → Add text/date/sign returns {op:'add', type, x, y, page}
+    to Python. Does NOT use components.html Apply bridge (dead on Cloud).
+    """
+    from .esign_placer import esign_placer
+
     b64 = base64.b64encode(png_bytes).decode("ascii")
-    on_page = [f for f in fields if int(f.get("page") or 0) == page_index]
-    # Ensure value/color always present for overlay JS
-    for f in on_page:
-        f.setdefault("value", "")
-        f.setdefault("color", "#111827")
-    fields_json = json.dumps(on_page)
-    default_w = 0.28
-    default_h = 0.04
+    src = f"data:image/png;base64,{b64}"
+    on_page = []
+    for f in fields or []:
+        if int(f.get("page") or 0) != int(page_index):
+            continue
+        row = dict(f)
+        row.setdefault("value", "")
+        row.setdefault("color", "#111827")
+        on_page.append(row)
     frame_h = min(920, max(420, int(img_h * 720 / max(1, img_w)) + 48))
-
-    html = f"""
-<div id="lt-esign-root" style="font-family:system-ui,sans-serif;max-width:100%;">
-  <div id="lt-esign-stage" style="position:relative;width:100%;user-select:none;touch-action:none;">
-    <img id="lt-esign-img" src="data:image/png;base64,{b64}"
-         style="width:100%;height:auto;display:block;border:1px solid #cbd5e1;border-radius:8px;" />
-    <div id="lt-esign-overlay" style="position:absolute;left:0;top:0;width:100%;height:100%;"></div>
-    <div id="lt-esign-menu" style="display:none;position:absolute;z-index:9999;background:#fff;
-         border:1px solid #94a3b8;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);
-         padding:4px 0;min-width:160px;"></div>
-  </div>
-  <p style="margin:8px 0 0;font-size:12px;color:#64748b;">
-    <b>Click</b> to set position · <b>Right-click</b> Add text / date / sign ·
-    Right-click a field to <b>Edit text</b> or delete · Drag to move · corner to resize
-  </p>
-</div>
-<script>
-(function () {{
-  const PAGE = {page_index};
-  const DEF_W = {default_w};
-  const DEF_H = {default_h};
-  const GEN = (window.__ltEsignPlacerGen = (window.__ltEsignPlacerGen || 0) + 1);
-  let fields = {fields_json};
-  const stage = document.getElementById("lt-esign-stage");
-  const overlay = document.getElementById("lt-esign-overlay");
-  const menu = document.getElementById("lt-esign-menu");
-  const img = document.getElementById("lt-esign-img");
-  let pending = null;
-  let drag = null;
-  let suppressClick = false;
-  let pushTimer = null;
-
-  function parentDoc() {{
-    try {{ return window.parent.document; }} catch (e) {{ return document; }}
-  }}
-
-  function findPayloadTextarea(doc) {{
-    const areas = Array.from(doc.querySelectorAll("textarea"));
-    const byLabel = areas.find(function (t) {{
-      const lab = (t.getAttribute("aria-label") || "") + (t.id || "") +
-        (t.getAttribute("data-testid") || "");
-      return lab.indexOf("lt_esign_placer_payload") >= 0 ||
-        lab.indexOf("esign_placer_payload") >= 0;
-    }});
-    if (byLabel) return byLabel;
-    const marker = doc.getElementById("lt-esign-bridge-marker");
-    if (marker) {{
-      let root = marker.parentElement;
-      for (let i = 0; i < 8 && root; i++) {{
-        const near = root.querySelectorAll("textarea");
-        if (near.length) return near[0];
-        root = root.parentElement;
-      }}
-    }}
-    return areas.find(function (t) {{
-      const p = t.closest('[data-testid="stTextArea"]');
-      if (!p) return false;
-      return (p.innerText || "").indexOf("lt_esign_placer") >= 0;
-    }}) || null;
-  }}
-
-  function findApplyButton(doc) {{
-    const buttons = Array.from(doc.querySelectorAll("button"));
-    return (
-      buttons.find(function (b) {{
-        return (b.innerText || "").trim() === "lt_esign_placer_apply";
-      }}) ||
-      buttons.find(function (b) {{
-        return (b.textContent || "").indexOf("lt_esign_placer_apply") >= 0;
-      }}) ||
-      null
-    );
-  }}
-
-  function setNativeValue(ta, payload) {{
-    try {{
-      const tracker = ta._valueTracker;
-      if (tracker) tracker.setValue("");
-    }} catch (e) {{}}
-    let desc = null;
-    try {{
-      const proto = window.parent.HTMLTextAreaElement
-        ? window.parent.HTMLTextAreaElement.prototype
-        : HTMLTextAreaElement.prototype;
-      desc = Object.getOwnPropertyDescriptor(proto, "value");
-    }} catch (e) {{}}
-    if (desc && desc.set) desc.set.call(ta, payload); else ta.value = payload;
-    ta.dispatchEvent(new Event("input", {{ bubbles: true }}));
-    ta.dispatchEvent(new Event("change", {{ bubbles: true }}));
-  }}
-
-  function pushAction(obj) {{
-    const payload = JSON.stringify(obj);
-    const doc = parentDoc();
-    const win = (function () {{
-      try {{ return window.parent; }} catch (e) {{ return window; }}
-    }})();
-    try {{ win.sessionStorage.setItem("lt_esign_placer_payload", payload); }} catch (e) {{}}
-    const ta = findPayloadTextarea(doc);
-    if (ta) setNativeValue(ta, payload);
-    const btn = findApplyButton(doc);
-    if (!btn) return;
-    try {{ btn.style.pointerEvents = "auto"; }} catch (e) {{}}
-    if (pushTimer) clearTimeout(pushTimer);
-    // Allow React controlled textarea to flush before Streamlit packages the click.
-    pushTimer = setTimeout(function () {{
-      try {{
-        if (ta && (!ta.value || ta.value.indexOf('"action"') < 0)) {{
-          setNativeValue(ta, payload);
-        }}
-        btn.click();
-      }} catch (e) {{}}
-    }}, 120);
-  }}
-
-  function syncOverlayToImage() {{
-    if (!img.clientWidth || !img.clientHeight) return;
-    overlay.style.left = img.offsetLeft + "px";
-    overlay.style.top = img.offsetTop + "px";
-    overlay.style.width = img.clientWidth + "px";
-    overlay.style.height = img.clientHeight + "px";
-  }}
-
-  function fracFromEvent(ev) {{
-    const r = overlay.getBoundingClientRect();
-    if (!r.width || !r.height) return {{ x: 0.1, y_from_top: 0.15 }};
-    const x = Math.max(0, Math.min(0.95, (ev.clientX - r.left) / r.width));
-    const y = Math.max(0, Math.min(0.95, (ev.clientY - r.top) / r.height));
-    return {{ x: x, y_from_top: y }};
-  }}
-
-  function typeColor(t) {{
-    if (t === "date") return "#059669";
-    if (t === "sign") return "#ea580c";
-    return "#2563eb";
-  }}
-
-  function applyBoxStyle(box, f) {{
-    const y = (f.y_from_top != null ? f.y_from_top : f.y) || 0;
-    box.style.left = ((f.x || 0) * 100) + "%";
-    box.style.top = (y * 100) + "%";
-    box.style.width = ((f.w || 0.28) * 100) + "%";
-    box.style.height = ((f.h || 0.04) * 100) + "%";
-  }}
-
-  function hideMenu() {{
-    menu.style.display = "none";
-    menu.innerHTML = "";
-  }}
-
-  function commitDrag() {{
-    if (GEN !== window.__ltEsignPlacerGen) return;
-    if (!drag) return;
-    const f = fields.find(function (x) {{ return x.id === drag.id; }});
-    const moved = drag.moved;
-    drag = null;
-    if (!f || !moved) return;
-    suppressClick = true;
-    setTimeout(function () {{ suppressClick = false; }}, 120);
-    pushAction({{
-      action: "update",
-      id: f.id,
-      x: f.x,
-      y_from_top: f.y_from_top,
-      w: f.w,
-      h: f.h
-    }});
-  }}
-
-  function onDragMove(ev) {{
-    if (GEN !== window.__ltEsignPlacerGen) return;
-    if (!drag) return;
-    const r = overlay.getBoundingClientRect();
-    if (!r.width || !r.height) return;
-    const dx = (ev.clientX - drag.sx) / r.width;
-    const dy = (ev.clientY - drag.sy) / r.height;
-    if (Math.abs(dx) > 0.002 || Math.abs(dy) > 0.002) drag.moved = true;
-    const f = fields.find(function (x) {{ return x.id === drag.id; }});
-    if (!f) return;
-    if (drag.mode === "move") {{
-      f.x = Math.max(0, Math.min(0.95, drag.ox + dx));
-      f.y_from_top = Math.max(0, Math.min(0.95, drag.oy + dy));
-    }} else {{
-      f.w = Math.max(0.05, Math.min(0.9, drag.ow + dx));
-      f.h = Math.max(0.02, Math.min(0.2, drag.oh + dy));
-    }}
-    // In-place style update — do NOT rebuild DOM mid-drag (loses pointer capture
-    // and can drop mouseup before coords are written to session_state).
-    const box = overlay.querySelector('.lt-esign-field[data-id="' + f.id + '"]');
-    if (box) applyBoxStyle(box, f);
-  }}
-
-  function bindGlobal(type, fn) {{
-    const wrap = function (ev) {{
-      if (GEN !== window.__ltEsignPlacerGen) return;
-      fn(ev);
-    }};
-    document.addEventListener(type, wrap, true);
-    window.addEventListener(type, wrap, true);
-    try {{
-      window.parent.document.addEventListener(type, wrap, true);
-      window.parent.addEventListener(type, wrap, true);
-    }} catch (e) {{}}
-  }}
-
-  bindGlobal("pointermove", onDragMove);
-  bindGlobal("pointerup", commitDrag);
-  bindGlobal("pointercancel", commitDrag);
-  bindGlobal("mousemove", onDragMove);
-  bindGlobal("mouseup", commitDrag);
-
-  function startDrag(ev, f, mode) {{
-    ev.preventDefault();
-    ev.stopPropagation();
-    hideMenu();
-    drag = {{
-      id: f.id, mode: mode, sx: ev.clientX, sy: ev.clientY,
-      ox: f.x, oy: f.y_from_top, ow: f.w, oh: f.h, moved: false
-    }};
-    try {{
-      if (ev.currentTarget && ev.pointerId != null) {{
-        ev.currentTarget.setPointerCapture(ev.pointerId);
-      }}
-    }} catch (e) {{}}
-  }}
-
-  function menuRow(label, onPick) {{
-    const row = document.createElement("div");
-    row.setAttribute("role", "button");
-    row.textContent = label;
-    row.style.cssText =
-      "display:block;width:100%;text-align:left;padding:8px 12px;border:none;" +
-      "background:transparent;cursor:pointer;font-size:13px;box-sizing:border-box;";
-    row.onmouseover = function () {{ row.style.background = "#f1f5f9"; }};
-    row.onmouseout = function () {{ row.style.background = "transparent"; }};
-    // pointerdown (not click): Streamlit iframe often swallows click after
-    // contextmenu; pointerdown reliably posts the bridge action.
-    function fire(ev) {{
-      ev.preventDefault();
-      ev.stopPropagation();
-      hideMenu();
-      onPick();
-    }}
-    row.addEventListener("pointerdown", fire);
-    row.addEventListener("mousedown", fire);
-    return row;
-  }}
-
-  function renderFields() {{
-    syncOverlayToImage();
-    overlay.innerHTML = "";
-    fields.forEach(function (f) {{
-      const box = document.createElement("div");
-      box.className = "lt-esign-field";
-      box.dataset.id = f.id;
-      const col = typeColor(f.type);
-      const ink = f.color || "#111827";
-      box.style.cssText =
-        "position:absolute;box-sizing:border-box;border:2px solid " + col + ";" +
-        "background:rgba(37,99,235,0.08);border-radius:4px;cursor:move;touch-action:none;" +
-        "overflow:hidden;";
-      applyBoxStyle(box, f);
-      const lbl = document.createElement("span");
-      lbl.textContent = f.label || f.type || "Field";
-      lbl.style.cssText =
-        "position:absolute;left:2px;top:-16px;font-size:10px;color:" + col +
-        ";background:#fff;padding:0 3px;border-radius:3px;white-space:nowrap;";
-      box.appendChild(lbl);
-      if (f.value) {{
-        const tw = document.createElement("div");
-        tw.textContent = f.value;
-        tw.style.cssText =
-          "position:absolute;left:4px;top:2px;right:4px;bottom:2px;" +
-          "font-family:Courier New,Courier,monospace;font-size:12px;line-height:1.2;" +
-          "color:" + ink + ";white-space:pre-wrap;overflow:hidden;pointer-events:none;";
-        box.appendChild(tw);
-      }}
-      const handle = document.createElement("div");
-      handle.className = "lt-esign-resize";
-      handle.style.cssText =
-        "position:absolute;right:-4px;bottom:-4px;width:10px;height:10px;" +
-        "background:" + col + ";border-radius:2px;cursor:nwse-resize;touch-action:none;";
-      box.appendChild(handle);
-      box.addEventListener("pointerdown", function (ev) {{
-        if (ev.target === handle) return;
-        startDrag(ev, f, "move");
-      }});
-      handle.addEventListener("pointerdown", function (ev) {{
-        startDrag(ev, f, "resize");
-      }});
-      box.addEventListener("contextmenu", function (ev) {{
-        ev.preventDefault();
-        ev.stopPropagation();
-        showFieldMenu(ev, f);
-      }});
-      overlay.appendChild(box);
-    }});
-    if (pending) {{
-      const dot = document.createElement("div");
-      const py = pending.y_from_top != null ? pending.y_from_top : pending.y;
-      dot.style.cssText =
-        "position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;" +
-        "background:#dc2626;border-radius:50%;border:2px solid #fff;z-index:5;" +
-        "left:" + (pending.x * 100) + "%;top:" + (py * 100) + "%;";
-      overlay.appendChild(dot);
-    }}
-  }}
-
-  function placeMenu(ev) {{
-    menu.style.display = "block";
-    const r = stage.getBoundingClientRect();
-    const mw = 168;
-    const mh = 140;
-    let left = ev.clientX - r.left;
-    let top = ev.clientY - r.top;
-    if (left + mw > r.width) left = Math.max(0, r.width - mw);
-    if (top + mh > r.height) top = Math.max(0, r.height - mh);
-    menu.style.left = left + "px";
-    menu.style.top = top + "px";
-  }}
-
-  function showMenu(ev, pos) {{
-    menu.innerHTML = "";
-    placeMenu(ev);
-    [
-      {{ t: "text", label: "Add text" }},
-      {{ t: "date", label: "Add date" }},
-      {{ t: "sign", label: "Add sign" }}
-    ].forEach(function (item) {{
-      menu.appendChild(menuRow(item.label, function () {{
-        pushAction({{
-          action: "add",
-          type: item.t,
-          page: PAGE,
-          x: pos.x,
-          y_from_top: pos.y_from_top,
-          w: DEF_W,
-          h: DEF_H,
-          label: item.label.replace("Add ", ""),
-          value: "",
-          color: "#111827"
-        }});
-      }}));
-    }});
-  }}
-
-  function showFieldMenu(ev, f) {{
-    menu.innerHTML = "";
-    placeMenu(ev);
-    if ((f.type || "text") === "text") {{
-      menu.appendChild(menuRow("Edit text", function () {{
-        pushAction({{ action: "edit", id: f.id }});
-      }}));
-    }}
-    menu.appendChild(menuRow("Delete field", function () {{
-      pushAction({{ action: "delete", id: f.id }});
-    }}));
-  }}
-
-  // Keep menu clicks from falling through to overlay
-  menu.addEventListener("pointerdown", function (ev) {{
-    ev.stopPropagation();
-  }});
-  menu.addEventListener("mousedown", function (ev) {{
-    ev.stopPropagation();
-  }});
-
-  overlay.addEventListener("click", function (ev) {{
-    if (drag || suppressClick) return;
-    hideMenu();
-    const pos = fracFromEvent(ev);
-    pending = pos;
-    renderFields();
-    pushAction({{ action: "click", x: pos.x, y_from_top: pos.y_from_top }});
-  }});
-
-  overlay.addEventListener("contextmenu", function (ev) {{
-    ev.preventDefault();
-    const pos = fracFromEvent(ev);
-    pending = pos;
-    renderFields();
-    showMenu(ev, pos);
-  }});
-
-  img.onload = function () {{ renderFields(); }};
-  window.addEventListener("resize", function () {{
-    if (GEN !== window.__ltEsignPlacerGen) return;
-    syncOverlayToImage();
-  }});
-  if (img.complete) renderFields();
-}})();
-</script>
-"""
-    components.html(html, height=frame_h, scrolling=False)
+    return esign_placer(
+        src=src,
+        fields=on_page,
+        page=int(page_index),
+        def_w=0.28,
+        def_h=0.04,
+        next_type=str(next_type or "text").lower(),
+        key=key or f"esign_placer_p{page_index}",
+        height=frame_h,
+    )
 
 
 def _company_from_session() -> dict[str, Any]:
@@ -1147,19 +784,12 @@ def _compose_tab(*, user: dict, company: dict) -> None:
     page_i = max(1, min(pages, page_i))
     page_idx = page_i - 1
 
+    # Legacy hidden bridge kept for older tests / rescue path only.
     apply_clicked = _placer_bridge_widgets()
     payload_ready = bool(
         str(st.session_state.get("esign_placer_payload") or "").strip()
     )
-    if apply_clicked and not payload_ready:
-        # Race: Apply arrived before React flushed textarea — resync once.
-        if not st.session_state.get("_esign_resync_done"):
-            st.session_state["_esign_resync_done"] = True
-            _resync_placer_from_session_storage()
-        else:
-            st.session_state.pop("_esign_resync_done", None)
-    elif apply_clicked or payload_ready:
-        st.session_state.pop("_esign_resync_done", None)
+    if apply_clicked or payload_ready:
         _consume_placer_action(page_index=page_idx)
 
     with left:
@@ -1204,47 +834,30 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         st.session_state.setdefault("esign_next_type", "text")
         fields = list(st.session_state.get(_session_fields_key()) or [])
         if png:
-            pending_pair: Optional[tuple[float, float]] = None
-            if st.session_state.get("esign_coords_ready") and (
-                "esign_pending_x" in st.session_state
-                and "esign_pending_y" in st.session_state
-            ):
-                pending_pair = (
-                    float(st.session_state["esign_pending_x"]),
-                    float(st.session_state["esign_pending_y"]),
-                )
+            # Primary: custom component — right-click Add uses setComponentValue.
             try:
-                annotated = _annotate_fields_png(
-                    png, fields, page_idx, pending_xy=pending_pair
+                placer_val = _render_field_placer(
+                    png_bytes=png,
+                    img_w=iw,
+                    img_h=ih,
+                    page_index=page_idx,
+                    fields=fields,
+                    next_type=_selected_field_type(),
+                    key=f"esign_placer_p{page_idx}",
                 )
-            except Exception:
-                annotated = png
-            # Click places the selected type immediately (no separate pending Add).
-            click_val = _render_clickable_page(
-                annotated, key=f"esign_native_click_p{page_idx}"
-            )
-            if ingest_image_coordinates_click(click_val):
-                place_selected_type_at_pending(page_index=page_idx)
+            except Exception as exc:
+                st.error(
+                    f"Field placer failed ({exc}). "
+                    "Use X%/Y% → Place here as backup."
+                )
+                placer_val = None
+            if ingest_placer_component_value(placer_val, page_index=page_idx):
                 st.rerun()
             st.caption(
-                "Select **Text / Date / Sign**, then **click the page** to place. "
-                "If click fails on Cloud, set **X% / Y%** and **Place here**. "
-                "Open **Drag & resize** below to move existing boxes."
+                "**Right-click** the page → Add text / date / sign at that spot. "
+                "Left-click places the selected type. "
+                "If needed, set **X% / Y%** → **Place here**."
             )
-            with st.expander("Drag & resize fields", expanded=False):
-                try:
-                    _render_field_placer(
-                        png_bytes=png,
-                        img_w=iw,
-                        img_h=ih,
-                        page_index=page_idx,
-                        fields=fields,
-                    )
-                except Exception as exc:
-                    st.error(
-                        f"Drag overlay failed ({exc}). "
-                        "Click-to-place above still works — reload if needed."
-                    )
         else:
             st.warning(
                 "No page preview available. Reload or try another PDF to place fields."
@@ -1258,9 +871,9 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         coords_ready = bool(st.session_state.get("esign_coords_ready"))
         st.markdown("#### Fields")
         st.caption(
-            "1) Choose type · 2) Click the page (or set X%/Y% → Place here). "
-            "Never invents center 50%/50%. **Edit** for typewriter/color. "
-            "Save keeps each field's page/x/y/w/h."
+            "1) Right-click page → Add text/date/sign at click · "
+            "or choose type + left-click · or X%/Y% → Place here. "
+            "Never invents center 50%/50%. Save keeps page/x/y/w/h."
         )
         active = _selected_field_type()
         t1, t2, t3 = st.columns(3)
@@ -1391,7 +1004,10 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
         st.markdown(f"#### Placed fields ({len(fields)})")
         if not fields:
-            st.caption("No fields yet — select a type, then click the page or Place here.")
+            st.caption(
+                "No fields yet — right-click the page → Add text/date/sign, "
+                "or left-click / Place here."
+            )
         else:
             for idx, f in enumerate(fields):
                 c1, c2, c3 = st.columns([3.2, 1, 1])
