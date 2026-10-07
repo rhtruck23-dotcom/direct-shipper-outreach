@@ -75,20 +75,43 @@ def _sync_pending_click(x: float, y_from_top: float) -> None:
     st.session_state.pop("esign_add_cascade", None)
 
 
+def _xy_pct_place_coords() -> tuple[float, float]:
+    """
+    Current Place X%/Y% widget values as normalized floats.
+
+    Primary place path — always available (defaults 50/50). Each Place field
+    call must read these CURRENT values; never rewrite existing fields.
+    """
+    try:
+        x = float(st.session_state.get("esign_place_x_pct", 50) or 50) / 100.0
+        y = float(st.session_state.get("esign_place_y_pct", 50) or 50) / 100.0
+    except (TypeError, ValueError):
+        x, y = 0.5, 0.5
+    return (
+        float(max(0.0, min(0.95, x))),
+        float(max(0.0, min(0.95, y))),
+    )
+
+
 def _pending_place_xy() -> Optional[tuple[float, float]]:
     """
-    Next placement coords, or None when the user has not clicked / set X/Y.
+    Next placement coords for preview annotation / click secondary path.
 
-    Never invents page-center (0.5, 0.5) — that path caused Cloud cascade stacks.
+    Prefer explicit pending click; else current Place X%/Y% widgets.
     """
-    if not st.session_state.get("esign_coords_ready"):
-        return None
-    if "esign_pending_x" not in st.session_state or "esign_pending_y" not in st.session_state:
-        return None
-    return (
-        float(st.session_state["esign_pending_x"]),
-        float(st.session_state["esign_pending_y"]),
-    )
+    if (
+        st.session_state.get("esign_coords_ready")
+        and "esign_pending_x" in st.session_state
+        and "esign_pending_y" in st.session_state
+    ):
+        return (
+            float(st.session_state["esign_pending_x"]),
+            float(st.session_state["esign_pending_y"]),
+        )
+    # Widget path always has coords (setdefault 50/50 in compose).
+    if "esign_place_x_pct" in st.session_state or "esign_place_y_pct" in st.session_state:
+        return _xy_pct_place_coords()
+    return None
 
 
 def _annotate_fields_png(
@@ -323,18 +346,24 @@ def _on_xy_pct_change() -> None:
 
 
 def _on_place_here() -> None:
-    """Place the selected type at current X%/Y% (or last click) — never invent 50/50."""
+    """
+    PRIMARY place path (v2026.10.07e): append one field at current Place X%/Y%.
+
+    Pure Streamlit on_click — no placer / image-click / coords_ready gate.
+    Defaults (50/50) are valid; change X%/Y% between clicks for distinct spots.
+    Never rewrites geometry of existing fields.
+    """
     page_idx = max(0, int(st.session_state.get("esign_page") or 1) - 1)
-    if "esign_place_x_pct" in st.session_state and "esign_place_y_pct" in st.session_state:
-        if st.session_state.get("esign_coords_ready"):
-            try:
-                x = float(st.session_state["esign_place_x_pct"]) / 100.0
-                y = float(st.session_state["esign_place_y_pct"]) / 100.0
-                _sync_pending_click(x, y)
-            except (TypeError, ValueError):
-                pass
-    if not _add_field_at_pending(_selected_field_type(), page_index=page_idx):
-        st.session_state["esign_place_error"] = "Click the page or set X/Y first"
+    x, y = _xy_pct_place_coords()
+    _sync_pending_click(x, y)
+    ok = _append_field_at_xy(
+        _selected_field_type(),
+        x=x,
+        y_from_top=y,
+        page_index=page_idx,
+    )
+    if not ok:
+        st.session_state["esign_place_error"] = "Could not place field"
 
 
 def place_selected_type_at_pending(*, page_index: int) -> bool:
@@ -342,18 +371,14 @@ def place_selected_type_at_pending(*, page_index: int) -> bool:
     return _add_field_at_pending(_selected_field_type(), page_index=page_index)
 
 
-def _add_field_at_pending(ftype: str, *, page_index: int) -> bool:
-    """
-    Place at last click / X%/Y% coords only.
-
-    Refuses (returns False) when no coords are ready — never defaults to
-    page-center 0.5/0.5 cascade (that broke Cloud when clicks were lost).
-    """
-    xy = _pending_place_xy()
-    if xy is None:
-        st.session_state["esign_place_error"] = "Click the page or set X/Y first"
-        return False
-    x, y = xy
+def _append_field_at_xy(
+    ftype: str,
+    *,
+    x: float,
+    y_from_top: float,
+    page_index: int,
+) -> bool:
+    """Append one field at exact coords — never mutates existing field rects."""
     labels = {"text": "Text", "date": "Date", "sign": "Sign"}
     fields = list(st.session_state.get(_session_fields_key()) or [])
     fields, _effects = apply_placer_message(
@@ -363,7 +388,7 @@ def _add_field_at_pending(ftype: str, *, page_index: int) -> bool:
             "type": str(ftype or "text").lower(),
             "page": int(page_index),
             "x": float(x),
-            "y_from_top": float(y),
+            "y_from_top": float(y_from_top),
             "w": 0.28,
             "h": 0.04,
             "label": labels.get(str(ftype or "text").lower(), "Text"),
@@ -375,6 +400,24 @@ def _add_field_at_pending(ftype: str, *, page_index: int) -> bool:
     st.session_state[_session_fields_key()] = fields
     st.session_state.pop("esign_place_error", None)
     return True
+
+
+def _add_field_at_pending(ftype: str, *, page_index: int) -> bool:
+    """
+    Place at pending click coords, or current Place X%/Y% widgets.
+
+    Used by secondary click path. Primary Place field button uses
+    `_on_place_here` → `_append_field_at_xy` directly.
+    """
+    xy = _pending_place_xy()
+    if xy is None:
+        # Last resort: widget defaults (Place field path always has these).
+        if "esign_place_x_pct" not in st.session_state and "esign_place_y_pct" not in st.session_state:
+            st.session_state["esign_place_error"] = "Set Place X%/Y% then click Place field"
+            return False
+        xy = _xy_pct_place_coords()
+    x, y = xy
+    return _append_field_at_xy(ftype, x=x, y_from_top=y, page_index=page_index)
 
 
 def _field_rect_snapshot(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -838,9 +881,9 @@ def page_esign_docs(*, user: dict, company: dict) -> None:
 
     st.title("Esign Docs")
     st.caption(
-        "Upload a PDF → select Text / Date / Sign → **left-click the page** to place "
-        "(AcroForm overlays only) → save as a named template for CRM **Send for signature**, "
-        "or email a fill link. Sign = typed name (not DigSig). "
+        "Upload a PDF → select Text / Date / Sign → set **Place X%/Y%** → "
+        "**Place field** (AcroForm overlays) → save as a named template for CRM "
+        "**Send for signature**, or email a fill link. Sign = typed name (not DigSig). "
         "To move a field: delete it and place again."
     )
 
@@ -930,6 +973,9 @@ def _compose_tab(*, user: dict, company: dict) -> None:
             )
             png, iw, ih = b"", 0, 0
         st.session_state.setdefault("esign_next_type", "text")
+        # Defaults for Place X%/Y% before right-column widgets bind (AppTest-safe).
+        st.session_state.setdefault("esign_place_x_pct", 50)
+        st.session_state.setdefault("esign_place_y_pct", 50)
         fields = list(st.session_state.get(_session_fields_key()) or [])
         if png:
             annotated = _annotate_fields_png(
@@ -939,100 +985,19 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                 pending_xy=_pending_place_xy(),
             )
             st.info(
-                f"**Place a field:** select **Text / Date / Sign** (right) → "
-                f"**left-click** the interactive page below. "
-                f"Next click places **{_selected_field_type()}**. "
-                "**Drag** boxes to move · **corner handle** to resize. "
-                "Backup: set X%/Y% → Place here."
+                f"**Place a field (reliable):** select **Text / Date / Sign** (right) → "
+                f"set **Place X% / Y%** → click **Place field**. "
+                f"Next place type: **{_selected_field_type()}**. "
+                "Boxes draw on the preview below after each Place."
             )
             st.caption(f"Preview {iw}×{ih}px · page {page_idx + 1}/{pages}")
             # Guaranteed visible raster (v2026.10.07c) — never remove.
+            # v2026.10.07e: NO interactive placer / image-coordinates in compose —
+            # those paths silently no-op'd for users; Place field is primary.
             try:
                 _show_page_image(annotated, key=f"esign_click_p{page_idx}_img")
             except Exception as exc:
                 st.error(f"Preview render failed ({exc}).")
-
-            # Interactive place + drag + resize (setComponentValue; no Apply bridge).
-            placer_val = None
-            placer_ok = False
-            try:
-                placer_val = _render_field_placer(
-                    png_bytes=png,
-                    img_w=iw,
-                    img_h=ih,
-                    page_index=page_idx,
-                    fields=fields,
-                    next_type=_selected_field_type(),
-                    key=f"esign_placer_p{page_idx}",
-                )
-                placer_ok = True
-            except Exception as exc:
-                st.warning(
-                    f"Interactive placer unavailable ({exc}). "
-                    "Falling back to click-to-place (no drag)."
-                )
-
-            if placer_ok:
-                if ingest_placer_component_value(placer_val, page_index=page_idx):
-                    op = str(
-                        (placer_val or {}).get("op")
-                        or (placer_val or {}).get("action")
-                        or ""
-                    ).lower()
-                    if op == "add":
-                        ftype = str(
-                            (placer_val or {}).get("type") or _selected_field_type()
-                        )
-                        xy = _pending_place_xy()
-                        if xy is not None:
-                            try:
-                                st.toast(
-                                    f"Placed {ftype} at x={xy[0]:.0%} y={xy[1]:.0%}",
-                                    icon="✅",
-                                )
-                            except Exception:
-                                pass
-                    elif op == "update":
-                        try:
-                            st.toast("Field moved / resized", icon="✅")
-                        except Exception:
-                            pass
-                    st.rerun()
-            else:
-                # Fallback: 07c image-coordinates place path (preview already shown).
-                try:
-                    from PIL import Image
-                    from streamlit_image_coordinates import streamlit_image_coordinates
-
-                    img = Image.open(io.BytesIO(annotated)).convert("RGB")
-                    click_w = min(_PREVIEW_CLICK_WIDTH, max(120, int(img.size[0])))
-                    st.caption(
-                        "Left-click the interactive page below to place the selected field:"
-                    )
-                    click_val = streamlit_image_coordinates(
-                        img,
-                        key=f"esign_click_p{page_idx}",
-                        width=click_w,
-                        cursor="crosshair",
-                        image_format="JPEG",
-                        jpeg_quality=85,
-                    )
-                    if place_on_image_click(click_val, page_index=page_idx):
-                        ftype = _selected_field_type()
-                        xy = _pending_place_xy()
-                        if xy is not None:
-                            try:
-                                st.toast(
-                                    f"Placed {ftype} at x={xy[0]:.0%} y={xy[1]:.0%}",
-                                    icon="✅",
-                                )
-                            except Exception:
-                                pass
-                        st.rerun()
-                except Exception as exc2:
-                    st.caption(
-                        f"Click layer unavailable ({exc2}). Use X%/Y% → Place here."
-                    )
         else:
             st.warning(
                 "No page preview available. Reload or try another PDF to place fields."
@@ -1041,14 +1006,11 @@ def _compose_tab(*, user: dict, company: dict) -> None:
     with right:
         st.session_state.setdefault("esign_next_type", "text")
         fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
-        pending_x = st.session_state.get("esign_pending_x")
-        pending_y = st.session_state.get("esign_pending_y")
-        coords_ready = bool(st.session_state.get("esign_coords_ready"))
         st.markdown("#### Fields")
         st.caption(
-            "1) Choose type → 2) left-click the page · or set X%/Y% → Place here. "
-            "Drag / resize boxes on the interactive page. "
-            "Never invents center 50%/50%. Save keeps page/x/y/w/h."
+            "1) Choose type → 2) set Place X% / Y% → 3) **Place field**. "
+            "Each Place appends one field at the current X%/Y% (does not move old fields). "
+            "Save keeps page/x/y/w/h."
         )
         active = _selected_field_type()
         t1, t2, t3 = st.columns(3)
@@ -1079,13 +1041,12 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                 on_click=_on_select_field_type,
                 args=("sign",),
             )
-        st.caption(f"Next click places: **{active}**")
+        st.caption(f"Next Place field type: **{active}**")
 
-        # Display defaults only — do NOT mark coords_ready (avoids silent 50/50 adds).
         st.session_state.setdefault("esign_place_x_pct", 50)
         st.session_state.setdefault("esign_place_y_pct", 50)
 
-        # Cloud-safe fallback — bound only to next placement, not existing fields.
+        # PRIMARY path — pure widgets; no click / placer / coords_ready gate.
         fx, fy, fbtn = st.columns([1, 1, 1.2])
         with fx:
             st.number_input(
@@ -1094,8 +1055,7 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                 max_value=95,
                 step=1,
                 key="esign_place_x_pct",
-                on_change=_on_xy_pct_change,
-                help="Percent from left. Set manually if image click does not register.",
+                help="Percent from left edge. Change between Place clicks for distinct spots.",
             )
         with fy:
             st.number_input(
@@ -1104,13 +1064,12 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                 max_value=95,
                 step=1,
                 key="esign_place_y_pct",
-                on_change=_on_xy_pct_change,
-                help="Percent from top. Set manually if image click does not register.",
+                help="Percent from top edge. Change between Place clicks for distinct spots.",
             )
         with fbtn:
             st.write("")  # align with number_input label
             st.button(
-                "Place here",
+                "Place field",
                 key="esign_place_here",
                 use_container_width=True,
                 type="primary",
@@ -1119,13 +1078,12 @@ def _compose_tab(*, user: dict, company: dict) -> None:
 
         if st.session_state.get("esign_place_error"):
             st.warning(str(st.session_state.get("esign_place_error")))
-        elif coords_ready and pending_x is not None and pending_y is not None:
-            st.caption(
-                f"Last click: **{float(pending_x):.0%}** left, "
-                f"**{float(pending_y):.0%}** top (page {page_idx + 1})."
-            )
         else:
-            st.caption("Click the page or set X%/Y% first — will not place at center.")
+            cx, cy = _xy_pct_place_coords()
+            st.caption(
+                f"Next Place lands at **{cx:.0%}** left, **{cy:.0%}** top "
+                f"(page {page_idx + 1})."
+            )
 
         edit_id = str(st.session_state.get("esign_edit_field_id") or "")
         edit_field = next((f for f in fields if f.get("id") == edit_id), None)
@@ -1180,8 +1138,8 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         st.markdown(f"#### Placed fields ({len(fields)})")
         if not fields:
             st.caption(
-                "No fields yet — select a type and left-click the page, "
-                "or use X%/Y% → Place here."
+                "No fields yet — select Text / Date / Sign, set Place X%/Y%, "
+                "then click **Place field**."
             )
         else:
             for idx, f in enumerate(fields):

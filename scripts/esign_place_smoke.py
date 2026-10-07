@@ -1,10 +1,10 @@
 """
-Local Streamlit smoke for Esign click-to-place (no full-app auth).
+Local Streamlit smoke for Esign Place field (no full-app auth).
 
   py -3 -m streamlit run scripts/esign_place_smoke.py --server.port 8502
 
-Uses the same helpers as Compose: type toggles + streamlit_image_coordinates
-left-click place. Prefills a 2-page blank PDF so browser tests need no upload.
+Primary path matches Compose v2026.10.07e: type toggles + Place X%/Y% + Place field.
+Prefills a 2-page PDF so browser tests need no upload.
 """
 from __future__ import annotations
 
@@ -25,19 +25,17 @@ from src.esign_ui import (
     _nudge_esign_page,
     _on_place_here,
     _on_select_field_type,
-    _on_xy_pct_change,
     _pending_place_xy,
     _pdf_page_image,
-    _render_field_placer,
     _selected_field_type,
     _session_fields_key,
     _show_page_image,
+    _xy_pct_place_coords,
     fields_for_persist,
-    ingest_placer_component_value,
 )
 
 st.set_page_config(page_title="Esign place smoke", layout="wide")
-st.caption("v2026.10.07d · Esign drag resize · smoke (no auth)")
+st.caption("v2026.10.07e · Esign place works · smoke (no auth)")
 
 user = {
     "id": "super_admin",
@@ -131,37 +129,18 @@ with left:
 
     png, iw, ih = _pdf_page_image(pdf_bytes, page_idx)
     st.session_state.setdefault("esign_next_type", "text")
+    st.session_state.setdefault("esign_place_x_pct", 50)
+    st.session_state.setdefault("esign_place_y_pct", 50)
     fields = list(st.session_state.get(_session_fields_key()) or [])
     annotated = _annotate_fields_png(
         png, fields, page_idx, pending_xy=_pending_place_xy()
     )
     st.info(
-        f"**Place a field:** select type → **left-click** the interactive page. "
-        f"Next click places **{_selected_field_type()}**. "
-        "**Drag** to move · **corner handle** to resize."
+        f"**Place a field:** select type → set Place X%/Y% → **Place field**. "
+        f"Next type: **{_selected_field_type()}**."
     )
     st.caption(f"Preview {iw}×{ih}px · page {page_idx + 1}/{pages}")
     _show_page_image(annotated, key=f"esign_click_p{page_idx}_img")
-    placer_val = _render_field_placer(
-        png_bytes=png,
-        img_w=iw,
-        img_h=ih,
-        page_index=page_idx,
-        fields=fields,
-        next_type=_selected_field_type(),
-        key=f"esign_placer_p{page_idx}",
-    )
-    if ingest_placer_component_value(placer_val, page_index=page_idx):
-        xy = _pending_place_xy()
-        if xy is not None:
-            try:
-                st.toast(
-                    f"Updated at x={xy[0]:.0%} y={xy[1]:.0%}",
-                    icon="✅",
-                )
-            except Exception:
-                pass
-        st.rerun()
 
 with right:
     st.session_state.setdefault("esign_next_type", "text")
@@ -196,7 +175,7 @@ with right:
             on_click=_on_select_field_type,
             args=("sign",),
         )
-    st.caption(f"Next click places: **{active}**")
+    st.caption(f"Next Place field type: **{active}**")
 
     st.session_state.setdefault("esign_place_x_pct", 50)
     st.session_state.setdefault("esign_place_y_pct", 50)
@@ -208,7 +187,6 @@ with right:
             max_value=95,
             step=1,
             key="esign_place_x_pct",
-            on_change=_on_xy_pct_change,
         )
     with fy:
         st.number_input(
@@ -217,17 +195,19 @@ with right:
             max_value=95,
             step=1,
             key="esign_place_y_pct",
-            on_change=_on_xy_pct_change,
         )
     with fbtn:
         st.write("")
         st.button(
-            "Place here",
+            "Place field",
             key="esign_place_here",
             use_container_width=True,
             type="primary",
             on_click=_on_place_here,
         )
+
+    cx, cy = _xy_pct_place_coords()
+    st.caption(f"Next Place lands at **{cx:.0%}** left, **{cy:.0%}** top.")
 
     fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
     st.markdown(f"#### Placed fields ({len(fields)})")
