@@ -4,6 +4,7 @@ Esign Docs Streamlit UI — upload PDF, place AcroForm fields, download / send /
 from __future__ import annotations
 
 import base64
+import io
 import json
 from typing import Any, Callable, Optional
 
@@ -15,6 +16,8 @@ from .emailer import send_email
 from .lead_crm import lead_stable_id
 
 PersistFn = Callable[[dict], None]
+
+_TYPE_BORDER = {"text": "#2563eb", "date": "#059669", "sign": "#ea580c"}
 
 
 def _qp_get(key: str) -> Optional[str]:
@@ -110,13 +113,99 @@ def _sync_pending_click(x: float, y_from_top: float) -> None:
 
 
 def _pending_place_xy() -> tuple[float, float]:
-    """Last overlay click, or page center when the user has not clicked yet."""
+    """Last preview click, or page center when the user has not clicked yet."""
     if "esign_pending_x" in st.session_state and "esign_pending_y" in st.session_state:
         return (
             float(st.session_state["esign_pending_x"]),
             float(st.session_state["esign_pending_y"]),
         )
     return 0.5, 0.5
+
+
+def _annotate_fields_png(
+    png_bytes: bytes,
+    fields: list[dict[str, Any]],
+    page_index: int,
+    *,
+    pending_xy: Optional[tuple[float, float]] = None,
+) -> bytes:
+    """Draw field boxes (+ optional pending click dot) onto a page PNG."""
+    from PIL import Image, ImageDraw
+
+    im = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+    draw = ImageDraw.Draw(im)
+    w_px, h_px = im.size
+    for f in fields or []:
+        if int(f.get("page") or 0) != int(page_index):
+            continue
+        x = float(f.get("x") or 0.0) * w_px
+        y = float(f.get("y_from_top") or 0.0) * h_px
+        fw = float(f.get("w") or 0.28) * w_px
+        fh = float(f.get("h") or 0.04) * h_px
+        col = _TYPE_BORDER.get(str(f.get("type") or "text").lower(), "#2563eb")
+        draw.rectangle([x, y, x + fw, y + fh], outline=col, width=3)
+        label = str(f.get("label") or f.get("type") or "Field")
+        draw.rectangle([x, max(0, y - 14), x + max(36, 6 * len(label)), y], fill="#ffffff")
+        draw.text((x + 2, max(0, y - 13)), label[:28], fill=col)
+    if pending_xy is not None:
+        px, py = float(pending_xy[0]), float(pending_xy[1])
+        cx, cy = px * w_px, py * h_px
+        r = 7
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#dc2626", outline="#ffffff", width=2)
+    out = io.BytesIO()
+    im.convert("RGB").save(out, format="PNG")
+    return out.getvalue()
+
+
+def ingest_image_coordinates_click(value: Any) -> bool:
+    """
+    Streamlit-native click → esign_pending_x/y.
+
+    Uses streamlit-image-coordinates return dict. Dedupes on unix_time so a
+    sticky last-click value does not reset cascade on every rerun.
+    """
+    if not value or not isinstance(value, dict):
+        return False
+    if value.get("x") is None or value.get("y") is None:
+        return False
+    width = float(value.get("width") or 0)
+    height = float(value.get("height") or 0)
+    if width <= 0 or height <= 0:
+        return False
+    ut = value.get("unix_time")
+    if ut is not None and st.session_state.get("_esign_last_click_ut") == ut:
+        return False
+    x, y = esign.pixel_to_norm(
+        float(value["x"]),
+        float(value["y"]),
+        img_w=width,
+        img_h=height,
+    )
+    if ut is not None:
+        st.session_state["_esign_last_click_ut"] = ut
+    _sync_pending_click(x, y)
+    return True
+
+
+def _render_clickable_page(png_bytes: bytes, *, key: str) -> Any:
+    """Primary click target — Streamlit component, not the iframe Apply bridge."""
+    try:
+        from PIL import Image
+        from streamlit_image_coordinates import streamlit_image_coordinates
+    except ImportError:
+        st.warning(
+            "Click-to-place needs `streamlit-image-coordinates` "
+            "(pip install streamlit-image-coordinates)."
+        )
+        st.image(png_bytes, use_container_width=True)
+        return None
+    img = Image.open(io.BytesIO(png_bytes))
+    return streamlit_image_coordinates(
+        img,
+        key=key,
+        use_column_width="always",
+        cursor="crosshair",
+    )
 
 
 def _on_add_field_button(ftype: str) -> None:
@@ -169,6 +258,31 @@ def _field_rect_snapshot(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "y_from_top": float(f.get("y_from_top") or 0),
                 "w": float(f.get("w") or 0),
                 "h": float(f.get("h") or 0),
+            }
+        )
+    return out
+
+
+def fields_for_persist(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Serialize fields for save — exact page/x/y/w/h/type/label/color/value.
+    Never re-centers to 0.5/0.5; copies stored geometry as-is.
+    """
+    out: list[dict[str, Any]] = []
+    for f in fields or []:
+        out.append(
+            {
+                "id": f.get("id"),
+                "type": str(f.get("type") or "text"),
+                "name": str(f.get("name") or ""),
+                "label": str(f.get("label") or ""),
+                "page": int(f.get("page") or 0),
+                "x": float(f.get("x") or 0),
+                "y_from_top": float(f.get("y_from_top") or 0),
+                "w": float(f.get("w") or 0.28),
+                "h": float(f.get("h") or 0.04),
+                "value": str(f.get("value") or ""),
+                "color": esign.normalize_hex_color(str(f.get("color") or "#111827")),
             }
         )
     return out
@@ -1041,20 +1155,46 @@ def _compose_tab(*, user: dict, company: dict) -> None:
             png, iw, ih = b"", 0, 0
         fields = list(st.session_state.get(_session_fields_key()) or [])
         if png:
+            pending_pair: Optional[tuple[float, float]] = None
+            if (
+                "esign_pending_x" in st.session_state
+                and "esign_pending_y" in st.session_state
+            ):
+                pending_pair = (
+                    float(st.session_state["esign_pending_x"]),
+                    float(st.session_state["esign_pending_y"]),
+                )
             try:
-                _render_field_placer(
-                    png_bytes=png,
-                    img_w=iw,
-                    img_h=ih,
-                    page_index=page_idx,
-                    fields=fields,
+                annotated = _annotate_fields_png(
+                    png, fields, page_idx, pending_xy=pending_pair
                 )
-            except Exception as exc:
-                st.error(
-                    f"Interactive preview failed ({exc}). "
-                    "Showing static page image — reload to place fields."
-                )
-                st.image(png, use_container_width=True)
+            except Exception:
+                annotated = png
+            # Authoritative click path (Streamlit-native) — do not rely on iframe Apply.
+            click_val = _render_clickable_page(
+                annotated, key=f"esign_native_click_p{page_idx}"
+            )
+            if ingest_image_coordinates_click(click_val):
+                st.rerun()
+            st.caption(
+                "Click the image to set the next field position (red dot). "
+                "Then use **Add text / date / sign**. "
+                "Open **Drag & resize** below to move existing boxes."
+            )
+            with st.expander("Drag & resize fields", expanded=False):
+                try:
+                    _render_field_placer(
+                        png_bytes=png,
+                        img_w=iw,
+                        img_h=ih,
+                        page_index=page_idx,
+                        fields=fields,
+                    )
+                except Exception as exc:
+                    st.error(
+                        f"Drag overlay failed ({exc}). "
+                        "Click-to-place above still works — reload if needed."
+                    )
         else:
             st.warning(
                 "No page preview available. Reload or try another PDF to place fields."
@@ -1066,13 +1206,13 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         pending_y = st.session_state.get("esign_pending_y")
         st.markdown("#### Fields")
         st.caption(
-            "Click the preview to set position, then use **Add text / date / sign** "
-            "next to Placed fields. Drag to move · corner to resize · **Edit** for "
-            "typewriter/color. Each field keeps its own page and coordinates."
+            "Click the preview image to set position, then **Add text / date / sign** "
+            "beside Placed fields. Optional: **Drag & resize** under the preview. "
+            "**Edit** for typewriter/color. Save keeps each field's page/x/y/w/h."
         )
         if pending_x is not None and pending_y is not None:
             st.caption(
-                f"Last click: **{float(pending_x):.0%}** left, "
+                f"Next field at: **{float(pending_x):.0%}** left, "
                 f"**{float(pending_y):.0%}** top (page {page_idx + 1})."
             )
         else:
@@ -1216,7 +1356,7 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                         original_pdf=pdf_bytes,
                         owner_email=user.get("email") or company.get("my_email") or "",
                         owner_name=user.get("name") or "",
-                        fields=fields,
+                        fields=fields_for_persist(fields),
                     )
                     st.session_state["esign_last_doc_id"] = meta["id"]
                     st.success(f"Saved template «{meta['title']}» (`{meta['id']}`)")
@@ -1236,7 +1376,7 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                         original_pdf=pdf_bytes,
                         owner_email=user.get("email") or company.get("my_email") or "",
                         owner_name=user.get("name") or "",
-                        fields=fields,
+                        fields=fields_for_persist(fields),
                     )
                     st.session_state["esign_last_doc_id"] = meta["id"]
                     result = send_for_signature(
