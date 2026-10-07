@@ -818,7 +818,7 @@ def test_consume_menu_add_grows_field_count_0_to_1():
 
 
 def test_compose_has_click_to_place_and_xy_fallback():
-    """v2026.10.07b: image-coordinates click-to-place + X%/Y% fallback; no dead bridge."""
+    """v2026.10.07d: placer place/drag/resize + X%/Y% fallback; no dead bridge."""
     import inspect
 
     from src import esign_ui
@@ -833,16 +833,130 @@ def test_compose_has_click_to_place_and_xy_fallback():
     assert "Placed fields" in compose
     assert "_on_select_field_type" in compose
     assert "_on_place_here" in compose
-    assert "_render_clickable_page" in compose
-    assert "place_on_image_click" in compose
+    assert "_show_page_image" in compose
     assert "_annotate_fields_png" in compose
-    assert "_render_field_placer" not in compose
-    assert "ingest_placer_component_value" not in compose
+    assert "_render_field_placer" in compose
+    assert "ingest_placer_component_value" in compose
+    assert "place_on_image_click" in compose  # fallback when placer fails
     assert "_on_add_field_button" not in compose
     assert "Place field" not in compose
     assert 'key="esign_x"' not in compose
     assert "st.slider" not in compose
     assert "lt_esign_placer_apply" not in compose
+    assert "Drag" in compose or "drag" in compose
+    assert "resize" in compose.lower()
+
+
+def test_apply_placer_update_moves_one_field_leaves_others():
+    """update message changes only the target field's x/y/w/h."""
+    from src import esign_ui
+
+    a = esign.new_field(
+        field_type="text", label="A", page=0, x=0.10, y_from_top=0.20, w=0.28, h=0.04
+    )
+    b = esign.new_field(
+        field_type="date", label="B", page=0, x=0.40, y_from_top=0.50, w=0.22, h=0.05
+    )
+    c = esign.new_field(
+        field_type="sign", label="C", page=1, x=0.15, y_from_top=0.70, w=0.30, h=0.06
+    )
+    before = esign_ui._field_rect_snapshot([a, b, c])
+    after, effects = esign_ui.apply_placer_message(
+        [a, b, c],
+        {
+            "action": "update",
+            "id": b["id"],
+            "x": 0.55,
+            "y_from_top": 0.81,
+            "w": 0.35,
+            "h": 0.08,
+        },
+        page_index=0,
+    )
+    assert len(after) == 3
+    snap = esign_ui._field_rect_snapshot(after)
+    assert snap[0] == before[0]
+    assert snap[2] == before[2]
+    assert abs(float(after[1]["x"]) - 0.55) < 1e-9
+    assert abs(float(after[1]["y_from_top"]) - 0.81) < 1e-9
+    assert abs(float(after[1]["w"]) - 0.35) < 1e-9
+    assert abs(float(after[1]["h"]) - 0.08) < 1e-9
+    assert effects.get("pending_xy") == (0.55, 0.81)
+
+
+def test_ingest_component_value_update_persists_geometry():
+    """setComponentValue update → session field x/y/w/h change; others untouched."""
+    from src import esign_ui
+    import streamlit as st
+
+    class _SS(dict):
+        pass
+
+    a = esign.new_field(
+        field_type="text", label="Keep", page=0, x=0.12, y_from_top=0.25, w=0.28, h=0.04
+    )
+    b = esign.new_field(
+        field_type="text", label="Move", page=0, x=0.30, y_from_top=0.40, w=0.28, h=0.04
+    )
+    ss = _SS()
+    ss["esign_compose_fields"] = [a, b]
+    original_ss = st.session_state
+    try:
+        st.session_state = ss  # type: ignore[misc]
+        assert esign_ui.ingest_placer_component_value(
+            {
+                "op": "update",
+                "id": b["id"],
+                "x": 0.62,
+                "y_from_top": 0.77,
+                "w": 0.40,
+                "h": 0.09,
+                "t": 20261007,
+            },
+            page_index=0,
+        )
+        fields = ss["esign_compose_fields"]
+        assert abs(float(fields[0]["x"]) - 0.12) < 1e-9
+        assert abs(float(fields[0]["y_from_top"]) - 0.25) < 1e-9
+        assert abs(float(fields[1]["x"]) - 0.62) < 1e-9
+        assert abs(float(fields[1]["y_from_top"]) - 0.77) < 1e-9
+        assert abs(float(fields[1]["w"]) - 0.40) < 1e-9
+        assert abs(float(fields[1]["h"]) - 0.09) < 1e-9
+        # Sticky t must not re-apply
+        assert not esign_ui.ingest_placer_component_value(
+            {
+                "op": "update",
+                "id": b["id"],
+                "x": 0.01,
+                "y_from_top": 0.01,
+                "t": 20261007,
+            },
+            page_index=0,
+        )
+        assert abs(float(ss["esign_compose_fields"][1]["x"]) - 0.62) < 1e-9
+    finally:
+        st.session_state = original_ss  # type: ignore[misc]
+
+
+def test_placer_js_has_drag_and_resize_handles():
+    """Frontend emits update on drag/resize via setComponentValue."""
+    from pathlib import Path
+
+    from src import esign_ui
+
+    js_path = (
+        Path(esign_ui.__file__).resolve().parent
+        / "esign_placer"
+        / "frontend"
+        / "main.js"
+    )
+    src = js_path.read_text(encoding="utf-8")
+    assert 'op: "update"' in src
+    assert 'mode === "move"' in src or 'mode === "resize"' in src
+    assert "lt-resize" in src
+    assert "armSuppressClick" in src or "suppressClick" in src
+    assert "Streamlit.setFrameHeight" in src
+    assert "lt_esign_placer_apply" not in src
 
 
 def test_render_clickable_page_always_shows_st_image_and_avoids_raw_png0():

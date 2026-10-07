@@ -28,15 +28,16 @@ from src.esign_ui import (
     _on_xy_pct_change,
     _pending_place_xy,
     _pdf_page_image,
-    _render_clickable_page,
+    _render_field_placer,
     _selected_field_type,
     _session_fields_key,
+    _show_page_image,
     fields_for_persist,
-    place_on_image_click,
+    ingest_placer_component_value,
 )
 
 st.set_page_config(page_title="Esign place smoke", layout="wide")
-st.caption("v2026.10.07c · Esign preview fix2 · smoke (no auth)")
+st.caption("v2026.10.07d · Esign drag resize · smoke (no auth)")
 
 user = {
     "id": "super_admin",
@@ -136,16 +137,26 @@ with left:
     )
     st.info(
         f"**Place a field:** select type → **left-click** the interactive page. "
-        f"Next click places **{_selected_field_type()}**."
+        f"Next click places **{_selected_field_type()}**. "
+        "**Drag** to move · **corner handle** to resize."
     )
     st.caption(f"Preview {iw}×{ih}px · page {page_idx + 1}/{pages}")
-    click_val = _render_clickable_page(annotated, key=f"esign_click_p{page_idx}")
-    if place_on_image_click(click_val, page_index=page_idx):
+    _show_page_image(annotated, key=f"esign_click_p{page_idx}_img")
+    placer_val = _render_field_placer(
+        png_bytes=png,
+        img_w=iw,
+        img_h=ih,
+        page_index=page_idx,
+        fields=fields,
+        next_type=_selected_field_type(),
+        key=f"esign_placer_p{page_idx}",
+    )
+    if ingest_placer_component_value(placer_val, page_index=page_idx):
         xy = _pending_place_xy()
         if xy is not None:
             try:
                 st.toast(
-                    f"Placed {_selected_field_type()} at x={xy[0]:.0%} y={xy[1]:.0%}",
+                    f"Updated at x={xy[0]:.0%} y={xy[1]:.0%}",
                     icon="✅",
                 )
             except Exception:

@@ -582,9 +582,9 @@ def ingest_placer_component_value(value: Any, *, page_index: int = 0) -> bool:
 
     msg: dict[str, Any] = dict(value)
     msg["action"] = op
+    if msg.get("y_from_top") is None and msg.get("y") is not None:
+        msg["y_from_top"] = float(msg["y"])
     if op == "add":
-        if msg.get("y_from_top") is None and msg.get("y") is not None:
-            msg["y_from_top"] = float(msg["y"])
         if msg.get("x") is None:
             return False
         if msg.get("y_from_top") is None:
@@ -595,6 +595,9 @@ def ingest_placer_component_value(value: Any, *, page_index: int = 0) -> bool:
         labels = {"text": "Text", "date": "Date", "sign": "Sign"}
         ftype = str(msg.get("type") or "text").lower()
         msg.setdefault("label", labels.get(ftype, "Text"))
+    elif op == "update":
+        if not msg.get("id"):
+            return False
 
     if t is not None:
         st.session_state["_esign_last_placer_t"] = t
@@ -631,15 +634,29 @@ def _render_field_placer(
     key: Optional[str] = None,
 ) -> Any:
     """
-    Optional secondary placer (right-click / drag) via esign_placer component.
+    Interactive place + drag + resize via esign_placer custom component.
 
-    Primary compose UI uses streamlit_image_coordinates instead — this helper
-    remains for tests and optional advanced use.
+    Uses Streamlit.setComponentValue (add / update / delete / edit). Never the
+    dead parent-document Apply bridge. Frame height is always a real pixel
+    value (never 0) so Cloud CSS cannot trap a blank iframe.
     """
     from .esign_placer import esign_placer
 
-    b64 = base64.b64encode(png_bytes).decode("ascii")
-    src = f"data:image/png;base64,{b64}"
+    if not png_bytes:
+        return None
+    # Prefer compact JPEG data-URL so the component iframe stays responsive.
+    try:
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.open(io.BytesIO(png_bytes)).convert("RGB").save(
+            buf, format="JPEG", quality=88, optimize=True
+        )
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        src = f"data:image/jpeg;base64,{b64}"
+    except Exception:
+        b64 = base64.b64encode(png_bytes).decode("ascii")
+        src = f"data:image/png;base64,{b64}"
     on_page = []
     for f in fields or []:
         if int(f.get("page") or 0) != int(page_index):
@@ -648,7 +665,12 @@ def _render_field_placer(
         row.setdefault("value", "")
         row.setdefault("color", "#111827")
         on_page.append(row)
+    # Explicit height — custom components must not start/stay at height=0.
     frame_h = min(920, max(420, int(img_h * 720 / max(1, img_w)) + 48))
+    st.caption(
+        "Interactive page: left-click to place · drag a box to move · "
+        "corner handle to resize"
+    )
     return esign_placer(
         src=src,
         fields=on_page,
@@ -918,28 +940,99 @@ def _compose_tab(*, user: dict, company: dict) -> None:
             )
             st.info(
                 f"**Place a field:** select **Text / Date / Sign** (right) → "
-                f"**left-click** the interactive page below (or the preview). "
+                f"**left-click** the interactive page below. "
                 f"Next click places **{_selected_field_type()}**. "
-                "Backup: set X%/Y% → Place here. Drag-to-move is not available — "
-                "delete a field and click again to re-place."
+                "**Drag** boxes to move · **corner handle** to resize. "
+                "Backup: set X%/Y% → Place here."
             )
             st.caption(f"Preview {iw}×{ih}px · page {page_idx + 1}/{pages}")
-            click_val = _render_clickable_page(
-                annotated,
-                key=f"esign_click_p{page_idx}",
-            )
-            if place_on_image_click(click_val, page_index=page_idx):
-                ftype = _selected_field_type()
-                xy = _pending_place_xy()
-                if xy is not None:
-                    try:
-                        st.toast(
-                            f"Placed {ftype} at x={xy[0]:.0%} y={xy[1]:.0%}",
-                            icon="✅",
+            # Guaranteed visible raster (v2026.10.07c) — never remove.
+            try:
+                _show_page_image(annotated, key=f"esign_click_p{page_idx}_img")
+            except Exception as exc:
+                st.error(f"Preview render failed ({exc}).")
+
+            # Interactive place + drag + resize (setComponentValue; no Apply bridge).
+            placer_val = None
+            placer_ok = False
+            try:
+                placer_val = _render_field_placer(
+                    png_bytes=png,
+                    img_w=iw,
+                    img_h=ih,
+                    page_index=page_idx,
+                    fields=fields,
+                    next_type=_selected_field_type(),
+                    key=f"esign_placer_p{page_idx}",
+                )
+                placer_ok = True
+            except Exception as exc:
+                st.warning(
+                    f"Interactive placer unavailable ({exc}). "
+                    "Falling back to click-to-place (no drag)."
+                )
+
+            if placer_ok:
+                if ingest_placer_component_value(placer_val, page_index=page_idx):
+                    op = str(
+                        (placer_val or {}).get("op")
+                        or (placer_val or {}).get("action")
+                        or ""
+                    ).lower()
+                    if op == "add":
+                        ftype = str(
+                            (placer_val or {}).get("type") or _selected_field_type()
                         )
-                    except Exception:
-                        pass
-                st.rerun()
+                        xy = _pending_place_xy()
+                        if xy is not None:
+                            try:
+                                st.toast(
+                                    f"Placed {ftype} at x={xy[0]:.0%} y={xy[1]:.0%}",
+                                    icon="✅",
+                                )
+                            except Exception:
+                                pass
+                    elif op == "update":
+                        try:
+                            st.toast("Field moved / resized", icon="✅")
+                        except Exception:
+                            pass
+                    st.rerun()
+            else:
+                # Fallback: 07c image-coordinates place path (preview already shown).
+                try:
+                    from PIL import Image
+                    from streamlit_image_coordinates import streamlit_image_coordinates
+
+                    img = Image.open(io.BytesIO(annotated)).convert("RGB")
+                    click_w = min(_PREVIEW_CLICK_WIDTH, max(120, int(img.size[0])))
+                    st.caption(
+                        "Left-click the interactive page below to place the selected field:"
+                    )
+                    click_val = streamlit_image_coordinates(
+                        img,
+                        key=f"esign_click_p{page_idx}",
+                        width=click_w,
+                        cursor="crosshair",
+                        image_format="JPEG",
+                        jpeg_quality=85,
+                    )
+                    if place_on_image_click(click_val, page_index=page_idx):
+                        ftype = _selected_field_type()
+                        xy = _pending_place_xy()
+                        if xy is not None:
+                            try:
+                                st.toast(
+                                    f"Placed {ftype} at x={xy[0]:.0%} y={xy[1]:.0%}",
+                                    icon="✅",
+                                )
+                            except Exception:
+                                pass
+                        st.rerun()
+                except Exception as exc2:
+                    st.caption(
+                        f"Click layer unavailable ({exc2}). Use X%/Y% → Place here."
+                    )
         else:
             st.warning(
                 "No page preview available. Reload or try another PDF to place fields."
@@ -954,6 +1047,7 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         st.markdown("#### Fields")
         st.caption(
             "1) Choose type → 2) left-click the page · or set X%/Y% → Place here. "
+            "Drag / resize boxes on the interactive page. "
             "Never invents center 50%/50%. Save keeps page/x/y/w/h."
         )
         active = _selected_field_type()

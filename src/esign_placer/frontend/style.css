@@ -71,7 +71,8 @@ body {
   border-radius: 4px;
   cursor: move;
   touch-action: none;
-  overflow: hidden;
+  /* visible so the corner resize handle (offset -4px) is not clipped */
+  overflow: visible;
   background: rgba(37, 99, 235, 0.08);
 }
 
@@ -102,13 +103,16 @@ body {
 
 .lt-resize {
   position: absolute;
-  right: -4px;
-  bottom: -4px;
-  width: 10px;
-  height: 10px;
+  right: -5px;
+  bottom: -5px;
+  width: 12px;
+  height: 12px;
   border-radius: 2px;
   cursor: nwse-resize;
   touch-action: none;
+  z-index: 2;
+  border: 1px solid #fff;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.25);
 }
 
 .pending-dot {

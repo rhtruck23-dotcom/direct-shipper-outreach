@@ -65,6 +65,14 @@ function sendValue(value) {
     sendValue(payload);
   }
 
+  function armSuppressClick() {
+    // Field pointerdown / drag must never also fire overlay left-click place.
+    suppressClick = true;
+    setTimeout(function () {
+      suppressClick = false;
+    }, 160);
+  }
+
   function commitDrag() {
     if (!drag) return;
     const f = fields.find(function (x) {
@@ -72,11 +80,8 @@ function sendValue(value) {
     });
     const moved = drag.moved;
     drag = null;
+    armSuppressClick();
     if (!f || !moved) return;
-    suppressClick = true;
-    setTimeout(function () {
-      suppressClick = false;
-    }, 120);
     emit({
       op: "update",
       id: f.id,
@@ -232,14 +237,22 @@ function sendValue(value) {
       }
       const handle = document.createElement("div");
       handle.className = "lt-resize";
+      handle.title = "Drag to resize";
       handle.style.background = col;
       box.appendChild(handle);
       box.addEventListener("pointerdown", function (ev) {
         if (ev.target === handle) return;
+        armSuppressClick();
         startDrag(ev, f, "move");
       });
       handle.addEventListener("pointerdown", function (ev) {
+        armSuppressClick();
         startDrag(ev, f, "resize");
+      });
+      // Stop bubble so a click on a box never places a new field.
+      box.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
       });
       box.addEventListener("contextmenu", function (ev) {
         ev.preventDefault();
