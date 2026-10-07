@@ -101,11 +101,12 @@ def _placer_bridge_widgets() -> bool:
 
 
 def _sync_pending_click(x: float, y_from_top: float) -> None:
-    """Store last preview click — used by fallback Add buttons, never sliders."""
+    """Store last preview click — used by Add buttons, never sliders."""
     px = float(max(0.0, min(0.95, x)))
     py = float(max(0.0, min(0.95, y_from_top)))
     st.session_state["esign_pending_x"] = px
     st.session_state["esign_pending_y"] = py
+    st.session_state["esign_add_cascade"] = 0
 
 
 def _pending_place_xy() -> tuple[float, float]:
@@ -118,15 +119,24 @@ def _pending_place_xy() -> tuple[float, float]:
     return 0.5, 0.5
 
 
+def _on_add_field_button(ftype: str) -> None:
+    """Streamlit on_click: runs before script body so Add cannot lose to bridge rerun."""
+    page_idx = max(0, int(st.session_state.get("esign_page") or 1) - 1)
+    _add_field_at_pending(ftype, page_index=page_idx)
+
+
 def _add_field_at_pending(ftype: str, *, page_index: int) -> None:
     """
-    Fallback Add path: place at last preview-click coords (or page center).
-    Uses esign_pending_* only — never widget slider keys.
+    Primary Add path: place at last preview-click coords (or page center).
+    Pure session_state — never iframe Apply, never widget slider keys.
+    Repeated Adds without a new click cascade +0.03 down so boxes don't stack.
     """
     x, y = _pending_place_xy()
+    cascade = int(st.session_state.get("esign_add_cascade") or 0)
+    y = float(min(0.95, y + cascade * 0.03))
     labels = {"text": "Text", "date": "Date", "sign": "Sign"}
     fields = list(st.session_state.get(_session_fields_key()) or [])
-    fields, effects = apply_placer_message(
+    fields, _effects = apply_placer_message(
         fields,
         {
             "action": "add",
@@ -142,8 +152,8 @@ def _add_field_at_pending(ftype: str, *, page_index: int) -> None:
         },
         page_index=page_index,
     )
-    if "pending_xy" in effects:
-        _sync_pending_click(*effects["pending_xy"])
+    # Keep pending click; bump cascade so the next Add offsets slightly.
+    st.session_state["esign_add_cascade"] = cascade + 1
     st.session_state[_session_fields_key()] = fields
 
 
@@ -1056,10 +1066,9 @@ def _compose_tab(*, user: dict, company: dict) -> None:
         pending_y = st.session_state.get("esign_pending_y")
         st.markdown("#### Fields")
         st.caption(
-            "Click the preview to set position, then **Add text / date / sign** "
-            "(right-click menu or buttons below). "
-            "Drag to move · corner to resize · **Edit** for typewriter/color. "
-            "Each field keeps its own page and coordinates."
+            "Click the preview to set position, then use **Add text / date / sign** "
+            "next to Placed fields. Drag to move · corner to resize · **Edit** for "
+            "typewriter/color. Each field keeps its own page and coordinates."
         )
         if pending_x is not None and pending_y is not None:
             st.caption(
@@ -1068,34 +1077,8 @@ def _compose_tab(*, user: dict, company: dict) -> None:
             )
         else:
             st.caption(
-                "No click yet — Add buttons place at page center until you click the preview."
+                "No click yet — Add buttons place at page center (cascading slightly)."
             )
-
-        ab1, ab2, ab3 = st.columns(3)
-        with ab1:
-            if st.button(
-                "Add text here",
-                key="esign_add_text_here",
-                use_container_width=True,
-            ):
-                _add_field_at_pending("text", page_index=page_idx)
-                st.rerun()
-        with ab2:
-            if st.button(
-                "Add date here",
-                key="esign_add_date_here",
-                use_container_width=True,
-            ):
-                _add_field_at_pending("date", page_index=page_idx)
-                st.rerun()
-        with ab3:
-            if st.button(
-                "Add sign here",
-                key="esign_add_sign_here",
-                use_container_width=True,
-            ):
-                _add_field_at_pending("sign", page_index=page_idx)
-                st.rerun()
 
         edit_id = str(st.session_state.get("esign_edit_field_id") or "")
         edit_field = next((f for f in fields if f.get("id") == edit_id), None)
@@ -1145,13 +1128,39 @@ def _compose_tab(*, user: dict, company: dict) -> None:
                     st.session_state.pop("esign_edit_field_id", None)
                     st.rerun()
 
-        # Re-read after possible Add-button mutation earlier in this run
+        # Re-read after on_click Add (callbacks mutate before this body runs)
         fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
-        st.markdown(f"#### Placed fields ({len(fields)})")
-        if not fields:
-            st.caption(
-                "No fields yet — right-click the preview or use Add text/date/sign here."
+        hdr, b1, b2, b3 = st.columns([2.2, 1, 1, 1])
+        with hdr:
+            st.markdown(f"#### Placed fields ({len(fields)})")
+        with b1:
+            st.button(
+                "Add text",
+                key="esign_add_text_here",
+                use_container_width=True,
+                on_click=_on_add_field_button,
+                args=("text",),
             )
+        with b2:
+            st.button(
+                "Add date",
+                key="esign_add_date_here",
+                use_container_width=True,
+                on_click=_on_add_field_button,
+                args=("date",),
+            )
+        with b3:
+            st.button(
+                "Add sign",
+                key="esign_add_sign_here",
+                use_container_width=True,
+                on_click=_on_add_field_button,
+                args=("sign",),
+            )
+        # Refresh count after buttons (on_click already applied on this run)
+        fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
+        if not fields:
+            st.caption("No fields yet — click **Add text / date / sign** above.")
         else:
             for idx, f in enumerate(fields):
                 c1, c2, c3 = st.columns([3.2, 1, 1])
@@ -1526,3 +1535,13 @@ def _docs_tab(*, user: dict, company: dict) -> None:
                         lead_id=str(meta.get("lead_id") or ""),
                         funnel=str(meta.get("funnel") or ""),
                     )
+            if st.button(
+                "Delete document",
+                key=f"esign_del_doc_{doc_id}",
+                type="secondary",
+            ):
+                if esign.delete_document(str(doc_id)):
+                    st.success(f"Deleted `{doc_id}`.")
+                    st.rerun()
+                else:
+                    st.error("Delete failed.")

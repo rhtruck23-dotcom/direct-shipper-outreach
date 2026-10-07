@@ -625,6 +625,7 @@ def test_fallback_add_at_pending_click_05_06():
     ss["esign_compose_fields"] = []
     ss["esign_pending_x"] = 0.5
     ss["esign_pending_y"] = 0.6
+    ss["esign_add_cascade"] = 0
     original_ss = st.session_state
     try:
         st.session_state = ss  # type: ignore[misc]
@@ -657,6 +658,7 @@ def test_fallback_sequential_adds_distinct_geometries():
         for i, (x, y) in enumerate(planned):
             ss["esign_pending_x"] = x
             ss["esign_pending_y"] = y
+            ss["esign_add_cascade"] = 0  # simulate fresh click each time
             ftype = ("text", "date", "sign", "text")[i]
             esign_ui._add_field_at_pending(ftype, page_index=0)
         fields = ss["esign_compose_fields"]
@@ -720,16 +722,17 @@ def test_consume_menu_add_grows_field_count_0_to_1():
 
 
 def test_compose_has_fallback_add_buttons_no_sliders():
-    """v2026.10.06i: Add-here buttons present; Place-field sliders stay gone."""
+    """v2026.10.06j: Add text/date/sign beside Placed fields; no Place-field sliders."""
     import inspect
 
     from src import esign_ui
 
     compose = inspect.getsource(esign_ui._compose_tab)
-    assert "Add text here" in compose
-    assert "Add date here" in compose
-    assert "Add sign here" in compose
-    assert "_add_field_at_pending" in compose
+    assert '"Add text"' in compose
+    assert '"Add date"' in compose
+    assert '"Add sign"' in compose
+    assert "Placed fields" in compose
+    assert "_on_add_field_button" in compose
     assert "Place field" not in compose
     assert 'key="esign_x"' not in compose
     assert "st.slider" not in compose
@@ -738,6 +741,60 @@ def test_compose_has_fallback_add_buttons_no_sliders():
     assert "pointerEvents = \"auto\"" in src or "pointerEvents = 'auto'" in src
     assert "lt_esign_placer_payload" in src
     assert "120" in src  # flush delay before Apply click
+
+
+def test_add_buttons_apptest_count_0_to_3():
+    """AppTest: Add text/date/sign → Placed fields 0→1→2→3 with distinct types."""
+    from streamlit.testing.v1 import AppTest
+
+    script = '''
+import streamlit as st
+from src.esign_ui import _on_add_field_button
+
+st.session_state.setdefault("esign_compose_fields", [])
+st.session_state.setdefault("esign_page", 1)
+st.button("Add text", key="esign_add_text_here", on_click=_on_add_field_button, args=("text",))
+st.button("Add date", key="esign_add_date_here", on_click=_on_add_field_button, args=("date",))
+st.button("Add sign", key="esign_add_sign_here", on_click=_on_add_field_button, args=("sign",))
+fields = list(st.session_state.get("esign_compose_fields") or [])
+st.write("COUNT=" + str(len(fields)))
+'''
+    at = AppTest.from_string(script, default_timeout=15)
+    at.run()
+    assert not at.exception
+    assert len(at.session_state["esign_compose_fields"]) == 0
+
+    at.button(key="esign_add_text_here").click().run()
+    assert not at.exception
+    assert len(at.session_state["esign_compose_fields"]) == 1
+    assert at.session_state["esign_compose_fields"][0]["type"] == "text"
+
+    at.button(key="esign_add_date_here").click().run()
+    assert len(at.session_state["esign_compose_fields"]) == 2
+    at.button(key="esign_add_sign_here").click().run()
+    fields = at.session_state["esign_compose_fields"]
+    assert len(fields) == 3
+    assert [f["type"] for f in fields] == ["text", "date", "sign"]
+    ys = [float(f["y_from_top"]) for f in fields]
+    assert ys[0] == 0.5
+    assert abs(ys[1] - 0.53) < 1e-9
+    assert abs(ys[2] - 0.56) < 1e-9
+
+
+def test_delete_document_removes_from_list(tmp_path, monkeypatch):
+    monkeypatch.setattr(esign, "ESIGN_DIR", tmp_path / "esign")
+    monkeypatch.setattr(esign, "ESIGN_INDEX", tmp_path / "esign" / "index.json")
+    pdf = _blank_pdf()
+    meta = esign.create_document(
+        title="DelMe",
+        original_pdf=pdf,
+        owner_email="owner@example.com",
+        fields=[esign.new_field(field_type="text", label="Name")],
+    )
+    assert len(esign.list_documents(owner_email="owner@example.com")) == 1
+    assert esign.delete_document(meta["id"])
+    assert esign.list_documents(owner_email="owner@example.com") == []
+    assert esign.load_document(meta["id"]) is None
 
 
 def test_nudge_esign_page_clamps():

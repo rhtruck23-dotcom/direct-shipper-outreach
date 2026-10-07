@@ -619,6 +619,23 @@ def list_documents(*, owner_email: str = "", limit: int = 50) -> list[dict[str, 
     return rows[: max(1, int(limit))]
 
 
+def delete_document(doc_id: str) -> bool:
+    """Remove document from index and delete its files on disk."""
+    import shutil
+
+    doc_id = (doc_id or "").strip()
+    if not doc_id:
+        return False
+    index = load_index()
+    before = len(index.get("docs") or [])
+    index["docs"] = [r for r in (index.get("docs") or []) if r.get("id") != doc_id]
+    save_index(index)
+    d = doc_dir(doc_id)
+    if d.exists():
+        shutil.rmtree(d, ignore_errors=True)
+    return len(index.get("docs") or []) < before or not d.exists()
+
+
 def list_templates(*, owner_email: str = "", limit: int = 100) -> list[dict[str, Any]]:
     """
     Saved named docs with at least one field — usable as CRM send-for-signature templates.
