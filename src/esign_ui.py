@@ -881,10 +881,9 @@ def page_esign_docs(*, user: dict, company: dict) -> None:
 
     st.title("Esign Docs")
     st.caption(
-        "Upload a PDF → select Text / Date / Sign → set **Place X%/Y%** → "
-        "**Place field** (AcroForm overlays) → save as a named template for CRM "
-        "**Send for signature**, or email a fill link. Sign = typed name (not DigSig). "
-        "To move a field: delete it and place again."
+        "Same LogixTrek app — **PDF Field Editor** (drag / resize / download fillable PDF) "
+        "is embedded below. Use **CRM template** for Save + Send for signature. "
+        "Sign on fill links = typed name (not DigSig)."
     )
 
     tabs = st.tabs(["Compose", "My documents"])
@@ -905,6 +904,23 @@ def _nudge_esign_page(delta: int, max_pages: int) -> None:
 
 
 def _compose_tab(*, user: dict, company: dict) -> None:
+    st.markdown("#### PDF Field Editor")
+    st.caption(
+        "Field placement runs in **PDF Field Editor** (same product — not a separate app). "
+        "Upload a PDF in the editor → place Text / Date / Sign → drag / resize → download "
+        "fillable PDF. Optional: set Streamlit secret `PDF_FIELD_EDITOR_URL` for a hosted SPA."
+    )
+    from .pdf_field_editor import render_pdf_field_editor
+
+    render_pdf_field_editor(height=920, key="esign_pdf_field_editor")
+
+    st.divider()
+    with st.expander("CRM template (Place X%/Y% → Save for Send for signature)", expanded=False):
+        _compose_crm_template(user=user, company=company)
+
+
+def _compose_crm_template(*, user: dict, company: dict) -> None:
+    """Legacy Streamlit place path — saves named templates for CRM Send for signature."""
     uploaded = st.file_uploader("Upload PDF", type=["pdf"], key="esign_upload")
     title = st.text_input(
         "Template / document name",
@@ -915,7 +931,8 @@ def _compose_tab(*, user: dict, company: dict) -> None:
 
     if uploaded is None:
         st.info(
-            "Upload a PDF to place fields. Layout of the original document is never redrawn."
+            "Upload a PDF to place fields for a CRM template. "
+            "Layout of the original document is never redrawn."
         )
         return
 

@@ -40,3 +40,24 @@ You do **not** need Python on your PC. The app runs on the internet.
 5. Inbox Bot when someone replies
 
 Dry-run stays OFF for live email until you set `send_live_emails = true` in secrets.
+
+## PDF Field Editor (Esign Docs)
+
+Field place / drag / resize lives in the **PDF Field Editor** SPA, embedded inside
+**Settings → Esign Docs → Compose** (same LogixTrek app).
+
+### Option A — one Streamlit deploy (preferred)
+1. Locally: `powershell -ExecutionPolicy Bypass -File scripts\build_pdf_field_editor.ps1`
+2. Commit `src/pdf_field_editor/frontend/` (built static files)
+3. Push → Streamlit Cloud rebuilds — Compose embeds the editor with **no external URL**
+
+### Option B — host SPA separately + secret
+1. Deploy `pdf-field-editor/` to Vercel/Netlify (root directory = `pdf-field-editor`)
+2. In Streamlit Cloud **Settings → Secrets** add:
+
+```toml
+PDF_FIELD_EDITOR_URL = "https://your-pdf-editor.vercel.app"
+```
+
+3. Compose iframes that URL. Use when you want independent SPA deploys.
+

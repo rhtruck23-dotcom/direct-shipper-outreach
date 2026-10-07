@@ -266,7 +266,7 @@ def test_no_slider_place_field_path_in_compose_ui():
 
     from src import esign_ui
 
-    compose = inspect.getsource(esign_ui._compose_tab)
+    compose = inspect.getsource(esign_ui._compose_crm_template)
     assert "Place field" in compose
     assert 'key="esign_place_here"' in compose
     assert 'key="esign_x"' not in compose
@@ -274,6 +274,9 @@ def test_no_slider_place_field_path_in_compose_ui():
     assert 'key="esign_w"' not in compose
     assert 'key="esign_h"' not in compose
     assert "st.slider" not in compose
+    # Parent Compose embeds PDF Field Editor (same app)
+    parent = inspect.getsource(esign_ui._compose_tab)
+    assert "render_pdf_field_editor" in parent
     # Sync helper must not write old slider widget keys (esign_x / esign_y)
     sync = inspect.getsource(esign_ui._sync_pending_click)
     assert '["esign_x"]' not in sync
@@ -586,7 +589,7 @@ def test_compose_ui_has_no_dead_apply_bridge():
 
     from src import esign_ui
 
-    compose = inspect.getsource(esign_ui._compose_tab)
+    compose = inspect.getsource(esign_ui._compose_crm_template)
     assert "_placer_bridge_widgets" not in compose
     assert "lt_esign_placer_apply" not in compose
     assert "esign_placer_payload" not in compose
@@ -821,12 +824,16 @@ def test_consume_menu_add_grows_field_count_0_to_1():
 
 
 def test_compose_has_click_to_place_and_xy_fallback():
-    """v2026.10.07e: primary Place field + X%/Y%; no flaky placer in compose."""
+    """v2026.10.07e: CRM template Place field + X%/Y%; editor embed on Compose."""
     import inspect
 
     from src import esign_ui
 
-    compose = inspect.getsource(esign_ui._compose_tab)
+    parent = inspect.getsource(esign_ui._compose_tab)
+    assert "render_pdf_field_editor" in parent
+    assert "CRM template" in parent
+
+    compose = inspect.getsource(esign_ui._compose_crm_template)
     assert '"Text"' in compose
     assert '"Date"' in compose
     assert '"Sign"' in compose
@@ -838,7 +845,7 @@ def test_compose_has_click_to_place_and_xy_fallback():
     assert "_on_place_here" in compose
     assert "_show_page_image" in compose
     assert "_annotate_fields_png" in compose
-    # Nuclear: interactive placer removed from compose (helpers may remain in module)
+    # Nuclear: interactive placer removed from CRM compose (helpers may remain in module)
     assert "_render_field_placer" not in compose
     assert "ingest_placer_component_value" not in compose
     assert "place_on_image_click" not in compose
@@ -1378,12 +1385,28 @@ if st.button("Save", key="esign_save_smoke"):
 
 
 def test_sidebar_caption_esign_place_works():
-    """Sidebar must advertise v2026.10.07e · Esign place works."""
+    """Sidebar must advertise v2026.10.07f · Esign embeds PDF editor."""
     from pathlib import Path
 
     app = Path(__file__).resolve().parents[1] / "app.py"
     text = app.read_text(encoding="utf-8")
-    assert "v2026.10.07e · Esign place works" in text
+    assert "v2026.10.07f · Esign embeds PDF editor" in text
+
+
+def test_esign_compose_embeds_pdf_field_editor():
+    """Compose must wire the PDF Field Editor embed (same app)."""
+    from pathlib import Path
+
+    ui = Path(__file__).resolve().parents[1] / "src" / "esign_ui.py"
+    text = ui.read_text(encoding="utf-8")
+    assert "render_pdf_field_editor" in text
+    assert "pdf_field_editor" in text
+
+    embed = Path(__file__).resolve().parents[1] / "src" / "pdf_field_editor" / "__init__.py"
+    assert embed.is_file()
+    embed_text = embed.read_text(encoding="utf-8")
+    assert "PDF_FIELD_EDITOR_URL" in embed_text
+    assert "declare_component" in embed_text
 
 
 def test_streamlit_image_coordinates_importable():
@@ -1444,7 +1467,7 @@ def test_compose_page_nav_uses_on_click_not_post_widget_assign():
 
     from src import esign_ui
 
-    src = inspect.getsource(esign_ui._compose_tab)
+    src = inspect.getsource(esign_ui._compose_crm_template)
     assert "on_click=_nudge_esign_page" in src
     assert 'st.session_state["esign_page"] = page_i + 1' not in src
     assert 'st.session_state["esign_page"] = page_i - 1' not in src

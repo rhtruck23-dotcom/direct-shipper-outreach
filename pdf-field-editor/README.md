@@ -12,6 +12,15 @@ Production-ready static SPA for placing **text**, **date**, **signature**, and *
 - Tailwind CSS 3.4 + shadcn/ui
 - Vitest + Testing Library + Playwright
 
+## Same app (Streamlit)
+
+This SPA is embedded in **Direct Shipper Outreach → Settings → Esign Docs → Compose**.
+It is not a separate product — Streamlit wraps CRM; this module does field placement.
+
+- **Local:** `scripts/dev_with_pdf_editor.ps1` (Streamlit :8501 + Vite :5173)
+- **Cloud one-deploy:** `pnpm build` syncs into `../src/pdf_field_editor/frontend/` (committed)
+- **Cloud override:** Streamlit secret `PDF_FIELD_EDITOR_URL`
+
 ## Quick start
 
 ```bash
@@ -21,7 +30,7 @@ pnpm generate:sample-pdf   # writes public/sample.pdf
 pnpm dev
 ```
 
-Open the URL Vite prints (usually http://localhost:5173).
+Open the URL Vite prints (usually http://localhost:5173), or open Streamlit Esign Docs where it is iframe-embedded.
 
 ## Scripts
 
