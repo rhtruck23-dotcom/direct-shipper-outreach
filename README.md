@@ -24,3 +24,6 @@ See **`docs/CLOUD_HOSTING.md`** — Streamlit Cloud (\$0) + Google Sheet permane
 
 ## Local test (optional)
 Only if you install Python: double-click `START_APP.bat`
+
+## PDF Field Editor
+Production SPA for placing fillable PDF fields: see [`pdf-field-editor/`](./pdf-field-editor/) (`pnpm install && pnpm dev`).
