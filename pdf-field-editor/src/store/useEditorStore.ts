@@ -10,6 +10,7 @@ import type {
   FieldType,
   PdfRect,
   PlacementMode,
+  RedactionField,
   SignatureField,
   TextField,
   TypewriterField,
@@ -130,6 +131,13 @@ function createField(
         fontSize: 12,
         color: '#111827',
       } satisfies TypewriterField;
+    case 'redaction':
+      return {
+        ...base,
+        type: 'redaction',
+        name: `Redaction_${id.slice(0, 6)}`,
+        color: 'black',
+      } satisfies RedactionField;
   }
 }
 

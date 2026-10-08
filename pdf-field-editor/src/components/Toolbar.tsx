@@ -2,6 +2,7 @@ import { useRef, type ReactNode } from 'react';
 import {
   Calendar,
   Download,
+  EyeOff,
   FileUp,
   Keyboard,
   Minus,
@@ -197,6 +198,7 @@ export function Toolbar() {
         {toolBtn('signature', 'Signature', 'S', <PenLine className="h-4 w-4" />)}
         {toolBtn('typewriter', 'Typewriter', 'W', <Keyboard className="h-4 w-4" />)}
         {toolBtn('comment', 'Comment', 'C', <StickyNote className="h-4 w-4" />)}
+        {toolBtn('redaction', 'Redact', 'R', <EyeOff className="h-4 w-4" />)}
 
         <div className="mx-1 h-6 w-px bg-slate-200" />
 

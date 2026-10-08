@@ -63,6 +63,7 @@ export default function App() {
         s: 'signature',
         c: 'comment',
         w: 'typewriter',
+        r: 'redaction',
       };
       const lower = e.key.toLowerCase();
       if (map[lower] && !e.ctrlKey && !e.metaKey && !e.altKey) {

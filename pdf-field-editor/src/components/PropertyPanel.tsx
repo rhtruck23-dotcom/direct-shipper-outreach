@@ -4,14 +4,18 @@ import type {
   AnyField,
   CommentField,
   DateField,
+  RedactionColor,
+  RedactionField,
   SignatureField,
   TextField,
   TypewriterField,
 } from '@/types/fields';
+import { REDACTION_COLOR_OPTIONS } from '@/types/fields';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Trash2, PenLine } from 'lucide-react';
 import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
 
 export function PropertyPanel() {
   const fields = useEditorStore((s) => s.fields);
@@ -236,6 +240,51 @@ export function PropertyPanel() {
           <p className="text-xs text-slate-500">
             Stamped onto the page on export (not a fillable form field). Full rewrite of
             existing PDF paragraph text is not supported — use typewriter stamps instead.
+          </p>
+        </>
+      )}
+
+      {field.type === 'redaction' && (
+        <>
+          <FieldRow label="Cover color">
+            <div className="grid grid-cols-2 gap-2" data-testid="prop-redaction-color">
+              {REDACTION_COLOR_OPTIONS.map((opt) => {
+                const active = (field as RedactionField).color === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    data-testid={`prop-redaction-${opt.value}`}
+                    className={cn(
+                      'flex items-center gap-2 rounded-md border px-2 py-1.5 text-left text-xs font-medium transition-colors',
+                      active
+                        ? 'border-slate-900 bg-slate-50 ring-1 ring-slate-900'
+                        : 'border-slate-200 hover:border-slate-300',
+                    )}
+                    onClick={() =>
+                      updateField(field.id, {
+                        color: opt.value as RedactionColor,
+                      } as Partial<RedactionField>)
+                    }
+                  >
+                    <span
+                      className="h-4 w-4 shrink-0 rounded-sm border border-slate-300"
+                      style={{
+                        background:
+                          opt.value === 'void'
+                            ? 'repeating-linear-gradient(45deg,#6b7280,#6b7280 2px,#9ca3af 2px,#9ca3af 4px)'
+                            : opt.fill,
+                      }}
+                    />
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </FieldRow>
+          <p className="text-xs text-slate-500">
+            Solid cover burned into the PDF on Save/Download (not a form field). Void adds a
+            gray bar with VOID stamped on top.
           </p>
         </>
       )}

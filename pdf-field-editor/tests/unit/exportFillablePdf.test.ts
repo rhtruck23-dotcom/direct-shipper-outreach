@@ -1,7 +1,30 @@
+import { inflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
-import { exportFillablePdf } from '@/lib/exportFillablePdf';
+import { exportFillablePdf, redactionRgb } from '@/lib/exportFillablePdf';
 import type { AnyField } from '@/types/fields';
+
+/** Inflate FlateDecode streams so we can assert burned-in draw ops. */
+function inflatedPdfStreams(bytes: Uint8Array): string {
+  const raw = Buffer.from(bytes);
+  const chunks: string[] = [];
+  let i = 0;
+  while (i < raw.length) {
+    const start = raw.indexOf(Buffer.from('stream\n'), i);
+    if (start < 0) break;
+    const dataStart = start + 'stream\n'.length;
+    const end = raw.indexOf(Buffer.from('\nendstream'), dataStart);
+    if (end < 0) break;
+    const compressed = raw.subarray(dataStart, end);
+    try {
+      chunks.push(inflateSync(compressed).toString('latin1'));
+    } catch {
+      /* not zlib / already raw */
+    }
+    i = end + 1;
+  }
+  return chunks.join('\n');
+}
 
 async function blankPdfBytes(): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
@@ -93,5 +116,67 @@ describe('exportFillablePdf', () => {
 
     const sig = form.getSignature('AuthSig');
     expect(sig.getName()).toBe('AuthSig');
+  });
+
+  it('burns redaction rectangles into page content (not AcroForm)', async () => {
+    const pdfBytes = await blankPdfBytes();
+    const fields: AnyField[] = [
+      {
+        id: 'r1',
+        type: 'redaction',
+        pageIndex: 0,
+        rect: { x: 72, y: 680, width: 200, height: 24 },
+        name: 'HideSSN',
+        required: false,
+        color: 'black',
+      },
+      {
+        id: 'r2',
+        type: 'redaction',
+        pageIndex: 0,
+        rect: { x: 72, y: 640, width: 120, height: 20 },
+        name: 'VoidMark',
+        required: false,
+        color: 'void',
+      },
+      {
+        id: 'r3',
+        type: 'redaction',
+        pageIndex: 0,
+        rect: { x: 72, y: 600, width: 100, height: 18 },
+        name: 'WhiteCover',
+        required: false,
+        color: 'white',
+      },
+      {
+        id: 'r4',
+        type: 'redaction',
+        pageIndex: 0,
+        rect: { x: 72, y: 560, width: 100, height: 18 },
+        name: 'RedactRed',
+        required: false,
+        color: 'redact',
+      },
+    ];
+
+    const result = await exportFillablePdf({ pdfBytes, fields, fileName: 'redact.pdf' });
+    expect(result.formFieldCount).toBe(0);
+    expect(result.bytes.byteLength).toBeGreaterThan(pdfBytes.byteLength + 80);
+
+    const loaded = await PDFDocument.load(result.bytes);
+    expect(loaded.getForm().getFields()).toHaveLength(0);
+
+    expect(redactionRgb('black')).toEqual([0, 0, 0]);
+    expect(redactionRgb('white')).toEqual([1, 1, 1]);
+    expect(redactionRgb('redact')[0]).toBeGreaterThan(0.5);
+    expect(redactionRgb('void')[0]).toBeGreaterThan(0.3);
+
+    // Drawn content lives in FlateDecode page streams (fill rects + VOID stamp).
+    const ops = inflatedPdfStreams(result.bytes);
+    // pdf-lib encodes Tj strings as hex: VOID → <564F4944>
+    expect(ops).toMatch(/<564[Ff]4944>/);
+    expect(ops).toMatch(/(?:^|\s)(?:f|B)(?:\s|$)/m);
+    expect(ops).toMatch(/0\s+0\s+0\s+rg/);
+    expect(ops).toMatch(/72\s+680/);
   });
 });

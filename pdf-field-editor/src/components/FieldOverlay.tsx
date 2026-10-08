@@ -9,12 +9,12 @@ import {
   type MouseEvent,
 } from 'react';
 import { Rnd } from 'react-rnd';
-import type { AnyField, PageInfo, TextField, TypewriterField } from '@/types/fields';
-import { FIELD_COLORS } from '@/types/fields';
+import type { AnyField, PageInfo, RedactionField, TextField, TypewriterField } from '@/types/fields';
+import { FIELD_COLORS, redactionFillHex } from '@/types/fields';
 import { pdfRectToScreen, screenRectToPdf } from '@/lib/coordinateUtils';
 import { useEditorStore } from '@/store/useEditorStore';
 import { CommentNote } from '@/components/CommentNote';
-import { Calendar, PenLine, Type } from 'lucide-react';
+import { Calendar, EyeOff, PenLine, Type } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface FieldOverlayProps {
@@ -198,6 +198,22 @@ export function FieldOverlay({ field, page, scale }: FieldOverlayProps) {
         );
       case 'comment':
         return <CommentNote field={field} compact />;
+      case 'redaction': {
+        const fill = redactionFillHex(field.color);
+        const isLight = field.color === 'white';
+        return (
+          <span
+            className={cn(
+              'flex h-full w-full items-center justify-center gap-1 px-1 text-[10px] font-semibold tracking-wide',
+              isLight ? 'text-slate-600' : 'text-white/90',
+            )}
+            style={{ background: fill }}
+          >
+            <EyeOff className="h-3 w-3 shrink-0 opacity-80" />
+            {field.color === 'void' ? 'VOID' : 'REDACT'}
+          </span>
+        );
+      }
     }
   })();
 
@@ -244,13 +260,21 @@ export function FieldOverlay({ field, page, scale }: FieldOverlayProps) {
         selected && 'z-20 ring-2 ring-offset-1',
       )}
       style={{
-        border: `1.5px solid ${color}`,
+        border: `1.5px solid ${
+          field.type === 'redaction'
+            ? field.color === 'white'
+              ? '#94a3b8'
+              : redactionFillHex((field as RedactionField).color)
+            : color
+        }`,
         background:
           field.type === 'comment'
             ? 'transparent'
-            : field.type === 'typewriter'
-              ? `${color}18`
-              : `${color}22`,
+            : field.type === 'redaction'
+              ? 'transparent'
+              : field.type === 'typewriter'
+                ? `${color}18`
+                : `${color}22`,
         boxShadow: selected ? `0 0 0 1px ${color}` : undefined,
       }}
       resizeHandleClasses={

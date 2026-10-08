@@ -59,7 +59,9 @@ export function PdfViewer() {
         data-testid="pdf-viewer-empty"
       >
         <p className="text-lg font-medium">No PDF loaded</p>
-        <p className="text-sm">Upload a PDF to place text, date, signature, and comment fields.</p>
+        <p className="text-sm">
+          Upload a PDF to place text, date, signature, comment, typewriter, and redaction fields.
+        </p>
       </div>
     );
   }

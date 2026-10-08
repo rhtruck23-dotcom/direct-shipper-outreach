@@ -1392,12 +1392,12 @@ if st.button("Save", key="esign_save_smoke"):
 
 
 def test_sidebar_caption_esign_place_works():
-    """Sidebar must advertise v2026.10.07h · Esign editor polish."""
+    """Sidebar must advertise v2026.10.07i · Esign redaction."""
     from pathlib import Path
 
     app = Path(__file__).resolve().parents[1] / "app.py"
     text = app.read_text(encoding="utf-8")
-    assert "v2026.10.07h · Esign editor polish" in text
+    assert "v2026.10.07i · Esign redaction" in text
 
 
 def test_esign_compose_embeds_pdf_field_editor():

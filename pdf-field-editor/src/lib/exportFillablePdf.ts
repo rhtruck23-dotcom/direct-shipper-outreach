@@ -9,10 +9,13 @@ import type {
   AnyField,
   CommentField,
   DateField,
+  RedactionColor,
+  RedactionField,
   SignatureField,
   TextField,
   TypewriterField,
 } from '@/types/fields';
+import { redactionFillHex } from '@/types/fields';
 
 export interface ExportOptions {
   pdfBytes: Uint8Array;
@@ -29,7 +32,8 @@ export interface ExportResult {
 /**
  * Embed AcroForm fields into a copy of the source PDF.
  * Text / date → text fields; signature → Sig widget (pdf-lib has no createSignature);
- * comments are drawn as sticky notes (+ text annotation).
+ * comments are drawn as sticky notes (+ text annotation);
+ * redaction → opaque burned-in rectangle (optional VOID stamp).
  */
 export async function exportFillablePdf(options: ExportOptions): Promise<ExportResult> {
   const { pdfBytes, fields } = options;
@@ -167,6 +171,24 @@ export async function exportFillablePdf(options: ExportOptions): Promise<ExportR
           lineHeight: size + 2,
         });
       }
+    } else if (field.type === 'redaction') {
+      // Burn-in solid cover (not AcroForm). Hides underlying content in the output PDF.
+      const rf = field as RedactionField;
+      const fillHex = redactionFillHex(rf.color);
+      const [r, g, b] = hexToRgb(fillHex);
+      const border =
+        rf.color === 'white' ? { borderColor: rgb(0.75, 0.78, 0.82), borderWidth: 0.5 } : {};
+      page.drawRectangle({
+        x,
+        y,
+        width,
+        height,
+        color: rgb(r, g, b),
+        ...border,
+      });
+      if (rf.color === 'void') {
+        drawVoidStamp(page, helvetica, { x, y, width, height });
+      }
     }
   }
 
@@ -217,6 +239,30 @@ function addSignatureWidget(
   const fieldEntries = form.acroForm.getFields();
   const fieldRefs = fieldEntries.map(([, ref]) => ref);
   form.acroForm.dict.set(PDFName.of('Fields'), context.obj([...fieldRefs, sigRef]));
+}
+
+function drawVoidStamp(
+  page: ReturnType<PDFDocument['getPages']>[number],
+  font: Awaited<ReturnType<PDFDocument['embedFont']>>,
+  rect: { x: number; y: number; width: number; height: number },
+): void {
+  const label = 'VOID';
+  const size = Math.max(8, Math.min(18, Math.min(rect.height * 0.55, rect.width / 3.2)));
+  const textWidth = font.widthOfTextAtSize(label, size);
+  const tx = rect.x + Math.max(2, (rect.width - textWidth) / 2);
+  const ty = rect.y + Math.max(2, (rect.height - size) / 2);
+  page.drawText(label, {
+    x: tx,
+    y: ty,
+    size,
+    font,
+    color: rgb(1, 1, 1),
+  });
+}
+
+/** Exported for unit tests — resolve redaction RGB from preset key. */
+export function redactionRgb(color: RedactionColor): [number, number, number] {
+  return hexToRgb(redactionFillHex(color));
 }
 
 function hexToRgb(hex: string): [number, number, number] {
