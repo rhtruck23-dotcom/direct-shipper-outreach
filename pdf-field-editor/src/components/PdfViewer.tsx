@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { FileUp } from 'lucide-react';
 import { useEditorStore } from '@/store/useEditorStore';
 import { PageCanvas } from '@/components/PageCanvas';
-import { pdfjs } from '@/lib/pdfLoader';
+import { openPdfDocument } from '@/lib/pdfLoader';
 
 /** Base CSS px per PDF point at 100% zoom. */
 const BASE_SCALE = 1.25;
@@ -17,7 +18,7 @@ export function PdfViewer() {
 
   useEffect(() => {
     let cancelled = false;
-    let loadingTask: ReturnType<typeof pdfjs.getDocument> | null = null;
+    let docRef: PDFDocumentProxy | null = null;
 
     (async () => {
       if (!documentMeta) {
@@ -26,12 +27,12 @@ export function PdfViewer() {
       }
       setError(null);
       try {
-        loadingTask = pdfjs.getDocument({ data: documentMeta.pdfBytes.slice() });
-        const doc = await loadingTask.promise;
+        const doc = await openPdfDocument(documentMeta.pdfBytes);
         if (cancelled) {
           doc.destroy();
           return;
         }
+        docRef = doc;
         setPdfjsDoc(doc);
       } catch (err) {
         if (!cancelled) {
@@ -43,7 +44,7 @@ export function PdfViewer() {
 
     return () => {
       cancelled = true;
-      loadingTask?.destroy();
+      docRef?.destroy();
     };
   }, [documentMeta]);
 
@@ -55,28 +56,42 @@ export function PdfViewer() {
   if (!documentMeta) {
     return (
       <div
-        className="flex h-full flex-col items-center justify-center gap-3 bg-slate-100 text-slate-600"
+        className="flex h-full min-h-[420px] flex-col items-center justify-center gap-4 bg-slate-100 px-6 text-center text-slate-700"
         data-testid="pdf-viewer-empty"
       >
-        <p className="text-lg font-medium">No PDF loaded</p>
-        <p className="text-sm">
-          Upload a PDF to place text, date, signature, comment, typewriter, and redaction fields.
-        </p>
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-slate-200">
+          <FileUp className="h-8 w-8 text-blue-600" aria-hidden />
+        </div>
+        <div className="space-y-1">
+          <p className="text-xl font-semibold text-slate-900">Upload a PDF</p>
+          <p className="max-w-md text-sm text-slate-600">
+            Use <span className="font-medium">Upload PDF</span> in the toolbar to place text, date,
+            signature, typewriter, and redaction fields.
+          </p>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex h-full items-center justify-center bg-red-50 text-red-700" data-testid="pdf-viewer-error">
-        {error}
+      <div
+        className="flex h-full min-h-[420px] flex-col items-center justify-center gap-2 bg-red-50 px-6 text-center text-red-700"
+        data-testid="pdf-viewer-error"
+      >
+        <p className="font-medium">Could not render PDF preview</p>
+        <p className="max-w-lg text-sm">{error}</p>
+        <p className="text-xs text-red-600/80">Try re-uploading the file. If it persists, refresh the page.</p>
       </div>
     );
   }
 
   if (!pdfjsDoc) {
     return (
-      <div className="flex h-full items-center justify-center bg-slate-100 text-slate-600" data-testid="pdf-viewer-loading">
+      <div
+        className="flex h-full min-h-[420px] items-center justify-center bg-slate-100 text-slate-600"
+        data-testid="pdf-viewer-loading"
+      >
         Loading PDF…
       </div>
     );
@@ -86,7 +101,7 @@ export function PdfViewer() {
 
   return (
     <div
-      className="h-full overflow-auto bg-slate-200/80 px-12 py-8"
+      className="h-full min-h-0 overflow-auto bg-slate-200/80 px-12 py-8"
       data-testid="pdf-viewer"
     >
       <div className="mx-auto flex w-max flex-col items-start">

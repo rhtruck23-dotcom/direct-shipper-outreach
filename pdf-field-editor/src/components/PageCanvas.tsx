@@ -23,6 +23,7 @@ export function PageCanvas({ pdfjsDoc, page, scale }: PageCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [rendering, setRendering] = useState(true);
+  const [renderError, setRenderError] = useState<string | null>(null);
   const [draft, setDraft] = useState<DragDraft | null>(null);
   const placementMode = useEditorStore((s) => s.placementMode);
   const fields = useEditorStore((s) => s.fields.filter((f) => f.pageIndex === page.pageIndex));
@@ -33,10 +34,18 @@ export function PageCanvas({ pdfjsDoc, page, scale }: PageCanvasProps) {
     let cancelled = false;
     (async () => {
       setRendering(true);
+      setRenderError(null);
       try {
         const pdfPage = await pdfjsDoc.getPage(page.pageIndex + 1);
         if (!canvasRef.current || cancelled) return;
         await renderPageToCanvas(pdfPage, canvasRef.current, scale);
+        if (!cancelled) {
+          canvasRef.current.setAttribute('data-rendered', '1');
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setRenderError(err instanceof Error ? err.message : 'Page render failed');
+        }
       } finally {
         if (!cancelled) setRendering(false);
       }
@@ -153,10 +162,15 @@ export function PageCanvas({ pdfjsDoc, page, scale }: PageCanvasProps) {
           if (!placementMode) selectField(null);
         }}
       >
-        <canvas ref={canvasRef} className="block" />
+        <canvas ref={canvasRef} className="block bg-white" data-testid={`page-canvas-el-${page.pageIndex}`} />
         {rendering && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/60 text-sm text-slate-600">
             Rendering page {page.pageIndex + 1}…
+          </div>
+        )}
+        {renderError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-red-50/95 px-4 text-center text-sm text-red-700">
+            {renderError}
           </div>
         )}
         {fields.map((field) => (

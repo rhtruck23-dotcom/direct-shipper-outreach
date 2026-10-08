@@ -13,11 +13,15 @@ from typing import Any, Optional
 import streamlit as st
 import streamlit.components.v1 as components
 
+# Bump when shipping frontend fixes so Cloud iframe URL/key change (cache bust).
+COMPONENT_VERSION = "2026.10.07j"
+
 _FRONTEND = (Path(__file__).parent / "frontend").resolve()
 _COMPONENT = None
 if (_FRONTEND / "index.html").is_file():
+    # Versioned component name → new /component/... path on Streamlit Cloud.
     _COMPONENT = components.declare_component(
-        "pdf_field_editor",
+        f"pdf_field_editor_v{COMPONENT_VERSION.replace('.', '_')}",
         path=str(_FRONTEND),
     )
 
@@ -78,18 +82,23 @@ def render_pdf_field_editor(*, height: int = 920, key: str = "pdf_field_editor")
     h = max(640, int(height))
     url = resolve_pdf_field_editor_url()
     if url:
-        st.caption(f"PDF Field Editor · {url}")
-        components.iframe(url, height=h, scrolling=True)
+        bust = f"{url}{'&' if '?' in url else '?'}v={COMPONENT_VERSION}"
+        st.caption(f"PDF Field Editor · {bust}")
+        components.iframe(bust, height=h, scrolling=True)
         return None
 
     if bundled_frontend_ready() and _COMPONENT is not None:
         st.caption(
-            "PDF Field Editor · Upload · Text / Date / Signature / Typewriter · "
-            "Save to Outreach · download."
+            f"PDF Field Editor · v{COMPONENT_VERSION} · Upload · "
+            "Text / Date / Signature / Typewriter · Save to Outreach · download."
         )
         _force_editor_iframe_height(h)
-        # height= is Streamlit's initial iframe size (critical — do not omit).
-        return _COMPONENT(default=None, key=key, height=h)
+        # Versioned key + height= so Cloud cannot reuse a stale iframe instance.
+        return _COMPONENT(
+            default=None,
+            key=f"{key}_{COMPONENT_VERSION}",
+            height=h,
+        )
 
     # Local fallback: Vite dev server
     st.info(

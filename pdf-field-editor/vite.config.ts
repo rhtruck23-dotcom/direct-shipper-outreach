@@ -43,7 +43,9 @@ function streamlitEmbedBridge(): Plugin {
       }
 
       // Sync into Streamlit package so Cloud serves the SPA from the same app.
+      // Wipe first so stale hashed assets cannot be served from an old deploy.
       const embedDir = path.resolve(__dirname, '../src/pdf_field_editor/frontend');
+      fs.rmSync(embedDir, { recursive: true, force: true });
       fs.mkdirSync(embedDir, { recursive: true });
       fs.cpSync(outDir, embedDir, { recursive: true });
     },

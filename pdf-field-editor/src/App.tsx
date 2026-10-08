@@ -98,10 +98,14 @@ export default function App() {
   ]);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-slate-50 text-slate-900" data-testid="app-root">
+    <div
+      className="flex h-full min-h-[640px] flex-col overflow-hidden bg-slate-50 text-slate-900"
+      style={{ height: '100vh' }}
+      data-testid="app-root"
+    >
       <Toolbar />
       <div className="flex min-h-0 flex-1">
-        <main className="min-w-0 flex-1">
+        <main className="min-h-0 min-w-0 flex-1">
           <PdfViewer />
         </main>
         <PropertyPanel />

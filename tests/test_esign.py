@@ -1392,12 +1392,12 @@ if st.button("Save", key="esign_save_smoke"):
 
 
 def test_sidebar_caption_esign_place_works():
-    """Sidebar must advertise v2026.10.07i · Esign redaction."""
+    """Sidebar must advertise v2026.10.07j · Esign preview fix."""
     from pathlib import Path
 
     app = Path(__file__).resolve().parents[1] / "app.py"
     text = app.read_text(encoding="utf-8")
-    assert "v2026.10.07i · Esign redaction" in text
+    assert "v2026.10.07j · Esign preview fix" in text
 
 
 def test_esign_compose_embeds_pdf_field_editor():
@@ -1421,6 +1421,8 @@ def test_esign_compose_embeds_pdf_field_editor():
     assert "PDF_FIELD_EDITOR_URL" in embed_text
     assert "declare_component" in embed_text
     assert "height=h" in embed_text
+    assert 'COMPONENT_VERSION = "2026.10.07j"' in embed_text
+    assert "pdf_field_editor_v" in embed_text
     lib = (
         Path(__file__).resolve().parents[1]
         / "src"

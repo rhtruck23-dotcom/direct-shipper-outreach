@@ -3665,7 +3665,7 @@ def main():
 
     with st.sidebar:
         st.markdown("### LogixTrek Outreach")
-        st.caption("v2026.10.07i · Esign redaction")
+        st.caption("v2026.10.07j · Esign preview fix")
 
         from src.notes_ui import render_sidebar_add_note_button
 

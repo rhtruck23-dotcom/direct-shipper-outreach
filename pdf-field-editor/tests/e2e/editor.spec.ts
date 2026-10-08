@@ -10,9 +10,28 @@ test.describe('PDF Field Editor', () => {
     await page.goto('/');
     await expect(page.getByTestId('app-root')).toBeVisible();
 
+    await expect(page.getByTestId('pdf-viewer-empty')).toBeVisible();
+    await expect(page.getByText('Upload a PDF')).toBeVisible();
+
     await page.getByTestId('file-input').setInputFiles(samplePdf);
     await expect(page.getByTestId('pdf-viewer')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('page-canvas-0')).toBeVisible();
+
+    const pageCanvasEl = page.getByTestId('page-canvas-el-0');
+    await expect(pageCanvasEl).toHaveAttribute('data-rendered', '1', { timeout: 30_000 });
+    const ink = await pageCanvasEl.evaluate((el) => {
+      const c = el as HTMLCanvasElement;
+      if (c.width < 8 || c.height < 8) return { ok: false, reason: 'tiny canvas' };
+      const ctx = c.getContext('2d');
+      if (!ctx) return { ok: false, reason: 'no ctx' };
+      const { data } = ctx.getImageData(0, 0, c.width, c.height);
+      let nonWhite = 0;
+      for (let i = 0; i < data.length; i += 16) {
+        if (data[i] < 250 || data[i + 1] < 250 || data[i + 2] < 250) nonWhite += 1;
+      }
+      return { ok: nonWhite > 20, nonWhite, w: c.width, h: c.height };
+    });
+    expect(ink.ok, `expected PDF ink on canvas, got ${JSON.stringify(ink)}`).toBeTruthy();
 
     const canvas = page.getByTestId('page-canvas-0').locator('div').first();
     const box = await canvas.boundingBox();
