@@ -881,8 +881,9 @@ def page_esign_docs(*, user: dict, company: dict) -> None:
 
     st.title("Esign Docs")
     st.caption(
-        "**PDF Field Editor** (React) — upload, place Text/Date/Sign, drag/resize, download. "
-        "Optional CRM save/send is collapsed below. Fill-link sign = typed name (not DigSig)."
+        "**PDF Field Editor** (React) — upload, Text/Date/Sign/Typewriter, drag/resize, "
+        "**Save to Outreach**, download. CRM send-for-signature is below. "
+        "Fill-link sign = typed name (not DigSig)."
     )
 
     tabs = st.tabs(["Compose", "My documents"])
@@ -902,8 +903,87 @@ def _nudge_esign_page(delta: int, max_pages: int) -> None:
     st.session_state["esign_page"] = max(1, min(int(max_pages), cur + int(delta)))
 
 
+def _react_save_package() -> Optional[dict[str, Any]]:
+    """Staged PDF + fields from React editor Save to Outreach."""
+    pkg = st.session_state.get("esign_react_save")
+    return pkg if isinstance(pkg, dict) and pkg.get("pdf") else None
+
+
+def consume_pdf_editor_component_value(
+    value: Any,
+    *,
+    user: dict,
+    company: dict,
+) -> Optional[dict[str, Any]]:
+    """
+    Handle setComponentValue from the React PDF Field Editor.
+
+    action=save_to_outreach → stage package + create_document in Outreach CRM.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            return None
+    if not isinstance(value, dict):
+        return None
+    if str(value.get("action") or "") != "save_to_outreach":
+        return None
+
+    nonce = str(value.get("nonce") or "")
+    if nonce and st.session_state.get("esign_react_save_nonce") == nonce:
+        return st.session_state.get("esign_last_save_meta")
+
+    try:
+        pdf_b64 = str(value.get("pdfBase64") or "")
+        pdf_bytes = base64.b64decode(pdf_b64)
+    except Exception:
+        st.error("Save to Outreach failed: invalid PDF payload.")
+        return None
+    if not pdf_bytes.startswith(b"%PDF"):
+        st.error("Save to Outreach failed: payload is not a PDF.")
+        return None
+
+    raw_fields = value.get("fields") or []
+    if not isinstance(raw_fields, list):
+        raw_fields = []
+    fields = fields_for_persist([dict(f) for f in raw_fields if isinstance(f, dict)])
+    title = (
+        str(value.get("title") or "").strip()
+        or str(value.get("fileName") or "").replace(".pdf", "").strip()
+        or "Agreement"
+    )
+
+    st.session_state["esign_react_save"] = {
+        "pdf": pdf_bytes,
+        "fields": fields,
+        "title": title,
+        "fileName": str(value.get("fileName") or ""),
+    }
+    st.session_state[_session_fields_key()] = fields
+    if nonce:
+        st.session_state["esign_react_save_nonce"] = nonce
+
+    meta = esign.create_document(
+        title=title,
+        original_pdf=pdf_bytes,
+        owner_email=user.get("email") or company.get("my_email") or "",
+        owner_name=user.get("name") or "",
+        fields=fields,
+    )
+    st.session_state["esign_last_doc_id"] = meta["id"]
+    st.session_state["esign_last_save_meta"] = meta
+    st.success(
+        f"Saved to Outreach «{meta['title']}» (`{meta['id']}`) · "
+        f"{len(fields)} field(s). Use Send for signature below when ready."
+    )
+    return meta
+
+
 def _compose_tab(*, user: dict, company: dict) -> None:
-    """Compose = React PDF Field Editor only (full width). Legacy Streamlit placer is not primary."""
+    """Compose = React PDF Field Editor + CRM save/send (no Streamlit Place UI)."""
     hdr, link = st.columns([3, 1])
     with hdr:
         st.markdown("#### Compose")
@@ -912,344 +992,100 @@ def _compose_tab(*, user: dict, company: dict) -> None:
 
     from .pdf_field_editor import render_pdf_field_editor
 
-    render_pdf_field_editor(height=960, key="esign_pdf_field_editor")
+    editor_value = render_pdf_field_editor(height=960, key="esign_pdf_field_editor")
+    consume_pdf_editor_component_value(editor_value, user=user, company=company)
 
     st.divider()
     with st.expander(
-        "CRM: Save template / Send for signature (secondary)",
-        expanded=False,
+        "CRM: Save template / Send for signature",
+        expanded=True,
     ):
         st.caption(
-            "Secondary path for named CRM templates. Primary placement is the React editor above "
-            "(Upload PDF → Text/Date/Signature → download fillable PDF)."
+            "Add Text / Date / Signature / Typewriter in the React editor above, "
+            "click **Save to Outreach**, then save/send here. "
+            "Typewriter stamps burn into the PDF; Text/Date/Sign stay fillable."
         )
         _compose_crm_template(user=user, company=company)
 
 
 def _compose_crm_template(*, user: dict, company: dict) -> None:
-    """Legacy Streamlit place path — saves named templates for CRM Send for signature."""
-    uploaded = st.file_uploader("Upload PDF", type=["pdf"], key="esign_upload")
+    """CRM save/send only — placement lives in the React PDF Field Editor."""
+    pkg = _react_save_package()
+    default_title = str((pkg or {}).get("title") or "Agreement")
     title = st.text_input(
         "Template / document name",
-        value="Agreement",
+        value=default_title,
         key="esign_title",
         help="Saved name appears in CRM Send for signature pickers.",
     )
 
-    if uploaded is None:
+    fields = list(st.session_state.get(_session_fields_key()) or [])
+    if pkg:
+        fields = list(pkg.get("fields") or fields)
+        st.session_state[_session_fields_key()] = fields
+        st.success(
+            f"Editor package ready · {len(fields)} field(s) · "
+            f"{len(pkg['pdf']):,} bytes"
+            + (
+                f" · last doc `{st.session_state.get('esign_last_doc_id')}`"
+                if st.session_state.get("esign_last_doc_id")
+                else ""
+            )
+        )
+    else:
         st.info(
-            "Upload a PDF to place fields for a CRM template. "
-            "Layout of the original document is never redrawn."
+            "In the PDF Field Editor: Upload PDF → place fields → **Save to Outreach**. "
+            "That stages the document for Save as template / email below."
         )
-        return
 
-    pdf_bytes = uploaded.getvalue()
-    try:
-        pages = esign.pdf_page_count(pdf_bytes)
-    except Exception as exc:
-        st.error(f"Could not read PDF: {exc}")
-        return
-
-    st.success(f"Loaded · {pages} page(s) · {len(pdf_bytes):,} bytes")
-    left, right = st.columns([1.35, 1])
-
-    page_i = int(st.session_state.get("esign_page") or 1)
-    page_i = max(1, min(pages, page_i))
-    page_idx = page_i - 1
-
-    with left:
-        st.markdown("#### Preview")
-        if pages > 1:
-            pc1, pc2, pc3 = st.columns([1, 2, 1])
-            with pc1:
-                # on_click mutates esign_page before number_input binds the key
-                st.button(
-                    "◀ Prev",
-                    disabled=page_i <= 1,
-                    key="esign_prev_page",
-                    on_click=_nudge_esign_page,
-                    args=(-1, pages),
+    st.markdown("#### Save & send")
+    recipient = st.text_input("Recipient email", key="esign_recipient")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("Save as template", use_container_width=True):
+            if not pkg:
+                st.error("Save to Outreach from the editor first.")
+            else:
+                meta = esign.create_document(
+                    title=title,
+                    original_pdf=pkg["pdf"],
+                    owner_email=user.get("email") or company.get("my_email") or "",
+                    owner_name=user.get("name") or "",
+                    fields=fields_for_persist(fields),
                 )
-            with pc2:
-                page_i = st.number_input(
-                    "Page",
-                    min_value=1,
-                    max_value=max(1, pages),
-                    value=page_i,
-                    key="esign_page",
-                    label_visibility="collapsed",
-                )
-                page_idx = int(page_i) - 1
-            with pc3:
-                st.button(
-                    "Next ▶",
-                    disabled=page_i >= pages,
-                    key="esign_next_page",
-                    on_click=_nudge_esign_page,
-                    args=(1, pages),
-                )
-        try:
-            png, iw, ih = _pdf_page_image(pdf_bytes, page_idx)
-        except Exception as exc:
-            st.error(
-                f"Preview render failed ({exc}). "
-                "Try another PDF, or reload the page."
-            )
-            png, iw, ih = b"", 0, 0
-        st.session_state.setdefault("esign_next_type", "text")
-        # Defaults for Place X%/Y% before right-column widgets bind (AppTest-safe).
-        st.session_state.setdefault("esign_place_x_pct", 50)
-        st.session_state.setdefault("esign_place_y_pct", 50)
-        fields = list(st.session_state.get(_session_fields_key()) or [])
-        if png:
-            annotated = _annotate_fields_png(
-                png,
-                fields,
-                page_idx,
-                pending_xy=_pending_place_xy(),
-            )
-            st.info(
-                f"**Place a field (reliable):** select **Text / Date / Sign** (right) → "
-                f"set **Place X% / Y%** → click **Place field**. "
-                f"Next place type: **{_selected_field_type()}**. "
-                "Boxes draw on the preview below after each Place."
-            )
-            st.caption(f"Preview {iw}×{ih}px · page {page_idx + 1}/{pages}")
-            # Guaranteed visible raster (v2026.10.07c) — never remove.
-            # v2026.10.07e: NO interactive placer / image-coordinates in compose —
-            # those paths silently no-op'd for users; Place field is primary.
-            try:
-                _show_page_image(annotated, key=f"esign_click_p{page_idx}_img")
-            except Exception as exc:
-                st.error(f"Preview render failed ({exc}).")
-        else:
-            st.warning(
-                "No page preview available. Reload or try another PDF to place fields."
-            )
-
-    with right:
-        st.session_state.setdefault("esign_next_type", "text")
-        fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
-        st.markdown("#### Fields")
-        st.caption(
-            "1) Choose type → 2) set Place X% / Y% → 3) **Place field**. "
-            "Each Place appends one field at the current X%/Y% (does not move old fields). "
-            "Save keeps page/x/y/w/h."
-        )
-        active = _selected_field_type()
-        t1, t2, t3 = st.columns(3)
-        with t1:
-            st.button(
-                "Text",
-                key="esign_type_text",
-                use_container_width=True,
-                type="primary" if active == "text" else "secondary",
-                on_click=_on_select_field_type,
-                args=("text",),
-            )
-        with t2:
-            st.button(
-                "Date",
-                key="esign_type_date",
-                use_container_width=True,
-                type="primary" if active == "date" else "secondary",
-                on_click=_on_select_field_type,
-                args=("date",),
-            )
-        with t3:
-            st.button(
-                "Sign",
-                key="esign_type_sign",
-                use_container_width=True,
-                type="primary" if active == "sign" else "secondary",
-                on_click=_on_select_field_type,
-                args=("sign",),
-            )
-        st.caption(f"Next Place field type: **{active}**")
-
-        st.session_state.setdefault("esign_place_x_pct", 50)
-        st.session_state.setdefault("esign_place_y_pct", 50)
-
-        # PRIMARY path — pure widgets; no click / placer / coords_ready gate.
-        fx, fy, fbtn = st.columns([1, 1, 1.2])
-        with fx:
-            st.number_input(
-                "Place X%",
-                min_value=0,
-                max_value=95,
-                step=1,
-                key="esign_place_x_pct",
-                help="Percent from left edge. Change between Place clicks for distinct spots.",
-            )
-        with fy:
-            st.number_input(
-                "Place Y%",
-                min_value=0,
-                max_value=95,
-                step=1,
-                key="esign_place_y_pct",
-                help="Percent from top edge. Change between Place clicks for distinct spots.",
-            )
-        with fbtn:
-            st.write("")  # align with number_input label
-            st.button(
-                "Place field",
-                key="esign_place_here",
-                use_container_width=True,
-                type="primary",
-                on_click=_on_place_here,
-            )
-
-        if st.session_state.get("esign_place_error"):
-            st.warning(str(st.session_state.get("esign_place_error")))
-        else:
-            cx, cy = _xy_pct_place_coords()
-            st.caption(
-                f"Next Place lands at **{cx:.0%}** left, **{cy:.0%}** top "
-                f"(page {page_idx + 1})."
-            )
-
-        edit_id = str(st.session_state.get("esign_edit_field_id") or "")
-        edit_field = next((f for f in fields if f.get("id") == edit_id), None)
-        if edit_field is not None:
-            st.markdown("#### Edit text")
-            st.caption(
-                f"Editing **{edit_field.get('label')}** · "
-                f"p{int(edit_field.get('page', 0)) + 1} · "
-                f"position stays put"
-            )
-            new_label = st.text_input(
-                "Label",
-                value=str(edit_field.get("label") or ""),
-                key=f"esign_edit_label_{edit_id}",
-                help="Use labels like company_name, contact_name, email, date for CRM auto-prefill.",
-            )
-            new_value = st.text_area(
-                "Typewriter text",
-                value=str(edit_field.get("value") or ""),
-                key=f"esign_edit_value_{edit_id}",
-                height=68,
-            )
-            new_color = st.color_picker(
-                "Text color",
-                value=esign.normalize_hex_color(str(edit_field.get("color") or "#111827")),
-                key=f"esign_edit_color_{edit_id}",
-            )
-            ec1, ec2 = st.columns(2)
-            with ec1:
-                if st.button("Save text", type="primary", use_container_width=True):
-                    updated, _ = apply_placer_message(
-                        fields,
-                        {
-                            "action": "edit_text",
-                            "id": edit_id,
-                            "label": new_label,
-                            "value": new_value,
-                            "color": new_color,
-                        },
-                        page_index=page_idx,
-                    )
-                    st.session_state[_session_fields_key()] = updated
-                    st.session_state.pop("esign_edit_field_id", None)
-                    st.rerun()
-            with ec2:
-                if st.button("Cancel edit", use_container_width=True):
-                    st.session_state.pop("esign_edit_field_id", None)
-                    st.rerun()
-
-        # Re-read after on_click Place here (callbacks mutate before this body runs)
-        fields = [dict(f) for f in (st.session_state.get(_session_fields_key()) or [])]
-        st.markdown(f"#### Placed fields ({len(fields)})")
-        if not fields:
-            st.caption(
-                "No fields yet — select Text / Date / Sign, set Place X%/Y%, "
-                "then click **Place field**."
-            )
-        else:
-            for idx, f in enumerate(fields):
-                c1, c2, c3 = st.columns([3.2, 1, 1])
-                with c1:
-                    extra = ""
-                    if f.get("value"):
-                        extra = f" · “{str(f.get('value'))[:24]}”"
-                    st.write(
-                        f"**{f.get('label')}** · {f.get('type')} · "
-                        f"p{int(f.get('page', 0)) + 1} · "
-                        f"x={float(f.get('x', 0)):.0%} y={float(f.get('y_from_top', 0)):.0%}"
-                        f"{extra}"
-                    )
-                with c2:
-                    if f.get("type") == "text" and st.button(
-                        "Edit", key=f"esign_editbtn_{f.get('id')}"
-                    ):
-                        st.session_state["esign_edit_field_id"] = f.get("id")
-                        st.rerun()
-                with c3:
-                    if st.button("Del", key=f"esign_del_{f.get('id')}"):
-                        fields.pop(idx)
-                        st.session_state[_session_fields_key()] = fields
-                        if st.session_state.get("esign_edit_field_id") == f.get("id"):
-                            st.session_state.pop("esign_edit_field_id", None)
-                        st.rerun()
-
-        if fields and st.button("Clear all fields", use_container_width=True):
-            st.session_state[_session_fields_key()] = []
-            st.session_state.pop("esign_edit_field_id", None)
-            st.rerun()
-
-        fillable = esign.build_fillable_pdf(pdf_bytes, fields) if fields else pdf_bytes
-        st.download_button(
-            "Download fillable PDF",
-            data=fillable,
-            file_name=f"{(title or 'document').strip() or 'document'}_fillable.pdf",
-            mime="application/pdf",
-            disabled=not fields,
+                st.session_state["esign_last_doc_id"] = meta["id"]
+                st.success(f"Saved template «{meta['title']}» (`{meta['id']}`)")
+    with col_b:
+        if st.button(
+            "Save & email for signature",
+            type="primary",
             use_container_width=True,
-        )
-
-        st.markdown("#### Save & send")
-        recipient = st.text_input("Recipient email", key="esign_recipient")
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("Save as template", use_container_width=True):
-                if not fields:
-                    st.error("Place at least one field first.")
-                else:
-                    meta = esign.create_document(
-                        title=title,
-                        original_pdf=pdf_bytes,
-                        owner_email=user.get("email") or company.get("my_email") or "",
-                        owner_name=user.get("name") or "",
-                        fields=fields_for_persist(fields),
-                    )
-                    st.session_state["esign_last_doc_id"] = meta["id"]
-                    st.success(f"Saved template «{meta['title']}» (`{meta['id']}`)")
-        with col_b:
-            if st.button(
-                "Save & email for signature",
-                type="primary",
-                use_container_width=True,
-            ):
-                if not fields:
-                    st.error("Place at least one field first.")
-                elif not (recipient or "").strip():
-                    st.error("Enter recipient email.")
-                else:
-                    meta = esign.create_document(
-                        title=title,
-                        original_pdf=pdf_bytes,
-                        owner_email=user.get("email") or company.get("my_email") or "",
-                        owner_name=user.get("name") or "",
-                        fields=fields_for_persist(fields),
-                    )
-                    st.session_state["esign_last_doc_id"] = meta["id"]
-                    result = send_for_signature(
-                        doc_id=meta["id"],
-                        recipient=recipient.strip(),
-                        company=company,
-                        user=user,
-                    )
-                    _flash_send_result(result)
+        ):
+            if not pkg:
+                st.error("Save to Outreach from the editor first.")
+            elif not fields:
+                st.error(
+                    "Need at least one Text / Date / Sign field to email for signature "
+                    "(typewriter stamps alone are already burned into the PDF)."
+                )
+            elif not (recipient or "").strip():
+                st.error("Enter recipient email.")
+            else:
+                meta = esign.create_document(
+                    title=title,
+                    original_pdf=pkg["pdf"],
+                    owner_email=user.get("email") or company.get("my_email") or "",
+                    owner_name=user.get("name") or "",
+                    fields=fields_for_persist(fields),
+                )
+                st.session_state["esign_last_doc_id"] = meta["id"]
+                result = send_for_signature(
+                    doc_id=meta["id"],
+                    recipient=recipient.strip(),
+                    company=company,
+                    user=user,
+                )
+                _flash_send_result(result)
 
 
 def send_for_signature(

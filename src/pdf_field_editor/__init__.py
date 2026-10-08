@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -64,9 +64,12 @@ div[data-testid="stCustomComponentV1"] iframe {{
     )
 
 
-def render_pdf_field_editor(*, height: int = 920, key: str = "pdf_field_editor") -> None:
+def render_pdf_field_editor(*, height: int = 920, key: str = "pdf_field_editor") -> Any:
     """
     Embed the PDF Field Editor full-width in the current Streamlit page.
+
+    Returns the latest setComponentValue from the SPA (e.g. save_to_outreach),
+    or None when using an external iframe / no value yet.
 
     1) If PDF_FIELD_EDITOR_URL is set → iframe that URL (Cloud + Vercel, or local Vite).
     2) Else if bundled frontend exists → Streamlit custom component (same deploy).
@@ -77,16 +80,16 @@ def render_pdf_field_editor(*, height: int = 920, key: str = "pdf_field_editor")
     if url:
         st.caption(f"PDF Field Editor · {url}")
         components.iframe(url, height=h, scrolling=True)
-        return
+        return None
 
     if bundled_frontend_ready() and _COMPONENT is not None:
         st.caption(
-            "PDF Field Editor · Upload PDF · Text / Date / Signature · drag / resize / download."
+            "PDF Field Editor · Upload · Text / Date / Signature / Typewriter · "
+            "Save to Outreach · download."
         )
         _force_editor_iframe_height(h)
         # height= is Streamlit's initial iframe size (critical — do not omit).
-        _COMPONENT(default=None, key=key, height=h)
-        return
+        return _COMPONENT(default=None, key=key, height=h)
 
     # Local fallback: Vite dev server
     st.info(
@@ -97,3 +100,4 @@ def render_pdf_field_editor(*, height: int = 920, key: str = "pdf_field_editor")
         "(`pnpm --dir pdf-field-editor build` → `src/pdf_field_editor/frontend/`)."
     )
     components.iframe(DEFAULT_LOCAL_DEV_URL, height=h, scrolling=True)
+    return None

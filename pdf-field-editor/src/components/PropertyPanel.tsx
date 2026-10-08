@@ -1,6 +1,13 @@
 import type { ReactNode } from 'react';
 import { useEditorStore } from '@/store/useEditorStore';
-import type { AnyField, CommentField, DateField, SignatureField, TextField } from '@/types/fields';
+import type {
+  AnyField,
+  CommentField,
+  DateField,
+  SignatureField,
+  TextField,
+  TypewriterField,
+} from '@/types/fields';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Trash2, PenLine } from 'lucide-react';
@@ -185,6 +192,50 @@ export function PropertyPanel() {
           <p className="text-xs text-slate-500">
             Created{' '}
             {format(new Date((field as CommentField).createdAt), 'MMM d, yyyy HH:mm')}
+          </p>
+        </>
+      )}
+
+      {field.type === 'typewriter' && (
+        <>
+          <FieldRow label="Typewriter text">
+            <textarea
+              data-testid="prop-typewriter-text"
+              className="min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+              value={(field as TypewriterField).text}
+              onChange={(e) =>
+                updateField(field.id, { text: e.target.value } as Partial<TypewriterField>)
+              }
+              placeholder="Click page → type; burns into PDF on Save/Download"
+            />
+          </FieldRow>
+          <FieldRow label="Font size">
+            <Input
+              type="number"
+              min={6}
+              max={72}
+              data-testid="prop-typewriter-size"
+              value={(field as TypewriterField).fontSize}
+              onChange={(e) =>
+                updateField(field.id, {
+                  fontSize: Number(e.target.value) || 12,
+                } as Partial<TypewriterField>)
+              }
+            />
+          </FieldRow>
+          <FieldRow label="Color">
+            <Input
+              type="color"
+              data-testid="prop-typewriter-color"
+              value={(field as TypewriterField).color || '#111827'}
+              onChange={(e) =>
+                updateField(field.id, { color: e.target.value } as Partial<TypewriterField>)
+              }
+            />
+          </FieldRow>
+          <p className="text-xs text-slate-500">
+            Stamped onto the page on export (not a fillable form field). Full rewrite of
+            existing PDF paragraph text is not supported — use typewriter stamps instead.
           </p>
         </>
       )}

@@ -261,14 +261,19 @@ def test_six_distinct_fields_survive_sequential_adds():
 
 
 def test_no_slider_place_field_path_in_compose_ui():
-    """v2026.10.07e: Place field button OK; old esign_x|y|w|h sliders must stay gone."""
+    """v2026.10.07h: Streamlit Place UI gone; React editor + CRM save/send only."""
     import inspect
 
     from src import esign_ui
 
     compose = inspect.getsource(esign_ui._compose_crm_template)
-    assert "Place field" in compose
-    assert 'key="esign_place_here"' in compose
+    assert "Place field" not in compose
+    assert 'key="esign_place_here"' not in compose
+    assert "Place X%" not in compose
+    assert "Place Y%" not in compose
+    assert "Placed fields" not in compose
+    assert "Save & email for signature" in compose
+    assert "Save as template" in compose
     assert 'key="esign_x"' not in compose
     assert 'key="esign_y"' not in compose
     assert 'key="esign_w"' not in compose
@@ -277,6 +282,7 @@ def test_no_slider_place_field_path_in_compose_ui():
     # Parent Compose embeds PDF Field Editor (same app)
     parent = inspect.getsource(esign_ui._compose_tab)
     assert "render_pdf_field_editor" in parent
+    assert "consume_pdf_editor_component_value" in parent
     # Sync helper must not write old slider widget keys (esign_x / esign_y)
     sync = inspect.getsource(esign_ui._sync_pending_click)
     assert '["esign_x"]' not in sync
@@ -824,29 +830,28 @@ def test_consume_menu_add_grows_field_count_0_to_1():
 
 
 def test_compose_has_click_to_place_and_xy_fallback():
-    """v2026.10.07g: React editor primary; CRM Place X%/Y% secondary only."""
+    """v2026.10.07h: React editor only; CRM is save/send — no Streamlit Place UI."""
     import inspect
 
     from src import esign_ui
 
     parent = inspect.getsource(esign_ui._compose_tab)
     assert "render_pdf_field_editor" in parent
+    assert "consume_pdf_editor_component_value" in parent
     assert "CRM:" in parent or "CRM " in parent
     assert "Place X%" not in parent
     assert "Place field" not in parent
 
     compose = inspect.getsource(esign_ui._compose_crm_template)
-    assert '"Text"' in compose
-    assert '"Date"' in compose
-    assert '"Sign"' in compose
-    assert "Place field" in compose
-    assert "Place X%" in compose
-    assert "Place Y%" in compose
-    assert "Placed fields" in compose
-    assert "_on_select_field_type" in compose
-    assert "_on_place_here" in compose
-    assert "_show_page_image" in compose
-    assert "_annotate_fields_png" in compose
+    assert "Place field" not in compose
+    assert "Place X%" not in compose
+    assert "Place Y%" not in compose
+    assert "Placed fields" not in compose
+    assert "_show_page_image" not in compose
+    assert "_annotate_fields_png" not in compose
+    assert "Save & email for signature" in compose
+    assert "Save as template" in compose
+    assert "esign_recipient" in compose
     # Nuclear: interactive placer removed from CRM compose (helpers may remain in module)
     assert "_render_field_placer" not in compose
     assert "ingest_placer_component_value" not in compose
@@ -1387,12 +1392,12 @@ if st.button("Save", key="esign_save_smoke"):
 
 
 def test_sidebar_caption_esign_place_works():
-    """Sidebar must advertise v2026.10.07g · Esign React editor only."""
+    """Sidebar must advertise v2026.10.07h · Esign editor polish."""
     from pathlib import Path
 
     app = Path(__file__).resolve().parents[1] / "app.py"
     text = app.read_text(encoding="utf-8")
-    assert "v2026.10.07g · Esign React editor only" in text
+    assert "v2026.10.07h · Esign editor polish" in text
 
 
 def test_esign_compose_embeds_pdf_field_editor():
@@ -1403,10 +1408,12 @@ def test_esign_compose_embeds_pdf_field_editor():
     text = ui.read_text(encoding="utf-8")
     assert "render_pdf_field_editor" in text
     assert "pdf_field_editor" in text
+    assert "consume_pdf_editor_component_value" in text
     compose_fn = text.split("def _compose_tab")[1].split("def _compose_crm_template")[0]
     assert "Place X%" not in compose_fn
     assert "Place field" not in compose_fn
     assert "render_pdf_field_editor" in compose_fn
+    assert "consume_pdf_editor_component_value" in compose_fn
 
     embed = Path(__file__).resolve().parents[1] / "src" / "pdf_field_editor" / "__init__.py"
     assert embed.is_file()
@@ -1423,6 +1430,68 @@ def test_esign_compose_embeds_pdf_field_editor():
     )
     assert lib.is_file()
     assert "window.Streamlit" in lib.read_text(encoding="utf-8")
+
+
+def test_consume_pdf_editor_save_to_outreach(tmp_path, monkeypatch):
+    """React setComponentValue save_to_outreach → create_document + stage package."""
+    import base64
+
+    import streamlit as st
+
+    from src import esign, esign_ui
+
+    monkeypatch.setattr(esign, "ESIGN_DIR", tmp_path / "esign")
+    monkeypatch.setattr(esign, "ESIGN_INDEX", tmp_path / "esign" / "index.json")
+
+    pdf = _blank_pdf()
+    fields = [
+        esign.new_field(
+            field_type="text",
+            label="Name",
+            page=0,
+            x=0.2,
+            y_from_top=0.3,
+            w=0.3,
+            h=0.04,
+            value="Ada",
+        )
+    ]
+    payload = {
+        "action": "save_to_outreach",
+        "nonce": "n-test-1",
+        "title": "From React",
+        "fileName": "demo.pdf",
+        "pdfBase64": base64.b64encode(pdf).decode("ascii"),
+        "fields": fields,
+    }
+
+    class _SS(dict):
+        pass
+
+    ss = _SS()
+    original_ss = st.session_state
+    try:
+        st.session_state = ss  # type: ignore[misc]
+        meta = esign_ui.consume_pdf_editor_component_value(
+            payload,
+            user={"email": "owner@example.com", "name": "Owner"},
+            company={"my_email": "owner@example.com"},
+        )
+        assert meta is not None
+        assert meta["title"] == "From React"
+        assert ss.get("esign_last_doc_id") == meta["id"]
+        assert ss.get("esign_react_save", {}).get("title") == "From React"
+        assert len(ss.get("esign_compose_fields") or []) == 1
+        # Idempotent on same nonce
+        meta2 = esign_ui.consume_pdf_editor_component_value(
+            payload,
+            user={"email": "owner@example.com", "name": "Owner"},
+            company={},
+        )
+        assert meta2 and meta2["id"] == meta["id"]
+        assert len(esign.list_documents(owner_email="owner@example.com")) == 1
+    finally:
+        st.session_state = original_ss  # type: ignore[misc]
 
 
 def test_streamlit_image_coordinates_importable():
@@ -1478,15 +1547,19 @@ def test_nudge_esign_page_clamps():
 
 
 def test_compose_page_nav_uses_on_click_not_post_widget_assign():
-    """Regression: assigning esign_page after number_input → WidgetAlreadyInstantiatedError."""
+    """v2026.10.07h: CRM compose has no Streamlit page nav / Place preview."""
     import inspect
 
     from src import esign_ui
 
     src = inspect.getsource(esign_ui._compose_crm_template)
-    assert "on_click=_nudge_esign_page" in src
+    assert "on_click=_nudge_esign_page" not in src
+    assert "esign_prev_page" not in src
+    assert "esign_next_page" not in src
     assert 'st.session_state["esign_page"] = page_i + 1' not in src
     assert 'st.session_state["esign_page"] = page_i - 1' not in src
+    # Helper still exists for any leftover callers / tests
+    assert callable(esign_ui._nudge_esign_page)
 
 
 def test_page_nav_apptest_next_prev():

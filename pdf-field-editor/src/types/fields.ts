@@ -1,4 +1,4 @@
-export type FieldType = 'text' | 'date' | 'signature' | 'comment';
+export type FieldType = 'text' | 'date' | 'signature' | 'comment' | 'typewriter';
 
 /** PDF user-space rectangle: origin bottom-left, Y up. Units = PDF points. */
 export interface PdfRect {
@@ -56,7 +56,20 @@ export interface CommentField extends FieldBase {
   color: string;
 }
 
-export type AnyField = TextField | DateField | SignatureField | CommentField;
+/** Free text stamped onto the page on export (edit-PDF path via pdf-lib drawText). */
+export interface TypewriterField extends FieldBase {
+  type: 'typewriter';
+  text: string;
+  fontSize: number;
+  color: string;
+}
+
+export type AnyField =
+  | TextField
+  | DateField
+  | SignatureField
+  | CommentField
+  | TypewriterField;
 
 export type PlacementMode = FieldType | null;
 
@@ -79,6 +92,7 @@ export const DEFAULT_FIELD_SIZES: Record<FieldType, { width: number; height: num
   date: { width: 120, height: 24 },
   signature: { width: 180, height: 60 },
   comment: { width: 160, height: 80 },
+  typewriter: { width: 200, height: 28 },
 };
 
 export const FIELD_COLORS: Record<FieldType, string> = {
@@ -86,4 +100,5 @@ export const FIELD_COLORS: Record<FieldType, string> = {
   date: '#8b5cf6',
   signature: '#10b981',
   comment: '#f59e0b',
+  typewriter: '#0f766e',
 };

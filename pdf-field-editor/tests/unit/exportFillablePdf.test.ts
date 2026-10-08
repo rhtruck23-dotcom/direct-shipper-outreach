@@ -57,6 +57,17 @@ describe('exportFillablePdf', () => {
         createdAt: new Date().toISOString(),
         color: '#fbbf24',
       },
+      {
+        id: 'tw1',
+        type: 'typewriter',
+        pageIndex: 0,
+        rect: { x: 80, y: 400, width: 220, height: 28 },
+        name: 'Stamp1',
+        required: false,
+        text: 'Burned typewriter line',
+        fontSize: 12,
+        color: '#111827',
+      },
     ];
 
     const result = await exportFillablePdf({ pdfBytes, fields, fileName: 'sample.pdf' });

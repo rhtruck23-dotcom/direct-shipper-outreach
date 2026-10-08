@@ -3,10 +3,12 @@ import {
   Calendar,
   Download,
   FileUp,
+  Keyboard,
   Minus,
   PenLine,
   Plus,
   Redo2,
+  Save,
   StickyNote,
   Type,
   Undo2,
@@ -23,6 +25,7 @@ import {
 import { useEditorStore } from '@/store/useEditorStore';
 import { loadPdfFromFile } from '@/lib/pdfLoader';
 import { downloadBytes, exportFillablePdf } from '@/lib/exportFillablePdf';
+import { buildSaveToOutreachPayload, postSaveToOutreach } from '@/lib/outreachBridge';
 import { toast } from '@/hooks/use-toast';
 import type { FieldType } from '@/types/fields';
 import { cn } from '@/lib/utils';
@@ -81,6 +84,45 @@ export function Toolbar() {
     } catch (err) {
       toast({
         title: 'Export failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const onSaveToOutreach = async () => {
+    if (!documentMeta) return;
+    if (fields.length === 0) {
+      toast({
+        title: 'Nothing to save',
+        description: 'Place at least one field (or typewriter stamp) first.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    try {
+      const payload = await buildSaveToOutreachPayload({
+        document: documentMeta,
+        fields,
+      });
+      const posted = postSaveToOutreach(payload);
+      if (posted) {
+        toast({
+          title: 'Saved to Outreach',
+          description: `«${payload.title}» · ${payload.fields.length} fillable field(s) sent to CRM.`,
+        });
+      } else {
+        // Standalone / Vite: still download so work is not lost
+        const bytes = Uint8Array.from(atob(payload.pdfBase64), (c) => c.charCodeAt(0));
+        await downloadBytes(bytes, `${payload.title}-outreach.pdf`);
+        toast({
+          title: 'Downloaded (standalone)',
+          description: 'Open inside LogixTrek Esign Docs to Save to Outreach CRM.',
+        });
+      }
+    } catch (err) {
+      toast({
+        title: 'Save failed',
         description: err instanceof Error ? err.message : 'Unknown error',
         variant: 'destructive',
       });
@@ -153,6 +195,7 @@ export function Toolbar() {
         {toolBtn('text', 'Text', 'T', <Type className="h-4 w-4" />)}
         {toolBtn('date', 'Date', 'D', <Calendar className="h-4 w-4" />)}
         {toolBtn('signature', 'Signature', 'S', <PenLine className="h-4 w-4" />)}
+        {toolBtn('typewriter', 'Typewriter', 'W', <Keyboard className="h-4 w-4" />)}
         {toolBtn('comment', 'Comment', 'C', <StickyNote className="h-4 w-4" />)}
 
         <div className="mx-1 h-6 w-px bg-slate-200" />
@@ -265,12 +308,24 @@ export function Toolbar() {
           <Button
             type="button"
             size="sm"
+            variant="default"
+            data-testid="save-outreach-button"
+            disabled={!documentMeta || fields.length === 0}
+            onClick={() => void onSaveToOutreach()}
+          >
+            <Save className="h-4 w-4" />
+            Save to Outreach
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
             data-testid="download-button"
             disabled={!documentMeta}
             onClick={() => void onExport()}
           >
             <Download className="h-4 w-4" />
-            Download fillable PDF
+            Download
           </Button>
         </div>
       </header>

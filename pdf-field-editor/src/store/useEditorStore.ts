@@ -12,6 +12,7 @@ import type {
   PlacementMode,
   SignatureField,
   TextField,
+  TypewriterField,
 } from '@/types/fields';
 import { DEFAULT_FIELD_SIZES } from '@/types/fields';
 import { clampPdfRect } from '@/lib/coordinateUtils';
@@ -120,6 +121,15 @@ function createField(
         createdAt: new Date().toISOString(),
         color: '#fbbf24',
       } satisfies CommentField;
+    case 'typewriter':
+      return {
+        ...base,
+        type: 'typewriter',
+        name: `Typewriter_${id.slice(0, 6)}`,
+        text: '',
+        fontSize: 12,
+        color: '#111827',
+      } satisfies TypewriterField;
   }
 }
 

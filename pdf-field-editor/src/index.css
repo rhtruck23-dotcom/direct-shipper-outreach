@@ -42,7 +42,17 @@
   }
 }
 
-/* react-rnd resize handles visibility */
+/* react-rnd resize handles visibility (iframe + selected fields) */
 .react-draggable {
   box-sizing: border-box;
+}
+
+.lt-rnd-handle {
+  z-index: 40 !important;
+  pointer-events: auto !important;
+}
+
+.react-resizable-handle {
+  z-index: 40 !important;
+  pointer-events: auto !important;
 }

@@ -5,7 +5,14 @@ import {
   rgb,
   StandardFonts,
 } from 'pdf-lib';
-import type { AnyField, CommentField, DateField, SignatureField, TextField } from '@/types/fields';
+import type {
+  AnyField,
+  CommentField,
+  DateField,
+  SignatureField,
+  TextField,
+  TypewriterField,
+} from '@/types/fields';
 
 export interface ExportOptions {
   pdfBytes: Uint8Array;
@@ -143,6 +150,23 @@ export async function exportFillablePdf(options: ExportOptions): Promise<ExportR
       } catch {
         /* annotation attach is best-effort */
       }
+    } else if (field.type === 'typewriter') {
+      // Burn-in text (edit-PDF path). Not an AcroForm — stamps stay on export.
+      const tw = field as TypewriterField;
+      const text = (tw.text || '').trim();
+      if (text) {
+        const size = Math.max(6, Math.min(72, tw.fontSize || 12));
+        const [r, g, b] = hexToRgb(tw.color || '#111827');
+        page.drawText(text, {
+          x: x + 2,
+          y: y + Math.max(2, (height - size) / 2),
+          size,
+          font: helvetica,
+          color: rgb(r, g, b),
+          maxWidth: Math.max(8, width - 4),
+          lineHeight: size + 2,
+        });
+      }
     }
   }
 
@@ -193,6 +217,13 @@ function addSignatureWidget(
   const fieldEntries = form.acroForm.getFields();
   const fieldRefs = fieldEntries.map(([, ref]) => ref);
   form.acroForm.dict.set(PDFName.of('Fields'), context.obj([...fieldRefs, sigRef]));
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
+  if (!m) return [0.07, 0.09, 0.15];
+  const n = parseInt(m[1], 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
 function dataUrlToBytes(dataUrl: string): Uint8Array {
