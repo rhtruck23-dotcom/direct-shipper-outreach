@@ -292,7 +292,8 @@ def test_no_slider_place_field_path_in_compose_ui():
     assert "_render_field_placer" not in parent
     assert "_render_clickable_page" not in parent
     page = inspect.getsource(esign_ui.page_esign_docs)
-    assert "v2026.10.08a" in page
+    assert "v2026.10.08b" in page
+    assert "React Compose LIVE" in page
     assert "Place field" not in page
     assert "Place X%" not in page
     # Sync helper must not write old slider widget keys (esign_x / esign_y)
@@ -850,7 +851,8 @@ def test_compose_has_click_to_place_and_xy_fallback():
     parent = inspect.getsource(esign_ui._compose_tab)
     assert "render_pdf_field_editor" in parent
     assert "consume_pdf_editor_component_value" in parent
-    assert "CRM:" in parent or "CRM " in parent
+    assert "_compose_crm_template" in parent
+    assert "Save & send" in parent
     assert "Place X%" not in parent
     assert "Place field" not in parent
 
@@ -863,6 +865,7 @@ def test_compose_has_click_to_place_and_xy_fallback():
     assert "_annotate_fields_png" not in compose
     assert "Save & email for signature" in compose
     assert "Save as template" in compose
+    assert "Print / review PDF" in compose
     assert "esign_recipient" in compose
     # Nuclear: interactive placer removed from CRM compose (helpers may remain in module)
     assert "_render_field_placer" not in compose
@@ -987,30 +990,20 @@ def test_placer_js_has_drag_and_resize_handles():
     assert "lt_esign_placer_apply" not in src
 
 
-def test_render_clickable_page_always_shows_st_image_and_avoids_raw_png0():
-    """v2026.10.07c: file-backed st.image + JPEG click layer; never width=stretch."""
-    import inspect
-
+def test_legacy_place_preview_renderers_removed():
+    """v2026.10.08b: Streamlit Place/Preview click renderers deleted forever."""
     from src import esign_ui
 
-    src = inspect.getsource(esign_ui._render_clickable_page)
-    show_src = inspect.getsource(esign_ui._show_page_image)
-    assert "st.image" in show_src
-    assert "_show_page_image" in src
-    assert "_write_preview_jpeg" in show_src or "esign_preview_" in inspect.getsource(
-        esign_ui._write_preview_jpeg
-    )
-    assert "Download page preview" in show_src
-    assert 'image_format="JPEG"' in src or "image_format='JPEG'" in src
-    assert "jpeg_quality" in src
-    assert "streamlit_image_coordinates(" in src
-    # Must not pass the library default that blanks large pages
-    assert "png_compression_level=" not in src.split("streamlit_image_coordinates(")[1]
-    assert 'use_column_width="always"' not in src
-    # width="stretch" on the custom component re-triggers height=0 CSS traps
-    click_call = src.split("streamlit_image_coordinates(")[1]
-    assert 'width="stretch"' not in click_call
-    assert "width=click_w" in src or "width = click_w" in src
+    for name in (
+        "_render_clickable_page",
+        "_show_page_image",
+        "_write_preview_jpeg",
+        "_render_field_placer",
+        "_image_has_ink",
+        "_nudge_esign_page",
+        "_on_xy_pct_change",
+    ):
+        assert not hasattr(esign_ui, name), f"{name} must stay deleted"
 
 
 def test_app_css_does_not_hide_global_height0_iframes():
@@ -1026,26 +1019,6 @@ def test_app_css_does_not_hide_global_height0_iframes():
             "iframe[height=\"1\"]"
         ):
             raise AssertionError(f"global iframe hide still present: {stripped}")
-
-
-def test_image_has_ink_detects_blank_and_content():
-    from PIL import Image
-
-    from src import esign_ui
-    import io
-
-    blank = Image.new("RGB", (200, 200), (255, 255, 255))
-    buf = io.BytesIO()
-    blank.save(buf, format="PNG")
-    assert not esign_ui._image_has_ink(buf.getvalue())
-
-    drawn = Image.new("RGB", (200, 200), (255, 255, 255))
-    for x in range(20, 80):
-        for y in range(20, 80):
-            drawn.putpixel((x, y), (0, 0, 0))
-    buf2 = io.BytesIO()
-    drawn.save(buf2, format="PNG")
-    assert esign_ui._image_has_ink(buf2.getvalue())
 
 
 def test_ingest_image_coordinates_sets_pending_not_center():
@@ -1404,12 +1377,12 @@ if st.button("Save", key="esign_save_smoke"):
 
 
 def test_sidebar_caption_esign_place_works():
-    """Sidebar must advertise v2026.10.08a · Esign React only."""
+    """Sidebar must advertise v2026.10.08b · React Compose LIVE."""
     from pathlib import Path
 
     app = Path(__file__).resolve().parents[1] / "app.py"
     text = app.read_text(encoding="utf-8")
-    assert "v2026.10.08a · Esign React only" in text
+    assert "v2026.10.08b · React Compose LIVE" in text
 
 
 def test_esign_compose_embeds_pdf_field_editor():
@@ -1426,6 +1399,11 @@ def test_esign_compose_embeds_pdf_field_editor():
     assert "Place field" not in compose_fn
     assert "render_pdf_field_editor" in compose_fn
     assert "consume_pdf_editor_component_value" in compose_fn
+    crm = text.split("def _compose_crm_template")[1].split("def send_for_signature")[0]
+    assert "Save & email for signature" in crm
+    assert "Save as template" in crm
+    assert "Print / review PDF" in crm
+    assert "Place field" not in crm
 
     embed = Path(__file__).resolve().parents[1] / "src" / "pdf_field_editor" / "__init__.py"
     assert embed.is_file()
@@ -1433,7 +1411,8 @@ def test_esign_compose_embeds_pdf_field_editor():
     assert "PDF_FIELD_EDITOR_URL" in embed_text
     assert "declare_component" in embed_text
     assert "height=h" in embed_text
-    assert 'COMPONENT_VERSION = "2026.10.08a"' in embed_text
+    assert 'COMPONENT_VERSION = "2026.10.08b"' in embed_text
+    assert "React editor failed" in embed_text
     assert "pdf_field_editor_v" in embed_text
     lib = (
         Path(__file__).resolve().parents[1]
@@ -1444,6 +1423,19 @@ def test_esign_compose_embeds_pdf_field_editor():
     )
     assert lib.is_file()
     assert "window.Streamlit" in lib.read_text(encoding="utf-8")
+    # Redact tool must ship in the committed Cloud bundle
+    assets = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "pdf_field_editor"
+        / "frontend"
+        / "assets"
+    )
+    js_files = list(assets.glob("index-*.js"))
+    assert js_files, "missing bundled SPA JS"
+    bundle = js_files[0].read_text(encoding="utf-8")
+    assert "redaction" in bundle
+    assert "Redact" in bundle
 
 
 def test_consume_pdf_editor_save_to_outreach(tmp_path, monkeypatch):
@@ -1531,37 +1523,8 @@ def test_delete_document_removes_from_list(tmp_path, monkeypatch):
     assert esign.load_document(meta["id"]) is None
 
 
-def test_nudge_esign_page_clamps():
-    """Prev/Next callback must clamp without touching widgets mid-run."""
-    from src import esign_ui
-
-    class _SS(dict):
-        pass
-
-    ss = _SS()
-    ss["esign_page"] = 1
-    import streamlit as st
-
-    # Patch session_state for the helper only
-    original = st.session_state
-    try:
-        st.session_state = ss  # type: ignore[misc]
-        esign_ui._nudge_esign_page(1, 3)
-        assert ss["esign_page"] == 2
-        esign_ui._nudge_esign_page(1, 3)
-        assert ss["esign_page"] == 3
-        esign_ui._nudge_esign_page(1, 3)
-        assert ss["esign_page"] == 3  # clamp at max
-        esign_ui._nudge_esign_page(-1, 3)
-        assert ss["esign_page"] == 2
-        esign_ui._nudge_esign_page(-5, 3)
-        assert ss["esign_page"] == 1  # clamp at min
-    finally:
-        st.session_state = original  # type: ignore[misc]
-
-
 def test_compose_page_nav_uses_on_click_not_post_widget_assign():
-    """v2026.10.07h: CRM compose has no Streamlit page nav / Place preview."""
+    """v2026.10.08b: CRM compose has no Streamlit page nav / Place preview."""
     import inspect
 
     from src import esign_ui
@@ -1572,8 +1535,9 @@ def test_compose_page_nav_uses_on_click_not_post_widget_assign():
     assert "esign_next_page" not in src
     assert 'st.session_state["esign_page"] = page_i + 1' not in src
     assert 'st.session_state["esign_page"] = page_i - 1' not in src
-    # Helper still exists for any leftover callers / tests
-    assert callable(esign_ui._nudge_esign_page)
+    assert "Print / review PDF" in src
+    assert "Save & email for signature" in src
+    assert not hasattr(esign_ui, "_nudge_esign_page")
 
 
 def test_page_nav_apptest_next_prev():

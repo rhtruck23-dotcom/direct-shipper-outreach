@@ -3,16 +3,16 @@
 | Field | Value |
 |--------|--------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Caption to confirm** | **v2026.10.08a · Esign React only** (sidebar under “LogixTrek Outreach”) |
-| **Commit** | (origin/main after 08a push) |
+| **Caption to confirm** | **v2026.10.08b · React Compose LIVE** (sidebar under “LogixTrek Outreach”) |
+| **Commit** | (origin/main after 08b push) |
 | **First pass** | Prefer LIVE OFF / Autopilot OFF until smoke is green; enable LIVE only for real send UAT |
 
 ### 0) Deploy gate (30 sec)
 
 1. Open the Cloud URL → sign in (Super Admin PIN or team login).
-2. Sidebar caption must read exactly: **v2026.10.08a · Esign React only**.
+2. Sidebar caption must read exactly: **v2026.10.08b · React Compose LIVE**.
 3. If caption is older, wait for Streamlit Cloud rebuild (push already on `main`) or reboot the app in the Cloud dashboard.
-4. Esign Docs → Compose: **React PDF Field Editor only** (Upload / Text / Date / Sign / Typewriter / Redact / Save). Must NOT show Streamlit “Place field” / “Place X%” / Preview Prev/Next. Empty viewer shows **Upload a PDF**.
+4. Esign Docs → Compose: **React PDF Field Editor only** (Upload / Text / Date / Sign / Typewriter / Redact / Save). Must NOT show Streamlit “Place field” / “Place X%” / Preview Prev/Next. Empty viewer shows **Upload a PDF**. Below editor: **Save & send** (Recipient + Save as template + Save & email) and **Print / review PDF**.
 
 ---
 
@@ -42,9 +42,10 @@
 3. In the React PDF Field Editor:
    - Place **Text / Date / Signature / Typewriter** fields as needed.
    - Use **Redact** (R): draw solid Black / White / Void / Redact covers.
-4. **Save** (or Save to Outreach) → confirm fields + redactions persist on preview/download.
-5. **Save & email** (or send fill link): recipient gets fillable PDF + `?esign=TOKEN` link (dry-run toast if LIVE off).
-6. Open the public `?esign=TOKEN` page → fill/sign → submit → owner gets signed PDF when LIVE email is on.
+4. **Save to Outreach** → confirm staged package; **Print / review PDF** before sending.
+5. **Save as template** and/or **Save & email for signature** (visible under Save & send).
+6. **My documents**: multi-select → Confirm → **Delete selected documents** (or per-row Delete).
+7. Open the public `?esign=TOKEN` page → fill/sign → submit → owner gets signed PDF when LIVE email is on.
 
 ---
 

@@ -4,11 +4,9 @@ Esign Docs Streamlit UI — upload PDF, place AcroForm fields, download / send /
 from __future__ import annotations
 
 import base64
-import hashlib
 import io
 import json
-import tempfile
-from pathlib import Path
+import re
 from typing import Any, Callable, Optional
 
 import streamlit as st
@@ -20,7 +18,6 @@ from .lead_crm import lead_stable_id
 PersistFn = Callable[[dict], None]
 
 _TYPE_BORDER = {"text": "#2563eb", "date": "#059669", "sign": "#ea580c"}
-_PREVIEW_CLICK_WIDTH = 680
 
 
 def _qp_get(key: str) -> Optional[str]:
@@ -36,17 +33,6 @@ def _qp_get(key: str) -> Optional[str]:
 def _pdf_page_image(pdf_bytes: bytes, page_index: int = 0) -> tuple[bytes, int, int]:
     """Server-side PNG preview (works on Streamlit Cloud; no PDF iframe)."""
     return esign.render_pdf_page_png(pdf_bytes, page_index)
-
-
-def _pdf_iframe(pdf_bytes: bytes, *, height: int = 720) -> None:
-    """Legacy embed — browsers often block data: PDF iframes on Cloud."""
-    b64 = base64.b64encode(pdf_bytes).decode("ascii")
-    st.markdown(
-        f'<iframe src="data:application/pdf;base64,{b64}" '
-        f'width="100%" height="{height}" '
-        f'style="border:1px solid #cbd5e1;border-radius:8px;"></iframe>',
-        unsafe_allow_html=True,
-    )
 
 
 def _pdf_preview_pages(
@@ -68,7 +54,7 @@ def _sync_pending_click(x: float, y_from_top: float) -> None:
     st.session_state["esign_pending_x"] = px
     st.session_state["esign_pending_y"] = py
     st.session_state["esign_coords_ready"] = True
-    # Keep Cloud X%/Y% fallback inputs in sync (set before widgets bind).
+    # Keep percent session keys in sync for tests / legacy helpers.
     st.session_state["esign_place_x_pct"] = int(round(px * 100))
     st.session_state["esign_place_y_pct"] = int(round(py * 100))
     st.session_state.pop("esign_place_error", None)
@@ -77,10 +63,7 @@ def _sync_pending_click(x: float, y_from_top: float) -> None:
 
 def _xy_pct_place_coords() -> tuple[float, float]:
     """
-    Current Place X%/Y% widget values as normalized floats.
-
-    Primary place path — always available (defaults 50/50). Each Place field
-    call must read these CURRENT values; never rewrite existing fields.
+    Current X/Y percent session values as normalized floats (defaults 50/50).
     """
     try:
         x = float(st.session_state.get("esign_place_x_pct", 50) or 50) / 100.0
@@ -97,7 +80,7 @@ def _pending_place_xy() -> Optional[tuple[float, float]]:
     """
     Next placement coords for preview annotation / click secondary path.
 
-    Prefer explicit pending click; else current Place X%/Y% widgets.
+    Prefer explicit pending click; else current X/Y percent session values.
     """
     if (
         st.session_state.get("esign_coords_ready")
@@ -151,10 +134,7 @@ def _annotate_fields_png(
 
 def ingest_image_coordinates_click(value: Any) -> bool:
     """
-    Streamlit-native click → esign_pending_x/y (+ X%/Y% fallback inputs).
-
-    Uses streamlit-image-coordinates return dict. Dedupes on unix_time so a
-    sticky last-click value does not re-place on every rerun.
+    Streamlit-native click → esign_pending_x/y. Dedupes on unix_time.
     """
     if not value or not isinstance(value, dict):
         return False
@@ -190,141 +170,6 @@ def place_on_image_click(value: Any, *, page_index: int) -> bool:
     return place_selected_type_at_pending(page_index=page_index)
 
 
-def _image_has_ink(png_bytes: bytes, *, min_frac: float = 0.0005) -> bool:
-    """True when the raster has a non-trivial share of non-near-white pixels."""
-    if not png_bytes:
-        return False
-    try:
-        from PIL import Image
-
-        im = Image.open(io.BytesIO(png_bytes)).convert("RGB")
-        w, h = im.size
-        if w <= 0 or h <= 0:
-            return False
-        # Downsample for a cheap ink check (full 1071×1386 scan is unnecessary).
-        small = im.resize((max(1, w // 8), max(1, h // 8)))
-        pixels = small.getdata()
-        total = small.width * small.height
-        nonwhite = 0
-        for p in pixels:
-            if p[0] < 250 or p[1] < 250 or p[2] < 250:
-                nonwhite += 1
-                if nonwhite / total >= min_frac:
-                    return True
-        return (nonwhite / max(1, total)) >= min_frac
-    except Exception:
-        return False
-
-
-def _write_preview_jpeg(png_bytes: bytes, *, stem: str) -> Path:
-    """Persist page preview to a temp JPEG so st.image(path) is reliable on Cloud."""
-    from PIL import Image
-
-    digest = hashlib.sha1(png_bytes[:8192] + str(len(png_bytes)).encode()).hexdigest()[:14]
-    path = Path(tempfile.gettempdir()) / f"esign_preview_{stem}_{digest}.jpg"
-    if not path.is_file() or path.stat().st_size < 32:
-        img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
-        img.save(path, format="JPEG", quality=90, optimize=True)
-    return path
-
-
-def _show_page_image(png_bytes: bytes, *, key: str) -> Path:
-    """
-    Always show the PDF page with native st.image (file path), plus a download
-    so we can prove bytes exist even if the media widget misbehaves.
-    """
-    path = _write_preview_jpeg(png_bytes, stem=key.replace(" ", "_")[:40])
-    try:
-        st.image(str(path), width="stretch")
-    except TypeError:
-        try:
-            st.image(str(path), use_container_width=True)
-        except Exception as exc:
-            st.error(f"Preview image failed ({exc}). Use Download page preview below.")
-    except Exception as exc:
-        st.error(f"Preview image failed ({exc}). Use Download page preview below.")
-    try:
-        st.download_button(
-            "Download page preview",
-            data=path.read_bytes(),
-            file_name=f"{key}.jpg",
-            mime="image/jpeg",
-            key=f"{key}_dl",
-            use_container_width=True,
-        )
-    except Exception as exc:
-        st.caption(f"Preview download unavailable ({exc})")
-    if not _image_has_ink(png_bytes):
-        st.warning(
-            "Page raster looks empty (all/near-white). The PDF may use features "
-            "PyMuPDF cannot paint, or this page has no visible ink. "
-            "Try another export of the PDF, or place fields with X%/Y%."
-        )
-    return path
-
-
-def _render_clickable_page(png_bytes: bytes, *, key: str) -> Any:
-    """
-    Clickable page preview for field placement.
-
-    v2026.10.07c root causes that still blanked 07b:
-    1) app.css hid ALL iframe[height="0"|"1"] — custom components start at 0 and
-       with width="stretch" can never lay out (width:0 trap).
-    2) streamlit-image-coordinates default PNG compress=0 → multi-MB data-URLs.
-    3) Relying on in-memory st.image(bytes) alone was not enough on Cloud.
-
-    Fix: file-backed st.image + download proof; click layer only with an explicit
-    integer width (never "stretch") and JPEG; X%/Y% always available.
-    """
-    if not png_bytes:
-        st.error("No page image to show (empty PNG bytes).")
-        return None
-
-    # Guaranteed visible document pixels (path-based native Streamlit image).
-    try:
-        _show_page_image(png_bytes, key=f"{key}_img")
-    except Exception as exc:
-        st.error(f"Preview render failed ({exc}).")
-        return None
-
-    # Skip click iframe when the page has no ink — avoids a second blank frame.
-    if not _image_has_ink(png_bytes):
-        st.caption("Click layer skipped (empty page raster). Use X%/Y% → Place here.")
-        return None
-
-    try:
-        from PIL import Image
-        from streamlit_image_coordinates import streamlit_image_coordinates
-    except ImportError:
-        st.warning(
-            "Click-to-place needs `streamlit-image-coordinates` "
-            "(pip install streamlit-image-coordinates). "
-            "Use X%/Y% → Place here on the preview above."
-        )
-        return None
-
-    try:
-        img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
-        # Integer width (not "stretch") so the component iframe gets a non-zero
-        # setFrameHeight even before CSS layout — avoids height=0 traps.
-        click_w = min(_PREVIEW_CLICK_WIDTH, max(120, int(img.size[0])))
-        st.caption("Left-click the interactive page below to place the selected field:")
-        return streamlit_image_coordinates(
-            img,
-            key=key,
-            width=click_w,
-            cursor="crosshair",
-            image_format="JPEG",
-            jpeg_quality=85,
-        )
-    except Exception as exc:
-        st.caption(
-            f"Click layer unavailable ({exc}). "
-            "Use the preview above with X%/Y% → Place here."
-        )
-        return None
-
-
 def _selected_field_type() -> str:
     return str(st.session_state.get("esign_next_type") or "text").lower()
 
@@ -335,23 +180,9 @@ def _on_select_field_type(ftype: str) -> None:
     st.session_state.pop("esign_place_error", None)
 
 
-def _on_xy_pct_change() -> None:
-    """X%/Y% number_inputs → pending coords (Cloud fallback when click is dead)."""
-    try:
-        x = float(st.session_state.get("esign_place_x_pct") or 0) / 100.0
-        y = float(st.session_state.get("esign_place_y_pct") or 0) / 100.0
-    except (TypeError, ValueError):
-        return
-    _sync_pending_click(x, y)
-
-
 def _on_place_here() -> None:
     """
-    PRIMARY place path (v2026.10.07e): append one field at current Place X%/Y%.
-
-    Pure Streamlit on_click — no placer / image-click / coords_ready gate.
-    Defaults (50/50) are valid; change X%/Y% between clicks for distinct spots.
-    Never rewrites geometry of existing fields.
+    Append one field at current X/Y percent session values (test helper).
     """
     page_idx = max(0, int(st.session_state.get("esign_page") or 1) - 1)
     x, y = _xy_pct_place_coords()
@@ -404,16 +235,13 @@ def _append_field_at_xy(
 
 def _add_field_at_pending(ftype: str, *, page_index: int) -> bool:
     """
-    Place at pending click coords, or current Place X%/Y% widgets.
-
-    Used by secondary click path. Primary Place field button uses
-    `_on_place_here` → `_append_field_at_xy` directly.
+    Place at pending click coords, or current X/Y percent session values.
     """
     xy = _pending_place_xy()
     if xy is None:
-        # Last resort: widget defaults (Place field path always has these).
+        # Last resort: session percent defaults (test helpers).
         if "esign_place_x_pct" not in st.session_state and "esign_place_y_pct" not in st.session_state:
-            st.session_state["esign_place_error"] = "Set Place X%/Y% then click Place field"
+            st.session_state["esign_place_error"] = "No placement coordinates"
             return False
         xy = _xy_pct_place_coords()
     x, y = xy
@@ -666,66 +494,6 @@ def _consume_placer_action(*, page_index: int) -> None:
     st.rerun()
 
 
-def _render_field_placer(
-    *,
-    png_bytes: bytes,
-    img_w: int,
-    img_h: int,
-    page_index: int,
-    fields: list[dict[str, Any]],
-    next_type: str = "text",
-    key: Optional[str] = None,
-) -> Any:
-    """
-    Interactive place + drag + resize via esign_placer custom component.
-
-    Uses Streamlit.setComponentValue (add / update / delete / edit). Never the
-    dead parent-document Apply bridge. Frame height is always a real pixel
-    value (never 0) so Cloud CSS cannot trap a blank iframe.
-    """
-    from .esign_placer import esign_placer
-
-    if not png_bytes:
-        return None
-    # Prefer compact JPEG data-URL so the component iframe stays responsive.
-    try:
-        from PIL import Image
-
-        buf = io.BytesIO()
-        Image.open(io.BytesIO(png_bytes)).convert("RGB").save(
-            buf, format="JPEG", quality=88, optimize=True
-        )
-        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        src = f"data:image/jpeg;base64,{b64}"
-    except Exception:
-        b64 = base64.b64encode(png_bytes).decode("ascii")
-        src = f"data:image/png;base64,{b64}"
-    on_page = []
-    for f in fields or []:
-        if int(f.get("page") or 0) != int(page_index):
-            continue
-        row = dict(f)
-        row.setdefault("value", "")
-        row.setdefault("color", "#111827")
-        on_page.append(row)
-    # Explicit height — custom components must not start/stay at height=0.
-    frame_h = min(920, max(420, int(img_h * 720 / max(1, img_w)) + 48))
-    st.caption(
-        "Interactive page: left-click to place · drag a box to move · "
-        "corner handle to resize"
-    )
-    return esign_placer(
-        src=src,
-        fields=on_page,
-        page=int(page_index),
-        def_w=0.28,
-        def_h=0.04,
-        next_type=str(next_type or "text").lower(),
-        key=key or f"esign_placer_p{page_index}",
-        height=frame_h,
-    )
-
-
 def _company_from_session() -> dict[str, Any]:
     return dict(st.session_state.get("company") or {})
 
@@ -880,12 +648,7 @@ def page_esign_docs(*, user: dict, company: dict) -> None:
         return
 
     st.title("Esign Docs")
-    st.caption(
-        "v2026.10.08a · **PDF Field Editor** (React) only — Upload / Text / Date / Sign / "
-        "Typewriter / Redact / Save to Outreach / Download. "
-        "Legacy Streamlit placer preview removed. CRM send-for-signature is below. "
-        "Fill-link sign = typed name (not DigSig)."
-    )
+    st.caption("**v2026.10.08b · React Compose LIVE**")
 
     tabs = st.tabs(["Compose", "My documents"])
     with tabs[0]:
@@ -896,12 +659,6 @@ def page_esign_docs(*, user: dict, company: dict) -> None:
 
 def _session_fields_key() -> str:
     return "esign_compose_fields"
-
-
-def _nudge_esign_page(delta: int, max_pages: int) -> None:
-    """Prev/Next callback: mutate page before widgets instantiate (same-run safe)."""
-    cur = int(st.session_state.get("esign_page") or 1)
-    st.session_state["esign_page"] = max(1, min(int(max_pages), cur + int(delta)))
 
 
 def _react_save_package() -> Optional[dict[str, Any]]:
@@ -983,8 +740,58 @@ def consume_pdf_editor_component_value(
     return meta
 
 
+def _offer_print_pdf(pdf_bytes: bytes, *, title: str = "document") -> None:
+    """Open browser print for the current staged PDF (review before send)."""
+    import streamlit.components.v1 as components
+
+    if not pdf_bytes:
+        st.error("Nothing to print — Save to Outreach from the editor first.")
+        return
+    safe = re.sub(r"[^\w\-]+", "_", (title or "document").strip())[:60] or "document"
+    b64 = base64.b64encode(pdf_bytes).decode("ascii")
+    # Keep HTML payload modest; very large PDFs still get a download fallback.
+    if len(b64) > 2_500_000:
+        st.warning("PDF is large — use Download below, then print from your PDF viewer.")
+    else:
+        components.html(
+            f"""
+<!DOCTYPE html><html><body style="font-family:sans-serif;font-size:13px;margin:8px;">
+<script>
+(function() {{
+  try {{
+    var b64 = "{b64}";
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    var url = URL.createObjectURL(new Blob([bytes], {{type: "application/pdf"}}));
+    var w = window.open(url, "_blank");
+    if (!w) {{
+      document.body.innerText = "Pop-up blocked — use Download PDF for print below.";
+      return;
+    }}
+    setTimeout(function() {{ try {{ w.focus(); w.print(); }} catch (e) {{}} }}, 700);
+  }} catch (e) {{
+    document.body.innerText = "Print failed — use Download PDF for print below.";
+  }}
+}})();
+</script>
+<p>Print dialog should open. If blocked, download the PDF and print locally.</p>
+</body></html>
+""",
+            height=56,
+        )
+    st.download_button(
+        "Download PDF for print",
+        data=pdf_bytes,
+        file_name=f"{safe}_print.pdf",
+        mime="application/pdf",
+        key="esign_print_dl",
+        use_container_width=True,
+    )
+
+
 def _compose_tab(*, user: dict, company: dict) -> None:
-    """Compose = React PDF Field Editor + CRM save/send ONLY (no Streamlit placer)."""
+    """Compose = React PDF Field Editor + visible Save & send (no Streamlit placer)."""
     hdr, link = st.columns([3, 1])
     with hdr:
         st.markdown("#### Compose")
@@ -997,16 +804,11 @@ def _compose_tab(*, user: dict, company: dict) -> None:
     consume_pdf_editor_component_value(editor_value, user=user, company=company)
 
     st.divider()
-    with st.expander(
-        "CRM: Save template / Send for signature",
-        expanded=True,
-    ):
-        st.caption(
-            "Add Text / Date / Signature / Typewriter in the React editor above, "
-            "click **Save to Outreach**, then save/send here. "
-            "Typewriter stamps burn into the PDF; Text/Date/Sign stay fillable."
-        )
-        _compose_crm_template(user=user, company=company)
+    st.caption(
+        "In the React editor: Upload → Text / Date / Sign / Typewriter / **Redact** → "
+        "**Save to Outreach**, then use **Save & send** below (Print before emailing)."
+    )
+    _compose_crm_template(user=user, company=company)
 
 
 def _compose_crm_template(*, user: dict, company: dict) -> None:
@@ -1041,6 +843,13 @@ def _compose_crm_template(*, user: dict, company: dict) -> None:
 
     st.markdown("#### Save & send")
     recipient = st.text_input("Recipient email", key="esign_recipient")
+
+    if st.button("Print / review PDF", key="esign_print_btn", use_container_width=True):
+        if not pkg:
+            st.error("Save to Outreach from the editor first.")
+        else:
+            _offer_print_pdf(pkg["pdf"], title=title)
+
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button("Save as template", use_container_width=True):
@@ -1317,11 +1126,53 @@ def _docs_tab(*, user: dict, company: dict) -> None:
         st.info("No saved esign documents yet.")
         return
 
+    # Multi-select delete (confirm → remove from index + disk)
+    loaded: list[tuple[str, dict[str, Any]]] = []
+    id_by_label: dict[str, str] = {}
+    labels: list[str] = []
     for row in rows:
-        doc_id = row.get("id")
+        doc_id = str(row.get("id") or "")
         meta = esign.load_document(doc_id) if doc_id else None
         if not meta:
             continue
+        loaded.append((doc_id, meta))
+        label = (
+            f"{meta.get('title') or 'Untitled'} · {meta.get('status') or '?'} · {doc_id}"
+        )
+        id_by_label[label] = doc_id
+        labels.append(label)
+
+    st.markdown("#### Delete selected")
+    picked = st.multiselect(
+        "Select documents to delete",
+        labels,
+        key="esign_docs_multidel",
+    )
+    confirm = st.checkbox(
+        "Confirm delete selected (cannot undo)",
+        key="esign_docs_del_confirm",
+    )
+    if st.button(
+        "Delete selected documents",
+        key="esign_docs_del_btn",
+        type="secondary",
+        disabled=not picked,
+    ):
+        if not confirm:
+            st.error("Check Confirm delete selected first.")
+        else:
+            n_ok = 0
+            for lab in picked:
+                did = id_by_label.get(lab)
+                if did and esign.delete_document(str(did)):
+                    n_ok += 1
+            st.success(f"Deleted {n_ok} document(s).")
+            st.session_state.pop("esign_docs_multidel", None)
+            st.session_state.pop("esign_docs_del_confirm", None)
+            st.rerun()
+
+    st.divider()
+    for doc_id, meta in loaded:
         with st.expander(
             f"{meta.get('title')} · {meta.get('status')} · {meta.get('updated_at')}",
             expanded=False,

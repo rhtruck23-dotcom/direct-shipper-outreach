@@ -19,7 +19,7 @@ import streamlit as st
 from src.pdf_field_editor import render_pdf_field_editor
 
 st.set_page_config(page_title="Esign React editor smoke", layout="wide")
-st.caption("v2026.10.08a · Esign React only · smoke (old Place UI deleted)")
+st.caption("v2026.10.08b · React Compose LIVE · smoke (old Place UI deleted)")
 st.warning(
     "The old Streamlit Preview / Place field smoke was deleted. "
     "This script now embeds the React PDF Field Editor only."

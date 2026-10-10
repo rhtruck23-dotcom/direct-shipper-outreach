@@ -3,6 +3,9 @@ PDF Field Editor embed — React SPA inside Streamlit Esign Docs.
 
 Same product: Streamlit hosts CRM + Esign; field place/drag/resize/download
 runs in the bundled Vite SPA (or an optional external URL override).
+
+CRITICAL: Never fall back to the legacy Streamlit Place X%/Y% UI.
+If the React editor cannot load, show an error and stop.
 """
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 # Bump when shipping frontend fixes so Cloud iframe URL/key change (cache bust).
-COMPONENT_VERSION = "2026.10.08a"
+COMPONENT_VERSION = "2026.10.08b"
 
 _FRONTEND = (Path(__file__).parent / "frontend").resolve()
 _COMPONENT = None
@@ -75,38 +78,46 @@ def render_pdf_field_editor(*, height: int = 920, key: str = "pdf_field_editor")
     Returns the latest setComponentValue from the SPA (e.g. save_to_outreach),
     or None when using an external iframe / no value yet.
 
-    1) If PDF_FIELD_EDITOR_URL is set → iframe that URL (Cloud + Vercel, or local Vite).
-    2) Else if bundled frontend exists → Streamlit custom component (same deploy).
-    3) Else try local Vite default URL with a short hint.
+    1) If PDF_FIELD_EDITOR_URL is set → iframe that URL.
+    2) Else if bundled frontend exists → Streamlit custom component.
+    3) Else ERROR — never fall back to legacy Place UI.
     """
     h = max(640, int(height))
     url = resolve_pdf_field_editor_url()
     if url:
         bust = f"{url}{'&' if '?' in url else '?'}v={COMPONENT_VERSION}"
         st.caption(f"PDF Field Editor · {bust}")
-        components.iframe(bust, height=h, scrolling=True)
+        try:
+            components.iframe(bust, height=h, scrolling=True)
+        except Exception as exc:
+            st.error(f"React editor failed: could not load external URL ({exc})")
         return None
 
     if bundled_frontend_ready() and _COMPONENT is not None:
         st.caption(
             f"PDF Field Editor · v{COMPONENT_VERSION} · Upload · "
-            "Text / Date / Signature / Typewriter · Save to Outreach · download."
+            "Text / Date / Signature / Typewriter / Redact · Save to Outreach · download."
         )
         _force_editor_iframe_height(h)
-        # Versioned key + height= so Cloud cannot reuse a stale iframe instance.
-        return _COMPONENT(
-            default=None,
-            key=f"{key}_{COMPONENT_VERSION}",
-            height=h,
-        )
+        try:
+            # Versioned key + height= so Cloud cannot reuse a stale iframe instance.
+            return _COMPONENT(
+                default=None,
+                key=f"{key}_{COMPONENT_VERSION}",
+                height=h,
+            )
+        except Exception as exc:
+            st.error(f"React editor failed: {exc}")
+            return None
 
-    # Local fallback: Vite dev server
-    st.info(
-        "Bundled editor assets missing. Start the SPA with "
-        "`pnpm --dir pdf-field-editor dev` (port 5173), or run "
-        "`scripts/dev_with_pdf_editor.ps1`. "
-        "On Streamlit Cloud, set secret **PDF_FIELD_EDITOR_URL** or commit a build "
-        "(`pnpm --dir pdf-field-editor build` → `src/pdf_field_editor/frontend/`)."
+    # No Place UI fallback. Local Vite hint only as secondary info under the error.
+    st.error(
+        "React editor failed: PDF Field Editor bundle missing. "
+        "Redeploy with committed `src/pdf_field_editor/frontend/`, "
+        "or set secret **PDF_FIELD_EDITOR_URL**."
     )
-    components.iframe(DEFAULT_LOCAL_DEV_URL, height=h, scrolling=True)
+    st.caption(
+        f"Local only: `pnpm --dir pdf-field-editor dev` → {DEFAULT_LOCAL_DEV_URL} "
+        f"· or `scripts/build_pdf_field_editor.ps1` then commit frontend/."
+    )
     return None
