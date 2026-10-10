@@ -305,6 +305,12 @@ _SHELL_HTML = """
   const doc = window.parent.document;
   const win = window.parent;
   if (doc.getElementById("lt-note-fab") && doc.getElementById("lt-onenote-overlay")) {
+    // Still repair topbar/drag on re-inject — Cloud keeps stale parent DOM across deploys.
+    try {
+      if (typeof win.__ltEnsureNotesWinChrome === "function") {
+        win.__ltEnsureNotesWinChrome();
+      }
+    } catch (e) {}
     win.__ltOpenOneNote = win.__ltOpenOneNote || function () {
       try { win.sessionStorage.removeItem("lt_onenote_user_closed"); } catch (e) {}
       const o = doc.getElementById("lt-onenote-overlay");
@@ -313,6 +319,9 @@ _SHELL_HTML = """
       o.classList.remove("lt-minimized");
       const chip = doc.getElementById("lt-onenote-chip");
       if (chip) chip.classList.remove("lt-show");
+      try {
+        if (typeof win.__ltEnsureNotesWinChrome === "function") win.__ltEnsureNotesWinChrome();
+      } catch (e2) {}
       if (typeof win.__ltRenderOneNote === "function") {
         try { win.__ltRenderOneNote(); } catch (e) {}
       }
@@ -380,11 +389,20 @@ _SHELL_HTML = """
         border-radius: 6px;
       }
       #lt-onenote-topbar {
-        display: flex; align-items: center; gap: 0.5rem;
-        padding: 0.4rem 0.55rem 0.4rem 0.85rem; background: #7719aa; color: #fff;
-        flex-shrink: 0; cursor: move; user-select: none; touch-action: none;
+        display: flex !important; align-items: center; gap: 0.5rem;
+        padding: 0.45rem 0.55rem 0.45rem 0.75rem; background: #7719aa; color: #fff;
+        flex-shrink: 0; cursor: grab; user-select: none; touch-action: none;
+        min-height: 40px; box-sizing: border-box; z-index: 2;
       }
-      #lt-onenote-topbar h2 { margin: 0; font-size: 1rem; font-weight: 600; flex: 1; cursor: move; }
+      #lt-onenote-topbar.lt-dragging { cursor: grabbing !important; }
+      #lt-onenote-topbar .lt-drag-grip {
+        opacity: 0.85; font-size: 0.95rem; letter-spacing: -1px; line-height: 1;
+        pointer-events: none; margin-right: 0.15rem;
+      }
+      #lt-onenote-topbar h2 {
+        margin: 0; font-size: 1rem; font-weight: 600; flex: 1; cursor: grab;
+        pointer-events: none;
+      }
       #lt-onenote-topbar .lt-win-btns { display: flex; gap: 0.25rem; align-items: center; }
       #lt-onenote-topbar button {
         border: none; background: rgba(255,255,255,0.18); color: #fff;
@@ -436,7 +454,9 @@ _SHELL_HTML = """
   const GEOM_KEY = "lt_onenote_geom";
   function loadGeom() {
     try {
-      const raw = win.localStorage.getItem(GEOM_KEY);
+      let raw = null;
+      try { raw = win.sessionStorage.getItem(GEOM_KEY); } catch (e0) {}
+      if (!raw) { try { raw = win.localStorage.getItem(GEOM_KEY); } catch (e1) {} }
       if (raw) {
         const g = JSON.parse(raw);
         if (g && typeof g === "object") {
@@ -448,7 +468,9 @@ _SHELL_HTML = """
   }
   function saveGeom(partial) {
     try {
-      win.localStorage.setItem(GEOM_KEY, JSON.stringify(Object.assign(loadGeom(), partial || {})));
+      const next = JSON.stringify(Object.assign(loadGeom(), partial || {}));
+      try { win.sessionStorage.setItem(GEOM_KEY, next); } catch (e0) {}
+      try { win.localStorage.setItem(GEOM_KEY, next); } catch (e1) {}
     } catch (e) {}
   }
   function applyGeom() {
@@ -496,8 +518,44 @@ _SHELL_HTML = """
     if (show) chip.classList.add("lt-show");
     else chip.classList.remove("lt-show");
   }
+  function ensureTopbarEl() {
+    const shell = doc.getElementById("lt-onenote-shell");
+    if (!shell) return null;
+    let topbar = doc.getElementById("lt-onenote-topbar");
+    if (!topbar) {
+      topbar = doc.createElement("div");
+      topbar.id = "lt-onenote-topbar";
+      topbar.innerHTML =
+        '<span class="lt-drag-grip" aria-hidden="true">⠿</span>' +
+        "<h2>📓 OneNote</h2>" +
+        '<span id="lt-onenote-status">Ready</span>' +
+        '<div class="lt-win-btns">' +
+        '<button type="button" id="lt-onenote-min" title="Minimize" aria-label="Minimize">─</button>' +
+        '<button type="button" id="lt-onenote-max" title="Maximize" aria-label="Maximize">□</button>' +
+        '<button type="button" id="lt-onenote-close" title="Close" aria-label="Close">×</button>' +
+        "</div>";
+      shell.insertBefore(topbar, shell.firstChild);
+    } else {
+      if (!topbar.querySelector(".lt-drag-grip")) {
+        const grip = doc.createElement("span");
+        grip.className = "lt-drag-grip";
+        grip.setAttribute("aria-hidden", "true");
+        grip.textContent = "⠿";
+        topbar.insertBefore(grip, topbar.firstChild);
+      }
+      if (!topbar.querySelector("h2")) {
+        const h2 = doc.createElement("h2");
+        h2.textContent = "📓 OneNote";
+        topbar.insertBefore(h2, topbar.firstChild.nextSibling);
+      }
+    }
+    topbar.title = "Drag to move";
+    topbar.setAttribute("role", "toolbar");
+    topbar.setAttribute("aria-label", "Notes window — drag to move");
+    return topbar;
+  }
   function ensureWinChrome() {
-    const topbar = doc.getElementById("lt-onenote-topbar");
+    const topbar = ensureTopbarEl();
     if (!topbar) return;
     let btns = topbar.querySelector(".lt-win-btns");
     if (!btns) {
@@ -517,43 +575,65 @@ _SHELL_HTML = """
     if (minBtn) minBtn.onclick = function (e) { e.preventDefault(); e.stopPropagation(); minimizePanel(); };
     if (maxBtn) maxBtn.onclick = function (e) { e.preventDefault(); e.stopPropagation(); toggleMaximize(); };
     if (closeBtn) closeBtn.onclick = function (e) { e.preventDefault(); e.stopPropagation(); closePanel(); };
-    if (!topbar.dataset.ltDragBound) {
-      topbar.dataset.ltDragBound = "1";
-      let dragging = false, sx = 0, sy = 0, ol = 0, ot = 0;
-      topbar.addEventListener("pointerdown", function (e) {
-        if (e.button !== 0) return;
-        if (e.target.closest("button")) return;
-        const shell = doc.getElementById("lt-onenote-shell");
-        if (!shell || shell.classList.contains("lt-maximized")) return;
-        dragging = true;
-        sx = e.clientX; sy = e.clientY;
-        const rect = shell.getBoundingClientRect();
-        ol = rect.left; ot = rect.top;
-        try { topbar.setPointerCapture(e.pointerId); } catch (err) {}
-        e.preventDefault();
-      });
-      topbar.addEventListener("pointermove", function (e) {
-        if (!dragging) return;
-        const shell = doc.getElementById("lt-onenote-shell");
-        if (!shell) return;
-        shell.style.left = Math.max(0, ol + (e.clientX - sx)) + "px";
-        shell.style.top = Math.max(0, ot + (e.clientY - sy)) + "px";
-      });
-      function endDrag() {
-        if (!dragging) return;
-        dragging = false;
-        const shell = doc.getElementById("lt-onenote-shell");
-        if (!shell) return;
-        const rect = shell.getBoundingClientRect();
-        saveGeom({
-          left: Math.round(rect.left), top: Math.round(rect.top),
-          width: Math.round(rect.width), height: Math.round(rect.height),
-          maximized: false
-        });
-      }
-      topbar.addEventListener("pointerup", endDrag);
-      topbar.addEventListener("pointercancel", endDrag);
+    // Rebind each hydrate — Cloud may keep a stale overlay; document listeners survive iframe death.
+    if (win.__ltNotesDragCleanup) {
+      try { win.__ltNotesDragCleanup(); } catch (e) {}
+      win.__ltNotesDragCleanup = null;
     }
+    let dragging = false, sx = 0, sy = 0, ol = 0, ot = 0, activePid = null;
+    function onMove(e) {
+      if (!dragging) return;
+      const shell = doc.getElementById("lt-onenote-shell");
+      if (!shell) return;
+      const vw = win.innerWidth || 1200;
+      const vh = win.innerHeight || 800;
+      const left = Math.min(Math.max(0, ol + (e.clientX - sx)), vw - 80);
+      const top = Math.min(Math.max(0, ot + (e.clientY - sy)), vh - 40);
+      shell.style.left = left + "px";
+      shell.style.top = top + "px";
+    }
+    function endDrag(e) {
+      if (!dragging) return;
+      dragging = false;
+      topbar.classList.remove("lt-dragging");
+      if (activePid != null) {
+        try { topbar.releasePointerCapture(activePid); } catch (err) {}
+        activePid = null;
+      }
+      const shell = doc.getElementById("lt-onenote-shell");
+      if (!shell) return;
+      const rect = shell.getBoundingClientRect();
+      saveGeom({
+        left: Math.round(rect.left), top: Math.round(rect.top),
+        width: Math.round(rect.width), height: Math.round(rect.height),
+        maximized: false
+      });
+    }
+    function onDown(e) {
+      if (e.button !== 0) return;
+      if (e.target.closest("button")) return;
+      const shell = doc.getElementById("lt-onenote-shell");
+      if (!shell || shell.classList.contains("lt-maximized")) return;
+      dragging = true;
+      topbar.classList.add("lt-dragging");
+      sx = e.clientX; sy = e.clientY;
+      const rect = shell.getBoundingClientRect();
+      ol = rect.left; ot = rect.top;
+      activePid = e.pointerId;
+      try { topbar.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault();
+    }
+    topbar.addEventListener("pointerdown", onDown);
+    doc.addEventListener("pointermove", onMove);
+    doc.addEventListener("pointerup", endDrag);
+    doc.addEventListener("pointercancel", endDrag);
+    win.__ltNotesDragCleanup = function () {
+      topbar.removeEventListener("pointerdown", onDown);
+      doc.removeEventListener("pointermove", onMove);
+      doc.removeEventListener("pointerup", endDrag);
+      doc.removeEventListener("pointercancel", endDrag);
+    };
+    topbar.dataset.ltDragBound = "1";
   }
   function minimizePanel() {
     const overlay = doc.getElementById("lt-onenote-overlay");
@@ -644,7 +724,8 @@ _SHELL_HTML = """
     overlay.id = "lt-onenote-overlay";
     overlay.innerHTML = `
       <div id="lt-onenote-shell">
-        <div id="lt-onenote-topbar">
+        <div id="lt-onenote-topbar" title="Drag to move" role="toolbar" aria-label="Notes window — drag to move">
+          <span class="lt-drag-grip" aria-hidden="true">⠿</span>
           <h2>📓 OneNote</h2>
           <span id="lt-onenote-status">Ready</span>
           <div class="lt-win-btns">
@@ -677,6 +758,7 @@ _SHELL_HTML = """
   } else {
     ensureWinChrome();
   }
+  win.__ltEnsureNotesWinChrome = ensureWinChrome;
   win.__ltOpenOneNote = openPanel;
   win.__ltCloseOneNote = closePanel;
   win.__ltMinimizeOneNote = minimizePanel;
@@ -877,11 +959,20 @@ def inject_floating_chrome(
         border-radius: 6px;
       }}
       #lt-onenote-topbar {{
-        display: flex; align-items: center; gap: 0.5rem;
-        padding: 0.4rem 0.55rem 0.4rem 0.85rem; background: #7719aa; color: #fff;
-        flex-shrink: 0; cursor: move; user-select: none; touch-action: none;
+        display: flex !important; align-items: center; gap: 0.5rem;
+        padding: 0.45rem 0.55rem 0.45rem 0.75rem; background: #7719aa; color: #fff;
+        flex-shrink: 0; cursor: grab; user-select: none; touch-action: none;
+        min-height: 40px; box-sizing: border-box; z-index: 2;
       }}
-      #lt-onenote-topbar h2 {{ margin: 0; font-size: 1rem; font-weight: 600; flex: 1; cursor: move; }}
+      #lt-onenote-topbar.lt-dragging {{ cursor: grabbing !important; }}
+      #lt-onenote-topbar .lt-drag-grip {{
+        opacity: 0.85; font-size: 0.95rem; letter-spacing: -1px; line-height: 1;
+        pointer-events: none; margin-right: 0.15rem;
+      }}
+      #lt-onenote-topbar h2 {{
+        margin: 0; font-size: 1rem; font-weight: 600; flex: 1; cursor: grab;
+        pointer-events: none;
+      }}
       #lt-onenote-topbar .lt-win-btns {{ display: flex; gap: 0.25rem; align-items: center; }}
       #lt-onenote-topbar button {{
         border: none; background: rgba(255,255,255,0.18); color: #fff;
@@ -1774,7 +1865,9 @@ def inject_floating_chrome(
   const GEOM_KEY = "lt_onenote_geom";
   function loadGeom() {{
     try {{
-      const raw = win.localStorage.getItem(GEOM_KEY);
+      let raw = null;
+      try {{ raw = win.sessionStorage.getItem(GEOM_KEY); }} catch (e0) {{}}
+      if (!raw) {{ try {{ raw = win.localStorage.getItem(GEOM_KEY); }} catch (e1) {{}} }}
       if (raw) {{
         const g = JSON.parse(raw);
         if (g && typeof g === "object") {{
@@ -1786,7 +1879,9 @@ def inject_floating_chrome(
   }}
   function saveGeom(partial) {{
     try {{
-      win.localStorage.setItem(GEOM_KEY, JSON.stringify(Object.assign(loadGeom(), partial || {{}})));
+      const next = JSON.stringify(Object.assign(loadGeom(), partial || {{}}));
+      try {{ win.sessionStorage.setItem(GEOM_KEY, next); }} catch (e0) {{}}
+      try {{ win.localStorage.setItem(GEOM_KEY, next); }} catch (e1) {{}}
     }} catch (e) {{}}
   }}
   function applyGeom() {{
@@ -1834,8 +1929,44 @@ def inject_floating_chrome(
     if (show) chip.classList.add("lt-show");
     else chip.classList.remove("lt-show");
   }}
+  function ensureTopbarEl() {{
+    const shell = doc.getElementById("lt-onenote-shell");
+    if (!shell) return null;
+    let topbar = doc.getElementById("lt-onenote-topbar");
+    if (!topbar) {{
+      topbar = doc.createElement("div");
+      topbar.id = "lt-onenote-topbar";
+      topbar.innerHTML =
+        '<span class="lt-drag-grip" aria-hidden="true">⠿</span>' +
+        "<h2>📓 OneNote</h2>" +
+        '<span id="lt-onenote-status"></span>' +
+        '<div class="lt-win-btns">' +
+        '<button type="button" id="lt-onenote-min" title="Minimize" aria-label="Minimize">─</button>' +
+        '<button type="button" id="lt-onenote-max" title="Maximize" aria-label="Maximize">□</button>' +
+        '<button type="button" id="lt-onenote-close" title="Close" aria-label="Close">×</button>' +
+        "</div>";
+      shell.insertBefore(topbar, shell.firstChild);
+    }} else {{
+      if (!topbar.querySelector(".lt-drag-grip")) {{
+        const grip = doc.createElement("span");
+        grip.className = "lt-drag-grip";
+        grip.setAttribute("aria-hidden", "true");
+        grip.textContent = "⠿";
+        topbar.insertBefore(grip, topbar.firstChild);
+      }}
+      if (!topbar.querySelector("h2")) {{
+        const h2 = doc.createElement("h2");
+        h2.textContent = "📓 OneNote";
+        topbar.insertBefore(h2, topbar.firstChild.nextSibling);
+      }}
+    }}
+    topbar.title = "Drag to move";
+    topbar.setAttribute("role", "toolbar");
+    topbar.setAttribute("aria-label", "Notes window — drag to move");
+    return topbar;
+  }}
   function ensureWinChrome() {{
-    const topbar = doc.getElementById("lt-onenote-topbar");
+    const topbar = ensureTopbarEl();
     if (!topbar) return;
     let btns = topbar.querySelector(".lt-win-btns");
     if (!btns) {{
@@ -1855,43 +1986,64 @@ def inject_floating_chrome(
     if (minBtn) minBtn.onclick = function (e) {{ e.preventDefault(); e.stopPropagation(); minimizePanel(); }};
     if (maxBtn) maxBtn.onclick = function (e) {{ e.preventDefault(); e.stopPropagation(); toggleMaximize(); }};
     if (closeBtn) closeBtn.onclick = function (e) {{ e.preventDefault(); e.stopPropagation(); closePanel(); }};
-    if (!topbar.dataset.ltDragBound) {{
-      topbar.dataset.ltDragBound = "1";
-      let dragging = false, sx = 0, sy = 0, ol = 0, ot = 0;
-      topbar.addEventListener("pointerdown", function (e) {{
-        if (e.button !== 0) return;
-        if (e.target.closest("button")) return;
-        const shell = doc.getElementById("lt-onenote-shell");
-        if (!shell || shell.classList.contains("lt-maximized")) return;
-        dragging = true;
-        sx = e.clientX; sy = e.clientY;
-        const rect = shell.getBoundingClientRect();
-        ol = rect.left; ot = rect.top;
-        try {{ topbar.setPointerCapture(e.pointerId); }} catch (err) {{}}
-        e.preventDefault();
-      }});
-      topbar.addEventListener("pointermove", function (e) {{
-        if (!dragging) return;
-        const shell = doc.getElementById("lt-onenote-shell");
-        if (!shell) return;
-        shell.style.left = Math.max(0, ol + (e.clientX - sx)) + "px";
-        shell.style.top = Math.max(0, ot + (e.clientY - sy)) + "px";
-      }});
-      function endDrag() {{
-        if (!dragging) return;
-        dragging = false;
-        const shell = doc.getElementById("lt-onenote-shell");
-        if (!shell) return;
-        const rect = shell.getBoundingClientRect();
-        saveGeom({{
-          left: Math.round(rect.left), top: Math.round(rect.top),
-          width: Math.round(rect.width), height: Math.round(rect.height),
-          maximized: false
-        }});
-      }}
-      topbar.addEventListener("pointerup", endDrag);
-      topbar.addEventListener("pointercancel", endDrag);
+    if (win.__ltNotesDragCleanup) {{
+      try {{ win.__ltNotesDragCleanup(); }} catch (e) {{}}
+      win.__ltNotesDragCleanup = null;
     }}
+    let dragging = false, sx = 0, sy = 0, ol = 0, ot = 0, activePid = null;
+    function onMove(e) {{
+      if (!dragging) return;
+      const shell = doc.getElementById("lt-onenote-shell");
+      if (!shell) return;
+      const vw = win.innerWidth || 1200;
+      const vh = win.innerHeight || 800;
+      const left = Math.min(Math.max(0, ol + (e.clientX - sx)), vw - 80);
+      const top = Math.min(Math.max(0, ot + (e.clientY - sy)), vh - 40);
+      shell.style.left = left + "px";
+      shell.style.top = top + "px";
+    }}
+    function endDrag(e) {{
+      if (!dragging) return;
+      dragging = false;
+      topbar.classList.remove("lt-dragging");
+      if (activePid != null) {{
+        try {{ topbar.releasePointerCapture(activePid); }} catch (err) {{}}
+        activePid = null;
+      }}
+      const shell = doc.getElementById("lt-onenote-shell");
+      if (!shell) return;
+      const rect = shell.getBoundingClientRect();
+      saveGeom({{
+        left: Math.round(rect.left), top: Math.round(rect.top),
+        width: Math.round(rect.width), height: Math.round(rect.height),
+        maximized: false
+      }});
+    }}
+    function onDown(e) {{
+      if (e.button !== 0) return;
+      if (e.target.closest("button")) return;
+      const shell = doc.getElementById("lt-onenote-shell");
+      if (!shell || shell.classList.contains("lt-maximized")) return;
+      dragging = true;
+      topbar.classList.add("lt-dragging");
+      sx = e.clientX; sy = e.clientY;
+      const rect = shell.getBoundingClientRect();
+      ol = rect.left; ot = rect.top;
+      activePid = e.pointerId;
+      try {{ topbar.setPointerCapture(e.pointerId); }} catch (err) {{}}
+      e.preventDefault();
+    }}
+    topbar.addEventListener("pointerdown", onDown);
+    doc.addEventListener("pointermove", onMove);
+    doc.addEventListener("pointerup", endDrag);
+    doc.addEventListener("pointercancel", endDrag);
+    win.__ltNotesDragCleanup = function () {{
+      topbar.removeEventListener("pointerdown", onDown);
+      doc.removeEventListener("pointermove", onMove);
+      doc.removeEventListener("pointerup", endDrag);
+      doc.removeEventListener("pointercancel", endDrag);
+    }};
+    topbar.dataset.ltDragBound = "1";
   }}
   function minimizePanel() {{
     const overlay = doc.getElementById("lt-onenote-overlay");
@@ -2002,7 +2154,8 @@ def inject_floating_chrome(
       overlay.id = "lt-onenote-overlay";
       overlay.innerHTML = `
         <div id="lt-onenote-shell">
-          <div id="lt-onenote-topbar">
+          <div id="lt-onenote-topbar" title="Drag to move" role="toolbar" aria-label="Notes window — drag to move">
+            <span class="lt-drag-grip" aria-hidden="true">⠿</span>
             <h2>📓 OneNote</h2>
             <span id="lt-onenote-status"></span>
             <div class="lt-win-btns">
@@ -2036,6 +2189,8 @@ def inject_floating_chrome(
           </div>
           <div id="lt-onenote-editor"></div>`;
       }}
+      // Repair missing purple title bar (stale Cloud parent DOM from older deploys)
+      ensureTopbarEl();
       if (!overlay.classList.contains("lt-open") || !state.dirty) {{
         state.notebooks = Array.isArray(TREE.notebooks) ? TREE.notebooks.map(function (x) {{ return Object.assign({{}}, x); }}) : [];
         state.sections = Array.isArray(TREE.sections) ? TREE.sections.map(function (x) {{ return Object.assign({{}}, x); }}) : [];
@@ -2065,6 +2220,7 @@ def inject_floating_chrome(
       onScroll();
     }}
 
+    win.__ltEnsureNotesWinChrome = ensureWinChrome;
     win.__ltOpenOneNote = openPanel;
     win.__ltCloseOneNote = closePanel;
     win.__ltMinimizeOneNote = minimizePanel;

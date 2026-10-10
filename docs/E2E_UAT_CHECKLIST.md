@@ -3,7 +3,7 @@
 | Field | Value |
 |--------|--------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Caption to confirm** | **v2026.10.08d · Esign stable cleanup** (sidebar under “LogixTrek Outreach”) |
+| **Caption to confirm** | **v2026.10.08e · Notes drag** (sidebar under “LogixTrek Outreach”) |
 | **Stable tag** | `esign-react-stable-08c` → commit `8468795` (pre-cleanup working baseline) |
 | **Cleanup commit** | (origin/main after 08d push — see git log) |
 | **Local automated (this pass)** | pytest esign+rbac+carrier+project_x: **79 passed**; pdf-field-editor vitest: **11 passed**; Playwright e2e: **1 passed** |
@@ -21,13 +21,15 @@
 ### 0) Deploy gate (30 sec) — MANUAL (Cloud login)
 
 1. Open the Cloud URL → sign in (Super Admin PIN or team login).
-2. Sidebar caption must read exactly: **v2026.10.08d · Esign stable cleanup**.
+2. Sidebar caption must read exactly: **v2026.10.08e · Notes drag**.
 3. If caption is older, wait for Streamlit Cloud rebuild (push already on `main`) or reboot the app in the Cloud dashboard.
-4. Esign Docs → Compose: **React PDF Field Editor only** (Upload / Text / Date / Sign / Typewriter / Redact / Save). Must NOT show Streamlit “Place field” / “Place X%” / Preview Prev/Next. Empty viewer shows **Upload a PDF**. Below editor: **Save & send** (Recipient + Save as template + Save & email) and **Print / review PDF**.
+4. Notes FAB → purple **📓 OneNote** title bar: hover shows grab cursor; drag moves window; position persists across reruns. Save / Save & close still work.
+5. Esign Docs → Compose: **React PDF Field Editor only** (Upload / Text / Date / Sign / Typewriter / Redact / Save). Must NOT show Streamlit “Place field” / “Place X%” / Preview Prev/Next. Empty viewer shows **Upload a PDF**. Below editor: **Save & send** (Recipient + Save as template + Save & email) and **Print / review PDF**.
 
 | Check | Result |
 |-------|--------|
-| Caption 08d on Cloud | **MANUAL** — requires Cloud login after deploy |
+| Caption 08e on Cloud | **MANUAL** — requires Cloud login after deploy |
+| Notes drag handle + persist | **AUTOMATED** source guards · **MANUAL** Cloud drag smoke |
 | React Compose present / no Place UI | **AUTOMATED** — `tests/test_esign.py` source + AppTest guards |
 
 ---

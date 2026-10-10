@@ -292,8 +292,8 @@ def test_no_slider_place_field_path_in_compose_ui():
     assert "_render_field_placer" not in parent
     assert "_render_clickable_page" not in parent
     page = inspect.getsource(esign_ui.page_esign_docs)
-    assert "v2026.10.08d" in page
-    assert "Esign stable cleanup" in page
+    assert "v2026.10.08e" in page
+    assert "Notes drag" in page
     assert "Place field" not in page
     assert "Place X%" not in page
     # Sync helper must not write old slider widget keys (esign_x / esign_y)
@@ -1405,12 +1405,12 @@ if st.button("Save", key="esign_save_smoke"):
 
 
 def test_sidebar_caption_esign_place_works():
-    """Sidebar must advertise v2026.10.08d · Esign stable cleanup."""
+    """Sidebar must advertise v2026.10.08e · Notes drag."""
     from pathlib import Path
 
     app = Path(__file__).resolve().parents[1] / "app.py"
     text = app.read_text(encoding="utf-8")
-    assert "v2026.10.08d · Esign stable cleanup" in text
+    assert "v2026.10.08e · Notes drag" in text
 
 
 def test_esign_compose_embeds_pdf_field_editor():

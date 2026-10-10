@@ -629,7 +629,7 @@ def page_esign_docs(*, user: dict, company: dict) -> None:
         return
 
     st.title("Esign Docs")
-    st.caption("**v2026.10.08d · Esign stable cleanup**")
+    st.caption("**v2026.10.08e · Notes drag**")
 
     tabs = st.tabs(["Compose", "My documents"])
     with tabs[0]:

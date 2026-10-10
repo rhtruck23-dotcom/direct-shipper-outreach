@@ -16,12 +16,17 @@ def test_onenote_is_floating_draggable_window():
     assert "lt_onenote_geom" in shell
     assert "lt-onenote-min" in shell
     assert "lt-onenote-max" in shell
-    assert "cursor: move" in shell
+    assert "cursor: grab" in shell
+    assert "lt-drag-grip" in shell
+    assert "ensureTopbarEl" in shell
+    assert "Drag to move" in shell
     assert "pointer-events: none" in shell
     assert "rgba(40, 20, 50, 0.4)" not in shell
     assert "lt-maximized" in shell
     assert "lt-onenote-chip" in shell
     assert "minimizePanel" in shell
+    assert "sessionStorage" in shell
+    assert "__ltNotesDragCleanup" in shell
 
     import inspect
 
@@ -29,11 +34,17 @@ def test_onenote_is_floating_draggable_window():
     assert "lt_onenote_geom" in inject_src
     assert "lt-onenote-min" in inject_src
     assert "lt-onenote-max" in inject_src
-    assert "cursor: move" in inject_src
+    assert "cursor: grab" in inject_src
+    assert "lt-drag-grip" in inject_src
+    assert "ensureTopbarEl" in inject_src
+    assert "Drag to move" in inject_src
     assert "pointer-events: none" in inject_src
     assert "rgba(40, 20, 50, 0.4)" not in inject_src
     assert "__ltMinimizeOneNote" in inject_src
     assert "localStorage" in inject_src
+    assert "sessionStorage" in inject_src
+    assert "__ltNotesDragCleanup" in inject_src
+    assert "doc.addEventListener(\"pointermove\"" in inject_src or "doc.addEventListener('pointermove'" in inject_src
 
 
 def test_save_and_close_closes_panel_client_side():
