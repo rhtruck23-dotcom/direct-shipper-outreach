@@ -21,6 +21,14 @@ export interface ExportOptions {
   pdfBytes: Uint8Array;
   fields: AnyField[];
   fileName?: string;
+  /**
+   * When false, skip AcroForm text/date/signature widgets (burn typewriter +
+   * redaction only). Used for Save to Outreach so Python builds clean fillable
+   * widgets for recipients.
+   */
+  includeFormFields?: boolean;
+  /** When false, never stamp signature ink into the page (leave widget empty). */
+  stampSignatures?: boolean;
 }
 
 export interface ExportResult {
@@ -31,12 +39,17 @@ export interface ExportResult {
 
 /**
  * Embed AcroForm fields into a copy of the source PDF.
- * Text / date → text fields; signature → Sig widget (pdf-lib has no createSignature);
+ * Text / date → borderless text fields; signature → Sig widget (empty for recipients);
  * comments are drawn as sticky notes (+ text annotation);
- * redaction → opaque burned-in rectangle (optional VOID stamp).
+ * redaction → opaque burned-in rectangle (no outline / no label).
  */
 export async function exportFillablePdf(options: ExportOptions): Promise<ExportResult> {
-  const { pdfBytes, fields } = options;
+  const {
+    pdfBytes,
+    fields,
+    includeFormFields = true,
+    stampSignatures = true,
+  } = options;
   const doc = await PDFDocument.load(pdfBytes.slice());
   const form = doc.getForm();
   const helvetica = await doc.embedFont(StandardFonts.Helvetica);
@@ -62,6 +75,7 @@ export async function exportFillablePdf(options: ExportOptions): Promise<ExportR
     const { x, y, width, height } = field.rect;
 
     if (field.type === 'text') {
+      if (!includeFormFields) continue;
       const tf = field as TextField;
       const name = uniqueName(tf.name || `text_${field.id.slice(0, 8)}`);
       const textField = form.createTextField(name);
@@ -73,15 +87,15 @@ export async function exportFillablePdf(options: ExportOptions): Promise<ExportR
         y,
         width,
         height,
-        borderWidth: 1,
-        borderColor: rgb(0.23, 0.51, 0.96),
-        backgroundColor: rgb(0.93, 0.95, 1),
+        borderWidth: 0,
+        backgroundColor: undefined,
         textColor: rgb(0, 0, 0),
         font: helvetica,
       });
       textField.setFontSize(tf.fontSize || 11);
       formFieldCount++;
     } else if (field.type === 'date') {
+      if (!includeFormFields) continue;
       const df = field as DateField;
       const name = uniqueName(df.name || `date_${field.id.slice(0, 8)}`);
       const textField = form.createTextField(name);
@@ -92,20 +106,20 @@ export async function exportFillablePdf(options: ExportOptions): Promise<ExportR
         y,
         width,
         height,
-        borderWidth: 1,
-        borderColor: rgb(0.55, 0.36, 0.96),
-        backgroundColor: rgb(0.95, 0.93, 1),
+        borderWidth: 0,
+        backgroundColor: undefined,
         textColor: rgb(0, 0, 0),
         font: helvetica,
       });
       textField.setFontSize(df.fontSize || 11);
       formFieldCount++;
     } else if (field.type === 'signature') {
+      if (!includeFormFields) continue;
       const sf = field as SignatureField;
       const name = uniqueName(sf.name || `signature_${field.id.slice(0, 8)}`);
       addSignatureWidget(doc, page, name, { x, y, width, height });
 
-      if (sf.imageDataUrl) {
+      if (stampSignatures && sf.imageDataUrl) {
         try {
           const pngBytes = dataUrlToBytes(sf.imageDataUrl);
           const image = await doc.embedPng(pngBytes);
@@ -172,23 +186,18 @@ export async function exportFillablePdf(options: ExportOptions): Promise<ExportR
         });
       }
     } else if (field.type === 'redaction') {
-      // Burn-in solid cover (not AcroForm). Hides underlying content in the output PDF.
+      // Solid cover only — no outline, no REDACT/VOID label on export.
       const rf = field as RedactionField;
       const fillHex = redactionFillHex(rf.color);
       const [r, g, b] = hexToRgb(fillHex);
-      const border =
-        rf.color === 'white' ? { borderColor: rgb(0.75, 0.78, 0.82), borderWidth: 0.5 } : {};
       page.drawRectangle({
         x,
         y,
         width,
         height,
         color: rgb(r, g, b),
-        ...border,
+        borderWidth: 0,
       });
-      if (rf.color === 'void') {
-        drawVoidStamp(page, helvetica, { x, y, width, height });
-      }
     }
   }
 
@@ -210,6 +219,7 @@ export async function exportFillablePdf(options: ExportOptions): Promise<ExportR
 /**
  * pdf-lib 1.17 can read signature fields but cannot create them via PDFForm.
  * Build a merged field+widget dict (FT=/Sig) and register it on the page + AcroForm.
+ * Appearance is borderless / clear so exported PDFs do not show colored boxes.
  */
 function addSignatureWidget(
   doc: PDFDocument,
@@ -227,10 +237,8 @@ function addSignatureWidget(
     F: 4,
     P: page.ref,
     Rect: [x, y, x + width, y + height],
-    MK: {
-      BC: [0.06, 0.73, 0.51],
-      BG: [0.9, 0.99, 0.96],
-    },
+    // No BC/BG — recipients see a clear fillable widget, not a green box.
+    MK: {},
   });
   const sigRef = context.register(sigDict);
   page.node.addAnnot(sigRef);
@@ -239,25 +247,6 @@ function addSignatureWidget(
   const fieldEntries = form.acroForm.getFields();
   const fieldRefs = fieldEntries.map(([, ref]) => ref);
   form.acroForm.dict.set(PDFName.of('Fields'), context.obj([...fieldRefs, sigRef]));
-}
-
-function drawVoidStamp(
-  page: ReturnType<PDFDocument['getPages']>[number],
-  font: Awaited<ReturnType<PDFDocument['embedFont']>>,
-  rect: { x: number; y: number; width: number; height: number },
-): void {
-  const label = 'VOID';
-  const size = Math.max(8, Math.min(18, Math.min(rect.height * 0.55, rect.width / 3.2)));
-  const textWidth = font.widthOfTextAtSize(label, size);
-  const tx = rect.x + Math.max(2, (rect.width - textWidth) / 2);
-  const ty = rect.y + Math.max(2, (rect.height - size) / 2);
-  page.drawText(label, {
-    x: tx,
-    y: ty,
-    size,
-    font,
-    color: rgb(1, 1, 1),
-  });
 }
 
 /** Exported for unit tests — resolve redaction RGB from preset key. */

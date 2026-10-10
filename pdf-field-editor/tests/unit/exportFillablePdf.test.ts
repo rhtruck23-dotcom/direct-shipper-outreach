@@ -171,12 +171,84 @@ describe('exportFillablePdf', () => {
     expect(redactionRgb('redact')[0]).toBeGreaterThan(0.5);
     expect(redactionRgb('void')[0]).toBeGreaterThan(0.3);
 
-    // Drawn content lives in FlateDecode page streams (fill rects + VOID stamp).
+    // Drawn content: solid fill rects only (no outline, no VOID/REDACT labels).
     const ops = inflatedPdfStreams(result.bytes);
-    // pdf-lib encodes Tj strings as hex: VOID → <564F4944>
-    expect(ops).toMatch(/<564[Ff]4944>/);
+    expect(ops).not.toMatch(/<564[Ff]4944>/);
     expect(ops).toMatch(/(?:^|\s)(?:f|B)(?:\s|$)/m);
     expect(ops).toMatch(/0\s+0\s+0\s+rg/);
     expect(ops).toMatch(/72\s+680/);
+  });
+
+  it('exports text/date without colored border chrome', async () => {
+    const pdfBytes = await blankPdfBytes();
+    const fields: AnyField[] = [
+      {
+        id: 't1',
+        type: 'text',
+        pageIndex: 0,
+        rect: { x: 50, y: 700, width: 160, height: 24 },
+        name: 'ShipperName',
+        required: false,
+        defaultValue: 'Ada',
+        multiline: false,
+        fontSize: 11,
+      },
+    ];
+    const result = await exportFillablePdf({ pdfBytes, fields, fileName: 'plain.pdf' });
+    const loaded = await PDFDocument.load(result.bytes);
+    const text = loaded.getForm().getTextField('ShipperName');
+    expect(text.getText()).toBe('Ada');
+    // Appearance should not encode the old blue border RGB (0.23, 0.51, 0.96).
+    const raw = Buffer.from(result.bytes).toString('latin1');
+    expect(raw).not.toMatch(/0\.23\s+0\.51\s+0\.96/);
+  });
+
+  it('outreach mode burns redactions but skips AcroForm + signature stamps', async () => {
+    const pdfBytes = await blankPdfBytes();
+    const tinyPng =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const fields: AnyField[] = [
+      {
+        id: 't1',
+        type: 'text',
+        pageIndex: 0,
+        rect: { x: 50, y: 700, width: 160, height: 24 },
+        name: 'ShipperName',
+        required: false,
+        defaultValue: 'SkipMe',
+        multiline: false,
+        fontSize: 11,
+      },
+      {
+        id: 's1',
+        type: 'signature',
+        pageIndex: 0,
+        rect: { x: 50, y: 200, width: 180, height: 60 },
+        name: 'AuthSig',
+        required: false,
+        imageDataUrl: tinyPng,
+      },
+      {
+        id: 'r1',
+        type: 'redaction',
+        pageIndex: 0,
+        rect: { x: 72, y: 680, width: 200, height: 24 },
+        name: 'HideSSN',
+        required: false,
+        color: 'black',
+      },
+    ];
+    const result = await exportFillablePdf({
+      pdfBytes,
+      fields,
+      fileName: 'outreach.pdf',
+      includeFormFields: false,
+      stampSignatures: false,
+    });
+    expect(result.formFieldCount).toBe(0);
+    const loaded = await PDFDocument.load(result.bytes);
+    expect(loaded.getForm().getFields()).toHaveLength(0);
+    const ops = inflatedPdfStreams(result.bytes);
+    expect(ops).toMatch(/0\s+0\s+0\s+rg/);
   });
 });

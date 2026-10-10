@@ -561,12 +561,31 @@ def try_render_public_fill() -> bool:
         name = f.get("name") or ""
         label = f.get("label") or name
         ftype = f.get("type") or "text"
+        if ftype == "sign":
+            st.markdown(f"**{label}** — draw below, or type your full legal name")
+            try:
+                from .esign_sig_pad import render_signature_pad
+
+                drawn = render_signature_pad(key=f"esign_pub_pad_{doc_id}_{name}")
+            except Exception:
+                drawn = None
+            typed = st.text_input(
+                f"{label} (typed name fallback)",
+                value="",
+                key=f"esign_pub_{doc_id}_{name}",
+                help="Used if you do not draw a signature above.",
+            )
+            if drawn and str(drawn).startswith("data:image"):
+                values[name] = str(drawn)
+                st.caption("Drawn signature ready.")
+            else:
+                values[name] = typed
+            continue
         hint = {
             "text": "Text",
             "date": "Date (e.g. 2026-10-06)",
-            "sign": "Type your full name as signature",
         }.get(ftype, "Text")
-        default = "" if ftype == "sign" else str(prefill.get(name) or "")
+        default = str(prefill.get(name) or "")
         values[name] = st.text_input(
             f"{label} ({hint})",
             value=default,
@@ -648,7 +667,7 @@ def page_esign_docs(*, user: dict, company: dict) -> None:
         return
 
     st.title("Esign Docs")
-    st.caption("**v2026.10.08b · React Compose LIVE**")
+    st.caption("**v2026.10.08c · Esign field polish**")
 
     tabs = st.tabs(["Compose", "My documents"])
     with tabs[0]:

@@ -292,8 +292,8 @@ def test_no_slider_place_field_path_in_compose_ui():
     assert "_render_field_placer" not in parent
     assert "_render_clickable_page" not in parent
     page = inspect.getsource(esign_ui.page_esign_docs)
-    assert "v2026.10.08b" in page
-    assert "React Compose LIVE" in page
+    assert "v2026.10.08c" in page
+    assert "Esign field polish" in page
     assert "Place field" not in page
     assert "Place X%" not in page
     # Sync helper must not write old slider widget keys (esign_x / esign_y)
@@ -564,6 +564,33 @@ def test_create_complete_signing_roundtrip(tmp_path, monkeypatch):
     filled = reader.get_form_text_fields()
     assert filled[fields[0]["name"]] == "Bob"
     assert filled[fields[1]["name"]] == "Bob Signer"
+
+
+def test_complete_signing_stamps_drawn_signature(tmp_path, monkeypatch):
+    """Drawn PNG data-URL on a sign field is burned into signed.pdf."""
+    monkeypatch.setattr(esign, "ESIGN_DIR", tmp_path / "esign")
+    monkeypatch.setattr(esign, "ESIGN_INDEX", tmp_path / "esign" / "index.json")
+    # 1x1 red PNG
+    tiny = (
+        "data:image/png;base64,"
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    fields = [esign.new_field(field_type="sign", label="Sign", y_from_top=0.5, h=0.08)]
+    meta = esign.create_document(
+        title="Draw Sign",
+        original_pdf=_blank_pdf(),
+        owner_email="owner@example.com",
+        fields=fields,
+    )
+    before = esign.read_fillable_pdf(meta["id"])
+    done = esign.complete_signing(
+        meta["id"],
+        {fields[0]["name"]: tiny},
+        signer_email="signer@ex.com",
+    )
+    assert done["status"] == "signed"
+    signed = esign.read_signed_pdf(meta["id"])
+    assert signed and len(signed) >= len(before)
 
 
 def test_page_count_and_size():
@@ -1377,12 +1404,12 @@ if st.button("Save", key="esign_save_smoke"):
 
 
 def test_sidebar_caption_esign_place_works():
-    """Sidebar must advertise v2026.10.08b · React Compose LIVE."""
+    """Sidebar must advertise v2026.10.08c · Esign field polish."""
     from pathlib import Path
 
     app = Path(__file__).resolve().parents[1] / "app.py"
     text = app.read_text(encoding="utf-8")
-    assert "v2026.10.08b · React Compose LIVE" in text
+    assert "v2026.10.08c · Esign field polish" in text
 
 
 def test_esign_compose_embeds_pdf_field_editor():
@@ -1411,7 +1438,7 @@ def test_esign_compose_embeds_pdf_field_editor():
     assert "PDF_FIELD_EDITOR_URL" in embed_text
     assert "declare_component" in embed_text
     assert "height=h" in embed_text
-    assert 'COMPONENT_VERSION = "2026.10.08b"' in embed_text
+    assert 'COMPONENT_VERSION = "2026.10.08c"' in embed_text
     assert "React editor failed" in embed_text
     assert "pdf_field_editor_v" in embed_text
     lib = (

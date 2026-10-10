@@ -3,14 +3,14 @@
 | Field | Value |
 |--------|--------|
 | **App URL** | https://direct-shipper-outreach-ccrnu6jzt5dwjua7srdhha.streamlit.app/ |
-| **Caption to confirm** | **v2026.10.08b · React Compose LIVE** (sidebar under “LogixTrek Outreach”) |
-| **Commit** | (origin/main after 08b push) |
+| **Caption to confirm** | **v2026.10.08c · Esign field polish** (sidebar under “LogixTrek Outreach”) |
+| **Commit** | (origin/main after 08c push) |
 | **First pass** | Prefer LIVE OFF / Autopilot OFF until smoke is green; enable LIVE only for real send UAT |
 
 ### 0) Deploy gate (30 sec)
 
 1. Open the Cloud URL → sign in (Super Admin PIN or team login).
-2. Sidebar caption must read exactly: **v2026.10.08b · React Compose LIVE**.
+2. Sidebar caption must read exactly: **v2026.10.08c · Esign field polish**.
 3. If caption is older, wait for Streamlit Cloud rebuild (push already on `main`) or reboot the app in the Cloud dashboard.
 4. Esign Docs → Compose: **React PDF Field Editor only** (Upload / Text / Date / Sign / Typewriter / Redact / Save). Must NOT show Streamlit “Place field” / “Place X%” / Preview Prev/Next. Empty viewer shows **Upload a PDF**. Below editor: **Save & send** (Recipient + Save as template + Save & email) and **Print / review PDF**.
 

@@ -9,7 +9,7 @@ import {
   type MouseEvent,
 } from 'react';
 import { Rnd } from 'react-rnd';
-import type { AnyField, PageInfo, RedactionField, TextField, TypewriterField } from '@/types/fields';
+import type { AnyField, PageInfo, TextField, TypewriterField } from '@/types/fields';
 import { FIELD_COLORS, redactionFillHex } from '@/types/fields';
 import { pdfRectToScreen, screenRectToPdf } from '@/lib/coordinateUtils';
 import { useEditorStore } from '@/store/useEditorStore';
@@ -127,13 +127,18 @@ export function FieldOverlay({ field, page, scale }: FieldOverlayProps) {
         ? field.text
         : '';
 
+  const hasTypewriterText =
+    field.type === 'typewriter' && Boolean((field as TypewriterField).text?.trim());
+  const hasSignatureInk =
+    field.type === 'signature' && Boolean(field.imageDataUrl);
+
   const label = (() => {
     if (editing && (field.type === 'text' || field.type === 'typewriter' || field.type === 'comment')) {
       const multiline = field.type !== 'text' || field.multiline;
       const common = {
         ref: inputRef as never,
         className:
-          'h-full w-full resize-none border-0 bg-white/95 px-1 text-[11px] text-slate-900 outline-none',
+          'h-full w-full resize-none border-0 bg-transparent px-1 text-[11px] text-slate-900 outline-none',
         defaultValue: editValue,
         onClick: (e: MouseEvent) => e.stopPropagation(),
         onPointerDown: (e: MouseEvent) => e.stopPropagation(),
@@ -161,9 +166,14 @@ export function FieldOverlay({ field, page, scale }: FieldOverlayProps) {
     switch (field.type) {
       case 'text':
         return (
-          <span className="flex items-center gap-1 truncate px-1 text-[10px] font-medium">
-            <Type className="h-3 w-3 shrink-0" />
-            {field.defaultValue || field.name}
+          <span
+            className={cn(
+              'flex items-center gap-1 truncate px-1 text-[10px] font-medium',
+              !selected && !field.defaultValue && 'text-slate-400',
+            )}
+          >
+            {(selected || !field.defaultValue) && <Type className="h-3 w-3 shrink-0 opacity-70" />}
+            {field.defaultValue || (selected ? field.name : '')}
           </span>
         );
       case 'typewriter':
@@ -172,14 +182,21 @@ export function FieldOverlay({ field, page, scale }: FieldOverlayProps) {
             className="flex h-full w-full items-center truncate px-1 font-serif text-[11px]"
             style={{ color: field.color || '#111827', fontSize: field.fontSize || 12 }}
           >
-            {field.text || 'Type here…'}
+            {field.text || (selected ? 'Type here…' : '')}
           </span>
         );
       case 'date':
         return (
-          <span className="flex items-center gap-1 truncate px-1 text-[10px] font-medium">
-            <Calendar className="h-3 w-3 shrink-0" />
-            {field.defaultValue || field.name}
+          <span
+            className={cn(
+              'flex items-center gap-1 truncate px-1 text-[10px] font-medium',
+              !selected && !field.defaultValue && 'text-slate-400',
+            )}
+          >
+            {(selected || !field.defaultValue) && (
+              <Calendar className="h-3 w-3 shrink-0 opacity-70" />
+            )}
+            {field.defaultValue || (selected ? field.name : '')}
           </span>
         );
       case 'signature':
@@ -191,15 +208,24 @@ export function FieldOverlay({ field, page, scale }: FieldOverlayProps) {
             draggable={false}
           />
         ) : (
-          <span className="flex items-center gap-1 truncate px-1 text-[10px] font-medium">
-            <PenLine className="h-3 w-3 shrink-0" />
-            Sign here
+          <span
+            className={cn(
+              'flex items-center gap-1 truncate px-1 text-[10px] font-medium',
+              !selected && 'text-slate-400',
+            )}
+          >
+            {selected && <PenLine className="h-3 w-3 shrink-0 opacity-70" />}
+            {selected ? 'Sign here' : ''}
           </span>
         );
       case 'comment':
         return <CommentNote field={field} compact />;
       case 'redaction': {
         const fill = redactionFillHex(field.color);
+        // Unselected: solid fill only (no screaming REDACT label). Selected: show hint.
+        if (!selected) {
+          return <span className="block h-full w-full" style={{ background: fill }} />;
+        }
         const isLight = field.color === 'white';
         return (
           <span
@@ -215,6 +241,44 @@ export function FieldOverlay({ field, page, scale }: FieldOverlayProps) {
         );
       }
     }
+  })();
+
+  const shellStyle = ((): CSSProperties => {
+    if (field.type === 'redaction') {
+      return {
+        border: selected ? `1.5px solid ${color}` : '1.5px solid transparent',
+        background: 'transparent',
+        boxShadow: selected ? `0 0 0 1px ${color}55` : undefined,
+      };
+    }
+    if (field.type === 'comment') {
+      return {
+        border: selected ? `1.5px solid ${color}` : '1.5px solid transparent',
+        background: 'transparent',
+        boxShadow: selected ? `0 0 0 1px ${color}55` : undefined,
+      };
+    }
+    // Text / date / typewriter / signature: borderless until selected; content reads as ink.
+    if (selected) {
+      return {
+        border: `1.5px solid ${color}`,
+        background:
+          field.type === 'typewriter' || hasSignatureInk
+            ? 'transparent'
+            : `${color}14`,
+        boxShadow: `0 0 0 1px ${color}40`,
+      };
+    }
+    return {
+      border: '1.5px solid transparent',
+      background:
+        hasTypewriterText || hasSignatureInk
+          ? 'transparent'
+          : field.type === 'signature'
+            ? 'transparent'
+            : 'transparent',
+      boxShadow: undefined,
+    };
   })();
 
   return (
@@ -255,28 +319,12 @@ export function FieldOverlay({ field, page, scale }: FieldOverlayProps) {
       }}
       data-testid={`field-overlay-${field.id}`}
       data-field-type={field.type}
+      data-selected={selected ? 'true' : 'false'}
       className={cn(
         'group absolute z-10 flex items-center justify-center overflow-visible rounded-sm',
-        selected && 'z-20 ring-2 ring-offset-1',
+        selected && 'z-20',
       )}
-      style={{
-        border: `1.5px solid ${
-          field.type === 'redaction'
-            ? field.color === 'white'
-              ? '#94a3b8'
-              : redactionFillHex((field as RedactionField).color)
-            : color
-        }`,
-        background:
-          field.type === 'comment'
-            ? 'transparent'
-            : field.type === 'redaction'
-              ? 'transparent'
-              : field.type === 'typewriter'
-                ? `${color}18`
-                : `${color}22`,
-        boxShadow: selected ? `0 0 0 1px ${color}` : undefined,
-      }}
+      style={shellStyle}
       resizeHandleClasses={
         selected
           ? {

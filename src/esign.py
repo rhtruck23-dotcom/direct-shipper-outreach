@@ -1,7 +1,7 @@
 """
 Esign Docs — overlay AcroForm fields on an original PDF (layout unchanged).
 
-Sign fields are fillable text widgets (typed name), not PKI / DigSig certificates.
+Sign fields are fillable widgets (typed name or drawn PNG stamp), not PKI / DigSig certificates.
 """
 from __future__ import annotations
 
@@ -413,7 +413,12 @@ def fill_form_values(fillable_pdf: bytes, values: dict[str, str]) -> bytes:
     reader = PdfReader(io.BytesIO(fillable_pdf))
     writer = PdfWriter()
     writer.append(reader)
-    clean = {str(k): str(v if v is not None else "") for k, v in (values or {}).items()}
+    # Skip data-URL signatures — those are stamped as images separately.
+    clean = {
+        str(k): str(v if v is not None else "")
+        for k, v in (values or {}).items()
+        if not str(v or "").strip().startswith("data:image")
+    }
     if clean:
         for page in writer.pages:
             try:
@@ -423,6 +428,73 @@ def fill_form_values(fillable_pdf: bytes, values: dict[str, str]) -> bytes:
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()
+
+
+def _data_url_to_png_bytes(data_url: str) -> Optional[bytes]:
+    raw = (data_url or "").strip()
+    if not raw.startswith("data:image"):
+        return None
+    try:
+        header, b64 = raw.split(",", 1)
+    except ValueError:
+        return None
+    if "base64" not in header.lower():
+        return None
+    import base64
+
+    try:
+        return base64.b64decode(b64)
+    except Exception:
+        return None
+
+
+def stamp_signature_images(
+    pdf_bytes: bytes,
+    fields: list[dict[str, Any]],
+    values: dict[str, str],
+) -> bytes:
+    """
+    Burn drawn signature PNGs (data URLs) into field rectangles.
+    Typed-name sign values are left to fill_form_values.
+    """
+    stamps: list[tuple[dict[str, Any], bytes]] = []
+    for field in fields or []:
+        if str(field.get("type") or "") != "sign":
+            continue
+        name = str(field.get("name") or "")
+        png = _data_url_to_png_bytes(str((values or {}).get(name) or ""))
+        if png:
+            stamps.append((field, png))
+    if not stamps:
+        return pdf_bytes
+
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return pdf_bytes
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        for field, png in stamps:
+            page_i = int(field.get("page") or 0)
+            if page_i < 0 or page_i >= doc.page_count:
+                continue
+            page = doc.load_page(page_i)
+            pw, ph = float(page.rect.width), float(page.rect.height)
+            llx, lly, urx, ury = _rect_from_norm(
+                page_w=pw,
+                page_h=ph,
+                x=float(field.get("x") or 0.1),
+                y_from_top=float(field.get("y_from_top") or 0.15),
+                w=float(field.get("w") or _DEFAULT_W),
+                h=float(field.get("h") or _DEFAULT_H),
+            )
+            # PyMuPDF uses top-left origin; PDF rect is bottom-left.
+            rect = fitz.Rect(llx, ph - ury, urx, ph - lly)
+            page.insert_image(rect, stream=png, keep_proportion=True, overlay=True)
+        return doc.tobytes()
+    finally:
+        doc.close()
 
 
 def create_document(
@@ -585,12 +657,13 @@ def complete_signing(
     *,
     signer_email: str = "",
 ) -> dict[str, Any]:
-    """Fill AcroForm values, store signed.pdf, mark completed."""
+    """Fill AcroForm values, stamp drawn signatures, store signed.pdf, mark completed."""
     meta = load_document(doc_id)
     if not meta:
         raise FileNotFoundError(doc_id)
     fillable = read_fillable_pdf(doc_id)
     signed = fill_form_values(fillable, values)
+    signed = stamp_signature_images(signed, list(meta.get("fields") or []), values)
     (doc_dir(doc_id) / "signed.pdf").write_bytes(signed)
     (doc_dir(doc_id) / "values.json").write_text(
         json.dumps(

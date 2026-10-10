@@ -80,10 +80,14 @@ export async function buildSaveToOutreachPayload(options: {
   title?: string;
 }): Promise<SaveToOutreachPayload> {
   const { document, fields } = options;
+  // Burn typewriter + redaction only. Leave AcroForm to Python create_document
+  // so recipients get clean fillable text/date/sign widgets (no stamped composer ink).
   const exported = await exportFillablePdf({
     pdfBytes: document.pdfBytes,
     fields,
     fileName: document.fileName,
+    includeFormFields: false,
+    stampSignatures: false,
   });
   const title =
     (options.title || '').trim() ||

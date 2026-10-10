@@ -283,8 +283,8 @@ export function PropertyPanel() {
             </div>
           </FieldRow>
           <p className="text-xs text-slate-500">
-            Solid cover burned into the PDF on Save/Download (not a form field). Void adds a
-            gray bar with VOID stamped on top.
+            Solid cover burned into the PDF on Save/Download (not a form field). No outline or
+            label is written to the exported PDF.
           </p>
         </>
       )}
