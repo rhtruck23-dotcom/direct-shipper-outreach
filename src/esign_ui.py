@@ -881,8 +881,9 @@ def page_esign_docs(*, user: dict, company: dict) -> None:
 
     st.title("Esign Docs")
     st.caption(
-        "**PDF Field Editor** (React) — upload, Text/Date/Sign/Typewriter, drag/resize, "
-        "**Save to Outreach**, download. CRM send-for-signature is below. "
+        "v2026.10.08a · **PDF Field Editor** (React) only — Upload / Text / Date / Sign / "
+        "Typewriter / Redact / Save to Outreach / Download. "
+        "Legacy Streamlit placer preview removed. CRM send-for-signature is below. "
         "Fill-link sign = typed name (not DigSig)."
     )
 
@@ -983,7 +984,7 @@ def consume_pdf_editor_component_value(
 
 
 def _compose_tab(*, user: dict, company: dict) -> None:
-    """Compose = React PDF Field Editor + CRM save/send (no Streamlit Place UI)."""
+    """Compose = React PDF Field Editor + CRM save/send ONLY (no Streamlit placer)."""
     hdr, link = st.columns([3, 1])
     with hdr:
         st.markdown("#### Compose")

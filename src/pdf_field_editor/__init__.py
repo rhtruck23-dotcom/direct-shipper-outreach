@@ -14,7 +14,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 # Bump when shipping frontend fixes so Cloud iframe URL/key change (cache bust).
-COMPONENT_VERSION = "2026.10.07j"
+COMPONENT_VERSION = "2026.10.08a"
 
 _FRONTEND = (Path(__file__).parent / "frontend").resolve()
 _COMPONENT = None
