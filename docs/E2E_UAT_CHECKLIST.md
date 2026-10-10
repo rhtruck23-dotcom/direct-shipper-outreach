@@ -95,6 +95,7 @@
 
 ### Related
 
+- Shipper 5-lead walkthrough (screenplay): `docs/SHIPPER_5_LEAD_E2E_SCREENPLAY.md`
 - Multi-Gmail pool: `docs/MULTI_GMAIL_UAT.md`
 - Cloud hosting: `docs/CLOUD_HOSTING.md`
-- Older detailed cases: `docs/UAT_TEST_CASES_v2026.09.30c.md` (caption lineage; use **08d** above as source of truth)
+- Older detailed cases: `docs/UAT_TEST_CASES_v2026.09.30c.md` (caption lineage; use **08e** caption above as source of truth)
