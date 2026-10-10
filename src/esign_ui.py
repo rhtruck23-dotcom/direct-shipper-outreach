@@ -4,7 +4,6 @@ Esign Docs Streamlit UI — upload PDF, place AcroForm fields, download / send /
 from __future__ import annotations
 
 import base64
-import io
 import json
 import re
 from typing import Any, Callable, Optional
@@ -16,8 +15,6 @@ from .emailer import send_email
 from .lead_crm import lead_stable_id
 
 PersistFn = Callable[[dict], None]
-
-_TYPE_BORDER = {"text": "#2563eb", "date": "#059669", "sign": "#ea580c"}
 
 
 def _qp_get(key: str) -> Optional[str]:
@@ -95,41 +92,6 @@ def _pending_place_xy() -> Optional[tuple[float, float]]:
     if "esign_place_x_pct" in st.session_state or "esign_place_y_pct" in st.session_state:
         return _xy_pct_place_coords()
     return None
-
-
-def _annotate_fields_png(
-    png_bytes: bytes,
-    fields: list[dict[str, Any]],
-    page_index: int,
-    *,
-    pending_xy: Optional[tuple[float, float]] = None,
-) -> bytes:
-    """Draw field boxes (+ optional pending click dot) onto a page PNG."""
-    from PIL import Image, ImageDraw
-
-    im = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-    draw = ImageDraw.Draw(im)
-    w_px, h_px = im.size
-    for f in fields or []:
-        if int(f.get("page") or 0) != int(page_index):
-            continue
-        x = float(f.get("x") or 0.0) * w_px
-        y = float(f.get("y_from_top") or 0.0) * h_px
-        fw = float(f.get("w") or 0.28) * w_px
-        fh = float(f.get("h") or 0.04) * h_px
-        col = _TYPE_BORDER.get(str(f.get("type") or "text").lower(), "#2563eb")
-        draw.rectangle([x, y, x + fw, y + fh], outline=col, width=3)
-        label = str(f.get("label") or f.get("type") or "Field")
-        draw.rectangle([x, max(0, y - 14), x + max(36, 6 * len(label)), y], fill="#ffffff")
-        draw.text((x + 2, max(0, y - 13)), label[:28], fill=col)
-    if pending_xy is not None:
-        px, py = float(pending_xy[0]), float(pending_xy[1])
-        cx, cy = px * w_px, py * h_px
-        r = 7
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#dc2626", outline="#ffffff", width=2)
-    out = io.BytesIO()
-    im.convert("RGB").save(out, format="PNG")
-    return out.getvalue()
 
 
 def ingest_image_coordinates_click(value: Any) -> bool:
@@ -667,7 +629,7 @@ def page_esign_docs(*, user: dict, company: dict) -> None:
         return
 
     st.title("Esign Docs")
-    st.caption("**v2026.10.08c · Esign field polish**")
+    st.caption("**v2026.10.08d · Esign stable cleanup**")
 
     tabs = st.tabs(["Compose", "My documents"])
     with tabs[0]:

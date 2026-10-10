@@ -21,20 +21,20 @@ function streamlitEmbedBridge(): Plugin {
     closeBundle() {
       const outDir = path.resolve(__dirname, 'dist');
       const scriptsDir = path.resolve(__dirname, 'scripts');
-      const libSrc = path.resolve(
-        __dirname,
-        '../src/esign_placer/frontend/streamlit-component-lib.js',
-      );
-
       if (!fs.existsSync(outDir)) return;
 
-      // Prefer esign_placer copy of Streamlit component lib; fall back to scripts/
+      // Prefer pdf-field-editor/scripts copy; fall back to packaged embed copy.
       const libDest = path.join(outDir, 'streamlit-component-lib.js');
-      if (fs.existsSync(libSrc)) {
-        fs.copyFileSync(libSrc, libDest);
-      } else {
-        const alt = path.join(scriptsDir, 'streamlit-component-lib.js');
-        if (fs.existsSync(alt)) fs.copyFileSync(alt, libDest);
+      const libCandidates = [
+        path.join(scriptsDir, 'streamlit-component-lib.js'),
+        path.resolve(__dirname, '../src/pdf_field_editor/frontend/streamlit-component-lib.js'),
+        path.resolve(__dirname, '../src/esign_placer/frontend/streamlit-component-lib.js'),
+      ];
+      for (const libSrc of libCandidates) {
+        if (fs.existsSync(libSrc)) {
+          fs.copyFileSync(libSrc, libDest);
+          break;
+        }
       }
 
       const heightSrc = path.join(scriptsDir, 'streamlit-frame-height.js');

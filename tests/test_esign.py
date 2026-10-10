@@ -292,8 +292,8 @@ def test_no_slider_place_field_path_in_compose_ui():
     assert "_render_field_placer" not in parent
     assert "_render_clickable_page" not in parent
     page = inspect.getsource(esign_ui.page_esign_docs)
-    assert "v2026.10.08c" in page
-    assert "Esign field polish" in page
+    assert "v2026.10.08d" in page
+    assert "Esign stable cleanup" in page
     assert "Place field" not in page
     assert "Place X%" not in page
     # Sync helper must not write old slider widget keys (esign_x / esign_y)
@@ -1018,7 +1018,7 @@ def test_placer_js_has_drag_and_resize_handles():
 
 
 def test_legacy_place_preview_renderers_removed():
-    """v2026.10.08b: Streamlit Place/Preview click renderers deleted forever."""
+    """v2026.10.08b/08d: Streamlit Place/Preview click renderers deleted forever."""
     from src import esign_ui
 
     for name in (
@@ -1029,6 +1029,7 @@ def test_legacy_place_preview_renderers_removed():
         "_image_has_ink",
         "_nudge_esign_page",
         "_on_xy_pct_change",
+        "_annotate_fields_png",
     ):
         assert not hasattr(esign_ui, name), f"{name} must stay deleted"
 
@@ -1404,12 +1405,12 @@ if st.button("Save", key="esign_save_smoke"):
 
 
 def test_sidebar_caption_esign_place_works():
-    """Sidebar must advertise v2026.10.08c · Esign field polish."""
+    """Sidebar must advertise v2026.10.08d · Esign stable cleanup."""
     from pathlib import Path
 
     app = Path(__file__).resolve().parents[1] / "app.py"
     text = app.read_text(encoding="utf-8")
-    assert "v2026.10.08c · Esign field polish" in text
+    assert "v2026.10.08d · Esign stable cleanup" in text
 
 
 def test_esign_compose_embeds_pdf_field_editor():
